@@ -1014,7 +1014,7 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    if (intent.action === "finance_delete_search") {
+       if (intent.action === "finance_delete_search") {
       const matches = await searchActiveTransactions(intent.query);
 
       if (matches.length === 0) {
