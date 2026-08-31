@@ -66,7 +66,7 @@ export async function parseAssistantIntent(
   });
 
   const result = await generateText({
-    model: perplexity("perplexity/nemotron-3.5-lightning-30b-a3b"),
+    model: perplexity("sonar"),
     system: `You are a strict JSON intent parser for a private Telegram personal assistant.
 
 Return ONLY one valid JSON object. Do not use Markdown code fences.
