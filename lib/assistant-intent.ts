@@ -35,7 +35,7 @@ export async function parseAssistantIntent(
   });
 
   const result = await generateObject({
-    model: google("gemini-2.5-flash"),
+    model: google("gemini-3.6-flash"),
     schema: intentSchema,
     system: `You are a parser for a private Telegram personal assistant.
 
