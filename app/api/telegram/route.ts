@@ -522,14 +522,25 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    await sendTelegramMessage(
-      chatId,
-      `${intent.message ?? "I could not understand that request."}\n\nTry /help for examples.`
-    );
+    if (intent.action === "unknown") {
+  await sendTelegramMessage(
+    chatId,
+    `${intent.message}\n\nTry /help for examples.`
+  );
 
-    await markUpdateCompleted(updateId, "unknown");
+  await markUpdateCompleted(updateId, "unknown");
 
-    return Response.json({ ok: true });
+  return Response.json({ ok: true });
+}
+
+await sendTelegramMessage(
+  chatId,
+  "I understood your request, but that action is not implemented yet."
+);
+
+await markUpdateCompleted(updateId, "not_implemented");
+
+return Response.json({ ok: true });
   } catch (error) {
     const message = errorText(error);
 
