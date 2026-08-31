@@ -234,7 +234,6 @@ async function handleCalendarCreateCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "calendar_create_cancelled");
-
     return;
   }
 
@@ -259,7 +258,6 @@ async function handleCalendarCreateCallback(input: {
       input.updateId,
       "calendar_create_confirmation_invalid"
     );
-
     return;
   }
 
@@ -304,7 +302,9 @@ async function handleFinanceSelectionCallback(input: {
     input.userId
   );
 
-  if (!selection || !selection.transactionIds[input.selectedIndex]) {
+  const transactionId = selection?.transactionIds[input.selectedIndex];
+
+  if (!transactionId) {
     await answerTelegramCallback(
       input.callbackId,
       "This selection has expired or was already used."
@@ -317,13 +317,10 @@ async function handleFinanceSelectionCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "finance_selection_invalid");
-
     return;
   }
 
-  const transactionId = selection.transactionIds[input.selectedIndex];
   const matches = await searchActiveTransactions(transactionId);
-
   const transaction = matches.find(
     (candidate) => candidate.transactionId === transactionId
   );
@@ -338,7 +335,6 @@ async function handleFinanceSelectionCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "finance_selection_not_found");
-
     return;
   }
 
@@ -407,7 +403,6 @@ async function handleCalendarSelectionCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "calendar_selection_invalid");
-
     return;
   }
 
@@ -488,7 +483,6 @@ async function handleFinanceDeleteCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "finance_delete_cancelled");
-
     return;
   }
 
@@ -510,7 +504,6 @@ async function handleFinanceDeleteCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "finance_delete_invalid");
-
     return;
   }
 
@@ -529,7 +522,6 @@ async function handleFinanceDeleteCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "finance_delete_not_found");
-
     return;
   }
 
@@ -576,7 +568,6 @@ async function handleCalendarDeleteCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "calendar_delete_cancelled");
-
     return;
   }
 
@@ -598,7 +589,6 @@ async function handleCalendarDeleteCallback(input: {
     );
 
     await markUpdateCompleted(input.updateId, "calendar_delete_invalid");
-
     return;
   }
 
@@ -738,7 +728,6 @@ export async function POST(request: Request) {
 
   if (secretHeader !== process.env.TELEGRAM_WEBHOOK_SECRET) {
     log("telegram.webhook.unauthorized");
-
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -796,7 +785,6 @@ export async function POST(request: Request) {
 
     if (!message?.text) {
       await markUpdateCompleted(updateId, "ignored_no_text");
-
       return Response.json({ ok: true });
     }
 
@@ -816,7 +804,6 @@ export async function POST(request: Request) {
     if (text === "/start" || text === "/help") {
       await sendTelegramMessage(chatId, helpText());
       await markUpdateCompleted(updateId, "help");
-
       return Response.json({ ok: true });
     }
 
@@ -837,7 +824,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_help");
-
       return Response.json({ ok: true });
     }
 
@@ -857,7 +843,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "calendar_help");
-
       return Response.json({ ok: true });
     }
 
@@ -874,7 +859,6 @@ export async function POST(request: Request) {
         );
 
         await markUpdateCompleted(updateId, "finance_add_invalid");
-
         return Response.json({ ok: true });
       }
 
@@ -903,7 +887,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_add_command");
-
       return Response.json({ ok: true });
     }
 
@@ -913,7 +896,6 @@ export async function POST(request: Request) {
       if (transactions.length === 0) {
         await sendTelegramMessage(chatId, "No active finance transactions found.");
         await markUpdateCompleted(updateId, "finance_list_empty");
-
         return Response.json({ ok: true });
       }
 
@@ -930,7 +912,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_list");
-
       return Response.json({ ok: true });
     }
 
@@ -966,7 +947,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_add_natural_language");
-
       return Response.json({ ok: true });
     }
 
@@ -1010,11 +990,10 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "calendar_add_pending");
-
       return Response.json({ ok: true });
     }
 
-       if (intent.action === "finance_delete_search") {
+    if (intent.action === "finance_delete_search") {
       const matches = await searchActiveTransactions(intent.query);
 
       if (matches.length === 0) {
@@ -1024,7 +1003,6 @@ export async function POST(request: Request) {
         );
 
         await markUpdateCompleted(updateId, "finance_delete_search_empty");
-
         return Response.json({ ok: true });
       }
 
@@ -1059,7 +1037,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_delete_search_found");
-
       return Response.json({ ok: true });
     }
 
@@ -1076,7 +1053,6 @@ export async function POST(request: Request) {
         );
 
         await markUpdateCompleted(updateId, "calendar_delete_search_empty");
-
         return Response.json({ ok: true });
       }
 
@@ -1115,7 +1091,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "calendar_delete_search_found");
-
       return Response.json({ ok: true });
     }
 
@@ -1126,7 +1101,6 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "unknown");
-
       return Response.json({ ok: true });
     }
 
