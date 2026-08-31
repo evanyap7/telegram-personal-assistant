@@ -2,7 +2,10 @@ import { z } from "zod";
 
 import { parseAssistantIntent } from "@/lib/assistant-intent";
 import { createCalendarEvent } from "@/lib/calendar";
-import { addTransaction, listRecentTransactions } from "@/lib/finance";
+import {
+  addTransaction,
+  listRecentTransactions,
+} from "@/lib/finance";
 import {
   cancelPendingActionsForUser,
   savePendingAction,
@@ -34,22 +37,17 @@ const financeAddSchema = z.object({
 
 function helpText() {
   return [
-    "Personal Assistant commands:",
+    "Hi — I’m your personal assistant.",
     "",
-    "Natural language:",
-    "• I spent $6 on dinner today",
-    "• Schedule floorball tomorrow from 8 pm to 9:30 pm in personal",
+    "You can write naturally:",
+    "• spent $6.20 for lunch",
+    "• earned $100 from freelance work",
+    "• schedule floorball tomorrow from 8 pm to 9:30 pm",
     "",
-    "Finance commands:",
-    "/finance add <income|expense> | <amount> | <currency> | <category> | <description>",
-    "/finance list",
+    "Finance entries are saved after I understand them.",
+    "Calendar changes require confirmation.",
     "",
-    "Confirmation:",
-    "/confirm <token>",
-    "/cancel",
-    "",
-    "Example:",
-    "/finance add expense | 14.80 | SGD | Food | Lunch at NUS",
+    "Tap Menu to view commands.",
   ].join("\n");
 }
 
@@ -90,6 +88,7 @@ export async function POST(request: Request) {
 
     if (text === "/start" || text === "/help") {
       await sendTelegramMessage(chatId, helpText());
+
       return Response.json({ ok: true });
     }
 
@@ -99,8 +98,8 @@ export async function POST(request: Request) {
       await sendTelegramMessage(
         chatId,
         cancelled > 0
-          ? "Pending action cancelled."
-          : "There was no pending action to cancel."
+          ? "Pending calendar action cancelled."
+          : "There was no pending calendar action to cancel."
       );
 
       return Response.json({ ok: true });
@@ -114,24 +113,6 @@ export async function POST(request: Request) {
         await sendTelegramMessage(
           chatId,
           "That confirmation token is invalid or has expired. Please send the request again."
-        );
-
-        return Response.json({ ok: true });
-      }
-
-      if (pendingAction.type === "finance_add") {
-        const transaction = await addTransaction(pendingAction.payload);
-
-        await sendTelegramMessage(
-          chatId,
-          [
-            "Transaction added.",
-            `ID: ${transaction.transactionId}`,
-            `Type: ${pendingAction.payload.type}`,
-            `Amount: ${pendingAction.payload.amount.toFixed(2)} ${pendingAction.payload.currency}`,
-            `Category: ${pendingAction.payload.category}`,
-            `Description: ${pendingAction.payload.description}`,
-          ].join("\n")
         );
 
         return Response.json({ ok: true });
@@ -157,6 +138,48 @@ export async function POST(request: Request) {
 
         return Response.json({ ok: true });
       }
+
+      await sendTelegramMessage(
+        chatId,
+        "This confirmation type is not supported."
+      );
+
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/finance") {
+      await sendTelegramMessage(
+        chatId,
+        [
+          "Finance assistant:",
+          "",
+          "Write naturally:",
+          "• spent $6.20 for lunch",
+          "• earned $100 from freelance work",
+          "",
+          "Or use:",
+          "/finance list",
+        ].join("\n")
+      );
+
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/calendar") {
+      await sendTelegramMessage(
+        chatId,
+        [
+          "Calendar assistant:",
+          "",
+          "Write naturally:",
+          "• Schedule floorball tomorrow from 8 pm to 9:30 pm",
+          "• Add a project meeting next Friday from 2 pm to 3 pm in work",
+          "",
+          "I will show a preview before creating an event.",
+        ].join("\n")
+      );
+
+      return Response.json({ ok: true });
     }
 
     if (text.startsWith("/finance add ")) {
@@ -211,6 +234,7 @@ export async function POST(request: Request) {
 
       if (rows.length === 0) {
         await sendTelegramMessage(chatId, "No finance transactions found.");
+
         return Response.json({ ok: true });
       }
 
@@ -247,31 +271,24 @@ export async function POST(request: Request) {
     const intent = await parseAssistantIntent(text);
 
     if (intent.action === "finance_add") {
-      const token = savePendingAction({
-        type: "finance_add",
-        userId,
-        payload: {
-          type: intent.type,
-          amount: intent.amount,
-          currency: intent.currency,
-          category: intent.category,
-          description: intent.description,
-        },
+      const transaction = await addTransaction({
+        type: intent.type,
+        amount: intent.amount,
+        currency: intent.currency,
+        category: intent.category,
+        description: intent.description,
       });
 
       await sendTelegramMessage(
         chatId,
         [
-          "I understood this as a finance entry:",
-          "",
+          "Transaction added.",
+          `ID: ${transaction.transactionId}`,
           `Type: ${intent.type}`,
           `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
           `Category: ${intent.category}`,
           `Description: ${intent.description}`,
-          `Date: ${intent.transactionDate}`,
-          "",
-          `Reply /confirm ${token} to save it.`,
-          "Reply /cancel to discard it.",
+          `Date interpreted as: ${intent.transactionDate}`,
         ].join("\n")
       );
 
@@ -309,9 +326,9 @@ export async function POST(request: Request) {
     }
 
     await sendTelegramMessage(
-  chatId,
-  `${intent.message ?? "I could not understand that request."}\n\nTry /help for examples.`
-);
+      chatId,
+      `${intent.message ?? "I could not understand that request."}\n\nTry /help for examples.`
+    );
 
     return Response.json({ ok: true });
   } catch (error) {
