@@ -11,16 +11,21 @@ import {
   markUpdateStarted,
 } from "@/lib/finance";
 import {
-  cancelPendingActionsForUser,
-  savePendingAction,
-  takePendingAction,
+  cancelPendingCalendarAction,
+  savePendingCalendarAction,
+  takePendingCalendarAction,
 } from "@/lib/pending-actions";
-import { sendTelegramMessage } from "@/lib/telegram";
+import {
+  answerTelegramCallback,
+  removeTelegramInlineKeyboard,
+  sendTelegramMessage,
+} from "@/lib/telegram";
 
 const telegramUpdateSchema = z.object({
   update_id: z.number(),
   message: z
     .object({
+      message_id: z.number(),
       chat: z.object({
         id: z.number(),
       }),
@@ -28,6 +33,21 @@ const telegramUpdateSchema = z.object({
         id: z.number(),
       }),
       text: z.string().optional(),
+    })
+    .optional(),
+  callback_query: z
+    .object({
+      id: z.string(),
+      from: z.object({
+        id: z.number(),
+      }),
+      data: z.string().optional(),
+      message: z.object({
+        message_id: z.number(),
+        chat: z.object({
+          id: z.number(),
+        }),
+      }),
     })
     .optional(),
 });
@@ -46,11 +66,10 @@ function helpText() {
     "",
     "You can write naturally:",
     "• spent $6.20 for lunch",
-    "• earned $100 from freelance work",
     "• schedule floorball tomorrow from 8 pm to 9:30 pm",
     "",
     "Finance entries are saved after I understand them.",
-    "Calendar changes require confirmation.",
+    "Calendar changes require a Yes / No confirmation.",
     "",
     "Tap Menu to view commands.",
   ].join("\n");
@@ -80,19 +99,19 @@ function errorText(error: unknown): string {
       cause?: unknown;
     };
 
-    const errorDetails = {
-      name: details.name,
-      message: details.message,
-      statusCode: details.statusCode ?? null,
-      url: details.url ?? null,
-      responseBody: details.responseBody ?? null,
-      cause:
-        details.cause instanceof Error
-          ? details.cause.message
-          : details.cause ?? null,
-    };
-
-    return sanitizeText(JSON.stringify(errorDetails));
+    return sanitizeText(
+      JSON.stringify({
+        name: details.name,
+        message: details.message,
+        statusCode: details.statusCode ?? null,
+        url: details.url ?? null,
+        responseBody: details.responseBody ?? null,
+        cause:
+          details.cause instanceof Error
+            ? details.cause.message
+            : details.cause ?? null,
+      })
+    );
   }
 
   return sanitizeText(String(error));
@@ -106,6 +125,104 @@ function log(event: string, values: Record<string, unknown> = {}) {
       ...values,
     })
   );
+}
+
+async function handleCalendarCallback(input: {
+  callbackId: string;
+  callbackData: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+  startedAt: number;
+}) {
+  const {
+    callbackId,
+    callbackData,
+    userId,
+    chatId,
+    messageId,
+    updateId,
+    startedAt,
+  } = input;
+
+  const [action, token] = callbackData.split(":");
+
+  if (!token || !["calendar_yes", "calendar_no"].includes(action)) {
+    await answerTelegramCallback(callbackId, "This action is invalid.");
+    return;
+  }
+
+  if (action === "calendar_no") {
+    const cancelled = await cancelPendingCalendarAction(token, userId);
+
+    await answerTelegramCallback(
+      callbackId,
+      cancelled ? "Calendar event cancelled." : "This request has expired."
+    );
+
+    await removeTelegramInlineKeyboard(chatId, messageId);
+
+    await sendTelegramMessage(
+      chatId,
+      cancelled
+        ? "Calendar event creation cancelled."
+        : "This calendar request has already expired or was handled."
+    );
+
+    await markUpdateCompleted(updateId, "calendar_cancelled");
+
+    return;
+  }
+
+  const pendingAction = await takePendingCalendarAction(token, userId);
+
+  if (!pendingAction) {
+    await answerTelegramCallback(
+      callbackId,
+      "This confirmation has expired or was already used."
+    );
+
+    await removeTelegramInlineKeyboard(chatId, messageId);
+
+    await sendTelegramMessage(
+      chatId,
+      "This calendar request has expired or was already handled."
+    );
+
+    await markUpdateCompleted(updateId, "calendar_confirm_invalid");
+
+    return;
+  }
+
+  await answerTelegramCallback(callbackId, "Creating calendar event...");
+
+  const event = await createCalendarEvent(pendingAction.payload);
+
+  await removeTelegramInlineKeyboard(chatId, messageId);
+
+  await sendTelegramMessage(
+    chatId,
+    [
+      "Calendar event created.",
+      `Calendar: ${pendingAction.payload.calendarName}`,
+      `Title: ${pendingAction.payload.title}`,
+      `Start: ${formatSingaporeDateTime(pendingAction.payload.start)}`,
+      `End: ${formatSingaporeDateTime(pendingAction.payload.end)}`,
+      `Event ID: ${event.id}`,
+      event.htmlLink ? `Link: ${event.htmlLink}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n")
+  );
+
+  await markUpdateCompleted(updateId, "calendar_add");
+
+  log("telegram.webhook.completed", {
+    updateId,
+    action: "calendar_add",
+    durationMs: Date.now() - startedAt,
+  });
 }
 
 export async function POST(request: Request) {
@@ -127,23 +244,18 @@ export async function POST(request: Request) {
     const update = telegramUpdateSchema.parse(await request.json());
     updateId = update.update_id;
 
-    const message = update.message;
-
-    if (!message?.text) {
-      log("telegram.webhook.ignored", {
-        updateId,
-        reason: "no_text_message",
-      });
-
-      return Response.json({ ok: true });
-    }
-
     const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
 
-    if (!allowedUserId || message.from.id !== allowedUserId) {
+    if (!allowedUserId) {
+      throw new Error("TELEGRAM_ALLOWED_USER_ID is missing.");
+    }
+
+    const senderId = update.message?.from.id ?? update.callback_query?.from.id;
+
+    if (!senderId || senderId !== allowedUserId) {
       log("telegram.webhook.forbidden", {
         updateId,
-        senderId: message.from.id,
+        senderId,
       });
 
       return new Response("Forbidden", { status: 403 });
@@ -162,8 +274,29 @@ export async function POST(request: Request) {
 
     await markUpdateStarted(updateId);
 
+    if (update.callback_query?.data) {
+      await handleCalendarCallback({
+        callbackId: update.callback_query.id,
+        callbackData: update.callback_query.data,
+        userId: update.callback_query.from.id,
+        chatId: update.callback_query.message.chat.id,
+        messageId: update.callback_query.message.message_id,
+        updateId,
+        startedAt,
+      });
+
+      return Response.json({ ok: true });
+    }
+
+    const message = update.message;
+
+    if (!message?.text) {
+      await markUpdateCompleted(updateId, "ignored_no_text");
+
+      return Response.json({ ok: true });
+    }
+
     const chatId = message.chat.id;
-    const userId = message.from.id;
     const text = message.text.trim();
 
     log("telegram.webhook.received", {
@@ -178,77 +311,7 @@ export async function POST(request: Request) {
 
     if (text === "/start" || text === "/help") {
       await sendTelegramMessage(chatId, helpText());
-
       await markUpdateCompleted(updateId, "help");
-
-      return Response.json({ ok: true });
-    }
-
-    if (text === "/cancel") {
-      const cancelled = cancelPendingActionsForUser(userId);
-
-      await sendTelegramMessage(
-        chatId,
-        cancelled > 0
-          ? "Pending calendar action cancelled."
-          : "There was no pending calendar action to cancel."
-      );
-
-      await markUpdateCompleted(updateId, "cancel");
-
-      return Response.json({ ok: true });
-    }
-
-    if (text.startsWith("/confirm ")) {
-      const token = text.replace("/confirm ", "").trim();
-      const pendingAction = takePendingAction(token, userId);
-
-      if (!pendingAction) {
-        await sendTelegramMessage(
-          chatId,
-          "That confirmation token is invalid or has expired. Please send the request again."
-        );
-
-        await markUpdateCompleted(updateId, "confirm_invalid");
-
-        return Response.json({ ok: true });
-      }
-
-      if (pendingAction.type === "calendar_add") {
-        const event = await createCalendarEvent(pendingAction.payload);
-
-        await sendTelegramMessage(
-          chatId,
-          [
-            "Calendar event created.",
-            `Calendar: ${pendingAction.payload.calendarName}`,
-            `Title: ${pendingAction.payload.title}`,
-            `Start: ${formatSingaporeDateTime(pendingAction.payload.start)}`,
-            `End: ${formatSingaporeDateTime(pendingAction.payload.end)}`,
-            `Event ID: ${event.id}`,
-            event.htmlLink ? `Link: ${event.htmlLink}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        );
-
-        await markUpdateCompleted(updateId, "calendar_add");
-
-        log("telegram.webhook.completed", {
-          updateId,
-          action: "calendar_add",
-          durationMs: Date.now() - startedAt,
-        });
-
-        return Response.json({ ok: true });
-      }
-
-      await sendTelegramMessage(
-        chatId,
-        "This confirmation type is not supported."
-      );
-
-      await markUpdateCompleted(updateId, "confirm_unsupported");
 
       return Response.json({ ok: true });
     }
@@ -283,7 +346,7 @@ export async function POST(request: Request) {
           "• Schedule floorball tomorrow from 8 pm to 9:30 pm",
           "• Add a project meeting next Friday from 2 pm to 3 pm in work",
           "",
-          "I will show a preview before creating an event.",
+          "I will show Yes / No buttons before creating an event.",
         ].join("\n")
       );
 
@@ -301,12 +364,7 @@ export async function POST(request: Request) {
       if (rawFields.length !== 5) {
         await sendTelegramMessage(
           chatId,
-          [
-            "Invalid format.",
-            "",
-            "Use:",
-            "/finance add expense | 14.80 | SGD | Food | Lunch at NUS",
-          ].join("\n")
+          "Invalid format. Use /finance add expense | 14.80 | SGD | Food | Lunch"
         );
 
         await markUpdateCompleted(updateId, "finance_add_invalid");
@@ -348,33 +406,33 @@ export async function POST(request: Request) {
 
       if (rows.length === 0) {
         await sendTelegramMessage(chatId, "No finance transactions found.");
-
         await markUpdateCompleted(updateId, "finance_list_empty");
 
         return Response.json({ ok: true });
       }
 
-      const latestRows = rows.slice(-10).reverse();
+      const formattedRows = rows
+        .slice(-10)
+        .reverse()
+        .map((row) => {
+          const [
+            transactionId,
+            timestamp,
+            type,
+            amount,
+            currency,
+            category,
+            description,
+          ] = row;
 
-      const formattedRows = latestRows.map((row) => {
-        const [
-          transactionId,
-          timestamp,
-          type,
-          amount,
-          currency,
-          category,
-          description,
-        ] = row;
-
-        return [
-          `${type ?? "unknown"}: ${amount ?? "?"} ${currency ?? ""}`,
-          `Category: ${category ?? "Uncategorized"}`,
-          `Description: ${description ?? "No description"}`,
-          `ID: ${transactionId ?? "Unknown"}`,
-          `Recorded: ${timestamp ?? "Unknown"}`,
-        ].join("\n");
-      });
+          return [
+            `${type ?? "unknown"}: ${amount ?? "?"} ${currency ?? ""}`,
+            `Category: ${category ?? "Uncategorized"}`,
+            `Description: ${description ?? "No description"}`,
+            `ID: ${transactionId ?? "Unknown"}`,
+            `Recorded: ${timestamp ?? "Unknown"}`,
+          ].join("\n");
+        });
 
       await sendTelegramMessage(
         chatId,
@@ -419,19 +477,12 @@ export async function POST(request: Request) {
 
       await markUpdateCompleted(updateId, "finance_add_natural_language");
 
-      log("telegram.webhook.completed", {
-        updateId,
-        action: "finance_add_natural_language",
-        durationMs: Date.now() - startedAt,
-      });
-
       return Response.json({ ok: true });
     }
 
     if (intent.action === "calendar_add") {
-      const token = savePendingAction({
-        type: "calendar_add",
-        userId,
+      const token = await savePendingCalendarAction({
+        userId: message.from.id,
         payload: {
           calendarName: intent.calendarName,
           title: intent.title,
@@ -449,19 +500,24 @@ export async function POST(request: Request) {
           `Title: ${intent.title}`,
           `Start: ${formatSingaporeDateTime(intent.start)}`,
           `End: ${formatSingaporeDateTime(intent.end)}`,
-          "",
-          `Reply /confirm ${token} to create it.`,
-          "Reply /cancel to discard it.",
-        ].join("\n")
+        ].join("\n"),
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Yes, create",
+                callback_data: `calendar_yes:${token}`,
+              },
+              {
+                text: "❌ No, cancel",
+                callback_data: `calendar_no:${token}`,
+              },
+            ],
+          ],
+        }
       );
 
       await markUpdateCompleted(updateId, "calendar_add_pending");
-
-      log("telegram.webhook.completed", {
-        updateId,
-        action: "calendar_add_pending",
-        durationMs: Date.now() - startedAt,
-      });
 
       return Response.json({ ok: true });
     }

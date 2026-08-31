@@ -1,91 +1,166 @@
-type FinanceAddAction = {
-  type: "finance_add";
-  userId: number;
-  expiresAt: number;
-  payload: {
-    type: "income" | "expense";
-    amount: number;
-    currency: string;
-    category: string;
-    description: string;
-  };
+import { getSheetsClient } from "./google";
+
+const SHEET_NAME = "PendingActions";
+const EXPIRY_MS = 5 * 60 * 1000;
+
+export type CalendarAddPayload = {
+  calendarName: "personal" | "work";
+  title: string;
+  start: string;
+  end: string;
 };
 
-type CalendarAddAction = {
-  type: "calendar_add";
+export type PendingCalendarAction = {
+  token: string;
   userId: number;
-  expiresAt: number;
-  payload: {
-    calendarName: "personal" | "work";
-    title: string;
-    start: string;
-    end: string;
-  };
+  payload: CalendarAddPayload;
 };
 
-type PendingAction = FinanceAddAction | CalendarAddAction;
+function getSpreadsheetId(): string {
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
 
-type PendingActionInput =
-  | Omit<FinanceAddAction, "expiresAt">
-  | Omit<CalendarAddAction, "expiresAt">;
+  if (!spreadsheetId) {
+    throw new Error("GOOGLE_SHEET_ID is missing.");
+  }
 
-const pendingActions = new Map<string, PendingAction>();
-
-function createToken(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 6).toUpperCase();
+  return spreadsheetId;
 }
 
-export function savePendingAction(action: PendingActionInput): string {
-  const token = createToken();
+function createToken(): string {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+}
 
-  if (action.type === "finance_add") {
-    pendingActions.set(token, {
-      type: "finance_add",
-      userId: action.userId,
-      expiresAt: Date.now() + 5 * 60 * 1000,
-      payload: action.payload,
-    });
-  } else {
-    pendingActions.set(token, {
-      type: "calendar_add",
-      userId: action.userId,
-      expiresAt: Date.now() + 5 * 60 * 1000,
-      payload: action.payload,
-    });
-  }
+export async function savePendingCalendarAction(input: {
+  userId: number;
+  payload: CalendarAddPayload;
+}): Promise<string> {
+  const token = createToken();
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A:F`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [
+        [
+          token,
+          String(input.userId),
+          "calendar_add",
+          JSON.stringify(input.payload),
+          new Date(Date.now() + EXPIRY_MS).toISOString(),
+          "pending",
+        ],
+      ],
+    },
+  });
 
   return token;
 }
 
-export function takePendingAction(
+export async function takePendingCalendarAction(
   token: string,
   userId: number
-): PendingAction | null {
-  const normalizedToken = token.trim().toUpperCase();
-  const action = pendingActions.get(normalizedToken);
+): Promise<PendingCalendarAction | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
 
-  if (!action) {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+  const rowIndex = rows.findIndex((row) => row[0] === token);
+
+  if (rowIndex === -1) {
     return null;
   }
 
-  pendingActions.delete(normalizedToken);
+  const row = rows[rowIndex];
+  const [storedToken, storedUserId, actionType, payloadJson, expiresAt, status] =
+    row;
 
-  if (action.userId !== userId || action.expiresAt < Date.now()) {
+  const sheetRowNumber = rowIndex + 2;
+
+  if (
+    storedUserId !== String(userId) ||
+    actionType !== "calendar_add" ||
+    status !== "pending" ||
+    !expiresAt ||
+    new Date(expiresAt).getTime() < Date.now()
+  ) {
     return null;
   }
 
-  return action;
+  let payload: CalendarAddPayload;
+
+  try {
+    payload = JSON.parse(payloadJson) as CalendarAddPayload;
+  } catch {
+    throw new Error("Stored calendar confirmation data is invalid.");
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_NAME}!F${sheetRowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [["confirmed"]],
+    },
+  });
+
+  return {
+    token: storedToken,
+    userId,
+    payload,
+  };
 }
 
-export function cancelPendingActionsForUser(userId: number): number {
-  let cancelled = 0;
+export async function cancelPendingCalendarAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
 
-  for (const [token, action] of pendingActions.entries()) {
-    if (action.userId === userId) {
-      pendingActions.delete(token);
-      cancelled += 1;
-    }
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+  const rowIndex = rows.findIndex((row) => row[0] === token);
+
+  if (rowIndex === -1) {
+    return false;
   }
 
-  return cancelled;
+  const row = rows[rowIndex];
+  const [storedToken, storedUserId, actionType, , expiresAt, status] = row;
+
+  const sheetRowNumber = rowIndex + 2;
+
+  if (
+    storedToken !== token ||
+    storedUserId !== String(userId) ||
+    actionType !== "calendar_add" ||
+    status !== "pending" ||
+    !expiresAt ||
+    new Date(expiresAt).getTime() < Date.now()
+  ) {
+    return false;
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${SHEET_NAME}!F${sheetRowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [["cancelled"]],
+    },
+  });
+
+  return true;
 }
