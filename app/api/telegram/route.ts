@@ -309,9 +309,9 @@ export async function POST(request: Request) {
     }
 
     await sendTelegramMessage(
-      chatId,
-      `${intent.message}\n\nTry /help for examples.`
-    );
+  chatId,
+  `${intent.message ?? "I could not understand that request."}\n\nTry /help for examples.`
+);
 
     return Response.json({ ok: true });
   } catch (error) {
