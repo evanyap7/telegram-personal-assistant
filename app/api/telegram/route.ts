@@ -323,6 +323,7 @@ async function handleFinanceSelectionCallback(input: {
 
   const transactionId = selection.transactionIds[input.selectedIndex];
   const matches = await searchActiveTransactions(transactionId);
+
   const transaction = matches.find(
     (candidate) => candidate.transactionId === transactionId
   );
@@ -347,7 +348,6 @@ async function handleFinanceSelectionCallback(input: {
   });
 
   await answerTelegramCallback(input.callbackId, "Transaction selected.");
-
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
   await sendTelegramMessage(
@@ -420,7 +420,6 @@ async function handleCalendarSelectionCallback(input: {
   });
 
   await answerTelegramCallback(input.callbackId, "Calendar event selected.");
-
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
   await sendTelegramMessage(
@@ -1030,6 +1029,7 @@ export async function POST(request: Request) {
       }
 
       const limitedMatches = matches.slice(0, 5);
+
       const selectionToken = await savePendingFinanceSelection({
         userId: message.from.id,
         transactionIds: limitedMatches.map(
@@ -1081,6 +1081,7 @@ export async function POST(request: Request) {
       }
 
       const limitedMatches = matches.slice(0, 5);
+
       const selectionToken = await savePendingCalendarSelection({
         userId: message.from.id,
         calendarName: intent.calendarName,
@@ -1129,14 +1130,11 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    await sendTelegramMessage(
-      chatId,
-      "I understood your request, but that action is not implemented yet."
+    const exhaustiveIntentCheck: never = intent;
+
+    throw new Error(
+      `Unhandled assistant intent: ${JSON.stringify(exhaustiveIntentCheck)}`
     );
-
-    await markUpdateCompleted(updateId, "not_implemented");
-
-    return Response.json({ ok: true });
   } catch (error) {
     const message = errorText(error);
 
