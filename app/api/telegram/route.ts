@@ -4,7 +4,11 @@ import { parseAssistantIntent } from "@/lib/assistant-intent";
 import { createCalendarEvent } from "@/lib/calendar";
 import {
   addTransaction,
+  hasProcessedUpdate,
   listRecentTransactions,
+  markUpdateCompleted,
+  markUpdateFailed,
+  markUpdateStarted,
 } from "@/lib/finance";
 import {
   cancelPendingActionsForUser,
@@ -14,6 +18,7 @@ import {
 import { sendTelegramMessage } from "@/lib/telegram";
 
 const telegramUpdateSchema = z.object({
+  update_id: z.number(),
   message: z
     .object({
       chat: z.object({
@@ -59,35 +64,92 @@ function formatSingaporeDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : "Unexpected error";
+}
+
+function log(event: string, values: Record<string, unknown> = {}) {
+  console.log(
+    JSON.stringify({
+      event,
+      timestamp: new Date().toISOString(),
+      ...values,
+    })
+  );
+}
+
 export async function POST(request: Request) {
+  const startedAt = Date.now();
+
   const secretHeader = request.headers.get(
     "x-telegram-bot-api-secret-token"
   );
 
   if (secretHeader !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+    log("telegram.webhook.unauthorized");
+
     return new Response("Unauthorized", { status: 401 });
   }
 
+  let updateId: number | null = null;
+
   try {
     const update = telegramUpdateSchema.parse(await request.json());
+    updateId = update.update_id;
+
     const message = update.message;
 
     if (!message?.text) {
+      log("telegram.webhook.ignored", {
+        updateId,
+        reason: "no_text_message",
+      });
+
       return Response.json({ ok: true });
     }
 
     const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
 
     if (!allowedUserId || message.from.id !== allowedUserId) {
+      log("telegram.webhook.forbidden", {
+        updateId,
+        senderId: message.from.id,
+      });
+
       return new Response("Forbidden", { status: 403 });
     }
+
+    const alreadyProcessed = await hasProcessedUpdate(updateId);
+
+    if (alreadyProcessed) {
+      log("telegram.webhook.duplicate_skipped", {
+        updateId,
+        durationMs: Date.now() - startedAt,
+      });
+
+      return Response.json({ ok: true });
+    }
+
+    await markUpdateStarted(updateId);
 
     const chatId = message.chat.id;
     const userId = message.from.id;
     const text = message.text.trim();
 
+    log("telegram.webhook.received", {
+      updateId,
+      chatId,
+      textLength: text.length,
+    });
+
+    if (!text.startsWith("/")) {
+      await sendTelegramMessage(chatId, "Processing your request...");
+    }
+
     if (text === "/start" || text === "/help") {
       await sendTelegramMessage(chatId, helpText());
+
+      await markUpdateCompleted(updateId, "help");
 
       return Response.json({ ok: true });
     }
@@ -102,6 +164,8 @@ export async function POST(request: Request) {
           : "There was no pending calendar action to cancel."
       );
 
+      await markUpdateCompleted(updateId, "cancel");
+
       return Response.json({ ok: true });
     }
 
@@ -114,6 +178,8 @@ export async function POST(request: Request) {
           chatId,
           "That confirmation token is invalid or has expired. Please send the request again."
         );
+
+        await markUpdateCompleted(updateId, "confirm_invalid");
 
         return Response.json({ ok: true });
       }
@@ -136,6 +202,14 @@ export async function POST(request: Request) {
             .join("\n")
         );
 
+        await markUpdateCompleted(updateId, "calendar_add");
+
+        log("telegram.webhook.completed", {
+          updateId,
+          action: "calendar_add",
+          durationMs: Date.now() - startedAt,
+        });
+
         return Response.json({ ok: true });
       }
 
@@ -143,6 +217,8 @@ export async function POST(request: Request) {
         chatId,
         "This confirmation type is not supported."
       );
+
+      await markUpdateCompleted(updateId, "confirm_unsupported");
 
       return Response.json({ ok: true });
     }
@@ -162,6 +238,8 @@ export async function POST(request: Request) {
         ].join("\n")
       );
 
+      await markUpdateCompleted(updateId, "finance_help");
+
       return Response.json({ ok: true });
     }
 
@@ -178,6 +256,8 @@ export async function POST(request: Request) {
           "I will show a preview before creating an event.",
         ].join("\n")
       );
+
+      await markUpdateCompleted(updateId, "calendar_help");
 
       return Response.json({ ok: true });
     }
@@ -198,6 +278,8 @@ export async function POST(request: Request) {
             "/finance add expense | 14.80 | SGD | Food | Lunch at NUS",
           ].join("\n")
         );
+
+        await markUpdateCompleted(updateId, "finance_add_invalid");
 
         return Response.json({ ok: true });
       }
@@ -226,6 +308,8 @@ export async function POST(request: Request) {
         ].join("\n")
       );
 
+      await markUpdateCompleted(updateId, "finance_add_command");
+
       return Response.json({ ok: true });
     }
 
@@ -234,6 +318,8 @@ export async function POST(request: Request) {
 
       if (rows.length === 0) {
         await sendTelegramMessage(chatId, "No finance transactions found.");
+
+        await markUpdateCompleted(updateId, "finance_list_empty");
 
         return Response.json({ ok: true });
       }
@@ -265,10 +351,19 @@ export async function POST(request: Request) {
         ["Recent transactions:", "", ...formattedRows].join("\n\n")
       );
 
+      await markUpdateCompleted(updateId, "finance_list");
+
       return Response.json({ ok: true });
     }
 
+    const intentStartAt = Date.now();
     const intent = await parseAssistantIntent(text);
+
+    log("telegram.intent.parsed", {
+      updateId,
+      action: intent.action,
+      durationMs: Date.now() - intentStartAt,
+    });
 
     if (intent.action === "finance_add") {
       const transaction = await addTransaction({
@@ -291,6 +386,14 @@ export async function POST(request: Request) {
           `Date interpreted as: ${intent.transactionDate}`,
         ].join("\n")
       );
+
+      await markUpdateCompleted(updateId, "finance_add_natural_language");
+
+      log("telegram.webhook.completed", {
+        updateId,
+        action: "finance_add_natural_language",
+        durationMs: Date.now() - startedAt,
+      });
 
       return Response.json({ ok: true });
     }
@@ -322,6 +425,14 @@ export async function POST(request: Request) {
         ].join("\n")
       );
 
+      await markUpdateCompleted(updateId, "calendar_add_pending");
+
+      log("telegram.webhook.completed", {
+        updateId,
+        action: "calendar_add_pending",
+        durationMs: Date.now() - startedAt,
+      });
+
       return Response.json({ ok: true });
     }
 
@@ -330,9 +441,28 @@ export async function POST(request: Request) {
       `${intent.message ?? "I could not understand that request."}\n\nTry /help for examples.`
     );
 
+    await markUpdateCompleted(updateId, "unknown");
+
     return Response.json({ ok: true });
   } catch (error) {
-    console.error(error);
+    const message = errorText(error);
+
+    log("telegram.webhook.failed", {
+      updateId,
+      error: message,
+      durationMs: Date.now() - startedAt,
+    });
+
+    if (updateId !== null) {
+      try {
+        await markUpdateFailed(updateId, message);
+      } catch (loggingError) {
+        log("telegram.update_log.failed", {
+          updateId,
+          error: errorText(loggingError),
+        });
+      }
+    }
 
     return Response.json(
       { ok: false, error: "Webhook processing failed." },
