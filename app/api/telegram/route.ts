@@ -64,8 +64,38 @@ function formatSingaporeDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+function sanitizeText(value: string): string {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
+    .replace(/pplx-[A-Za-z0-9._-]+/gi, "pplx-[REDACTED]")
+    .replace(/sk-[A-Za-z0-9._-]+/gi, "sk-[REDACTED]");
+}
+
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : "Unexpected error";
+  if (error instanceof Error) {
+    const details = error as Error & {
+      statusCode?: number;
+      responseBody?: string;
+      url?: string;
+      cause?: unknown;
+    };
+
+    const errorDetails = {
+      name: details.name,
+      message: details.message,
+      statusCode: details.statusCode ?? null,
+      url: details.url ?? null,
+      responseBody: details.responseBody ?? null,
+      cause:
+        details.cause instanceof Error
+          ? details.cause.message
+          : details.cause ?? null,
+    };
+
+    return sanitizeText(JSON.stringify(errorDetails));
+  }
+
+  return sanitizeText(String(error));
 }
 
 function log(event: string, values: Record<string, unknown> = {}) {
