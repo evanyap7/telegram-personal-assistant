@@ -1,7 +1,7 @@
 import { getSheetsClient } from "./google";
 
-const SHEET_NAME = "Transactions";
-const UPDATE_LOG_SHEET_NAME = "UpdateLog";
+const TRANSACTIONS_SHEET = "Transactions";
+const UPDATE_LOG_SHEET = "UpdateLog";
 
 export type TransactionInput = {
   type: "income" | "expense";
@@ -9,6 +9,19 @@ export type TransactionInput = {
   currency: string;
   category: string;
   description: string;
+};
+
+export type FinanceTransaction = {
+  rowNumber: number;
+  transactionId: string;
+  timestamp: string;
+  type: string;
+  amount: string;
+  currency: string;
+  category: string;
+  description: string;
+  status: string;
+  deletedAt: string;
 };
 
 function getSpreadsheetId(): string {
@@ -25,7 +38,32 @@ function createTransactionId(): string {
   return `txn_${crypto.randomUUID()}`;
 }
 
-export async function addTransaction(input: TransactionInput) {
+function normaliseCell(value: string | undefined): string {
+  return value?.trim() ?? "";
+}
+
+function rowToTransaction(
+  row: string[],
+  rowNumber: number
+): FinanceTransaction {
+  return {
+    rowNumber,
+    transactionId: normaliseCell(row[0]),
+    timestamp: normaliseCell(row[1]),
+    type: normaliseCell(row[2]),
+    amount: normaliseCell(row[3]),
+    currency: normaliseCell(row[4]),
+    category: normaliseCell(row[5]),
+    description: normaliseCell(row[6]),
+    status: normaliseCell(row[7]) || "active",
+    deletedAt: normaliseCell(row[8]),
+  };
+}
+
+export async function addTransaction(input: TransactionInput): Promise<{
+  transactionId: string;
+  timestamp: string;
+}> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
@@ -34,7 +72,7 @@ export async function addTransaction(input: TransactionInput) {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${SHEET_NAME}!A:G`,
+    range: `${TRANSACTIONS_SHEET}!A:I`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
       values: [
@@ -46,6 +84,8 @@ export async function addTransaction(input: TransactionInput) {
           input.currency.toUpperCase(),
           input.category,
           input.description,
+          "active",
+          "",
         ],
       ],
     },
@@ -57,16 +97,95 @@ export async function addTransaction(input: TransactionInput) {
   };
 }
 
-export async function listRecentTransactions() {
+export async function listRecentTransactions(): Promise<FinanceTransaction[]> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${SHEET_NAME}!A2:G`,
+    range: `${TRANSACTIONS_SHEET}!A2:I`,
   });
 
-  return response.data.values ?? [];
+  const rows = response.data.values ?? [];
+
+  return rows
+    .map((row, index) => rowToTransaction(row, index + 2))
+    .filter((transaction) => transaction.status.toLowerCase() === "active");
+}
+
+export async function searchActiveTransactions(
+  query: string
+): Promise<FinanceTransaction[]> {
+  const normalizedQuery = query.trim().toLowerCase();
+  const transactions = await listRecentTransactions();
+
+  if (!normalizedQuery) {
+    return transactions.slice(-10).reverse();
+  }
+
+  return transactions
+    .filter((transaction) => {
+      const searchableText = [
+        transaction.transactionId,
+        transaction.type,
+        transaction.amount,
+        transaction.currency,
+        transaction.category,
+        transaction.description,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(normalizedQuery);
+    })
+    .slice(-10)
+    .reverse();
+}
+
+export async function softDeleteTransaction(
+  transactionId: string
+): Promise<FinanceTransaction | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${TRANSACTIONS_SHEET}!A2:I`,
+  });
+
+  const rows = response.data.values ?? [];
+  const rowIndex = rows.findIndex((row) => {
+    const rowTransactionId = normaliseCell(row[0]);
+    const rowStatus = normaliseCell(row[7]) || "active";
+
+    return (
+      rowTransactionId === transactionId &&
+      rowStatus.toLowerCase() === "active"
+    );
+  });
+
+  if (rowIndex === -1) {
+    return null;
+  }
+
+  const rowNumber = rowIndex + 2;
+  const transaction = rowToTransaction(rows[rowIndex], rowNumber);
+  const deletedAt = new Date().toISOString();
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${TRANSACTIONS_SHEET}!H${rowNumber}:I${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [["deleted", deletedAt]],
+    },
+  });
+
+  return {
+    ...transaction,
+    status: "deleted",
+    deletedAt,
+  };
 }
 
 export async function hasProcessedUpdate(updateId: number): Promise<boolean> {
@@ -75,7 +194,7 @@ export async function hasProcessedUpdate(updateId: number): Promise<boolean> {
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${UPDATE_LOG_SHEET_NAME}!A2:A`,
+    range: `${UPDATE_LOG_SHEET}!A2:A`,
   });
 
   const existingIds = response.data.values ?? [];
@@ -89,7 +208,7 @@ export async function markUpdateStarted(updateId: number): Promise<void> {
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `${UPDATE_LOG_SHEET_NAME}!A:F`,
+    range: `${UPDATE_LOG_SHEET}!A:F`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
       values: [
@@ -106,16 +225,16 @@ export async function markUpdateStarted(updateId: number): Promise<void> {
   });
 }
 
-export async function markUpdateCompleted(
+async function updateLogRow(
   updateId: number,
-  action: string
+  values: [string, string, string, string, string]
 ): Promise<void> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${UPDATE_LOG_SHEET_NAME}!A2:F`,
+    range: `${UPDATE_LOG_SHEET}!A2:F`,
   });
 
   const rows = response.data.values ?? [];
@@ -125,61 +244,38 @@ export async function markUpdateCompleted(
     return;
   }
 
-  const sheetRowNumber = rowIndex + 2;
+  const rowNumber = rowIndex + 2;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${UPDATE_LOG_SHEET_NAME}!B${sheetRowNumber}:F${sheetRowNumber}`,
+    range: `${UPDATE_LOG_SHEET}!B${rowNumber}:F${rowNumber}`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
-      values: [
-        [
-          "completed",
-          rows[rowIndex][2] ?? "",
-          new Date().toISOString(),
-          action,
-          "",
-        ],
-      ],
+      values: [values],
     },
   });
+}
+
+export async function markUpdateCompleted(
+  updateId: number,
+  action: string
+): Promise<void> {
+  const now = new Date().toISOString();
+
+  await updateLogRow(updateId, ["completed", now, now, action, ""]);
 }
 
 export async function markUpdateFailed(
   updateId: number,
   errorMessage: string
 ): Promise<void> {
-  const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  const now = new Date().toISOString();
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${UPDATE_LOG_SHEET_NAME}!A2:F`,
-  });
-
-  const rows = response.data.values ?? [];
-  const rowIndex = rows.findIndex((row) => row[0] === String(updateId));
-
-  if (rowIndex === -1) {
-    return;
-  }
-
-  const sheetRowNumber = rowIndex + 2;
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${UPDATE_LOG_SHEET_NAME}!B${sheetRowNumber}:F${sheetRowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [
-        [
-          "failed",
-          rows[rowIndex][2] ?? "",
-          new Date().toISOString(),
-          "",
-          errorMessage.slice(0, 500),
-        ],
-      ],
-    },
-  });
+  await updateLogRow(updateId, [
+    "failed",
+    now,
+    now,
+    "",
+    errorMessage.slice(0, 500),
+  ]);
 }
