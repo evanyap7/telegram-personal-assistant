@@ -10,10 +10,48 @@ export type CalendarAddPayload = {
   end: string;
 };
 
-export type PendingCalendarAction = {
+export type FinanceSelectionPayload = {
+  transactionIds: string[];
+};
+
+export type CalendarSelectionItem = {
+  eventId: string;
+  title: string;
+  start: string;
+  end: string;
+};
+
+export type CalendarSelectionPayload = {
+  calendarName: "personal" | "work";
+  events: CalendarSelectionItem[];
+};
+
+export type FinanceDeletePayload = {
+  transactionId: string;
+};
+
+export type CalendarDeletePayload = {
+  calendarName: "personal" | "work";
+  eventId: string;
+};
+
+type PendingActionType =
+  | "calendar_add"
+  | "finance_select"
+  | "calendar_select"
+  | "finance_delete"
+  | "calendar_delete";
+
+type PendingStatus = "pending" | "selected" | "confirmed" | "cancelled";
+
+type PendingRow = {
   token: string;
   userId: number;
-  payload: CalendarAddPayload;
+  actionType: PendingActionType;
+  payloadJson: string;
+  expiresAt: string;
+  status: string;
+  rowNumber: number;
 };
 
 function getSpreadsheetId(): string {
@@ -30,16 +68,23 @@ function createToken(): string {
   return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
 }
 
-export async function savePendingCalendarAction(input: {
+function isExpired(expiresAt: string): boolean {
+  const expiresAtMs = new Date(expiresAt).getTime();
+
+  return Number.isNaN(expiresAtMs) || expiresAtMs < Date.now();
+}
+
+async function savePendingAction(input: {
   userId: number;
-  payload: CalendarAddPayload;
+  actionType: PendingActionType;
+  payload: unknown;
+  status?: PendingStatus;
 }): Promise<string> {
   const token = createToken();
   const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
 
   await sheets.spreadsheets.values.append({
-    spreadsheetId,
+    spreadsheetId: getSpreadsheetId(),
     range: `${SHEET_NAME}!A:F`,
     valueInputOption: "USER_ENTERED",
     requestBody: {
@@ -47,10 +92,10 @@ export async function savePendingCalendarAction(input: {
         [
           token,
           String(input.userId),
-          "calendar_add",
+          input.actionType,
           JSON.stringify(input.payload),
           new Date(Date.now() + EXPIRY_MS).toISOString(),
-          "pending",
+          input.status ?? "pending",
         ],
       ],
     },
@@ -59,15 +104,11 @@ export async function savePendingCalendarAction(input: {
   return token;
 }
 
-export async function takePendingCalendarAction(
-  token: string,
-  userId: number
-): Promise<PendingCalendarAction | null> {
+async function findPendingRow(token: string): Promise<PendingRow | null> {
   const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
 
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
+    spreadsheetId: getSpreadsheetId(),
     range: `${SHEET_NAME}!A2:F`,
   });
 
@@ -79,88 +120,260 @@ export async function takePendingCalendarAction(
   }
 
   const row = rows[rowIndex];
-  const [storedToken, storedUserId, actionType, payloadJson, expiresAt, status] =
-    row;
 
-  const sheetRowNumber = rowIndex + 2;
+  return {
+    token: row[0] ?? "",
+    userId: Number(row[1]),
+    actionType: (row[2] ?? "") as PendingActionType,
+    payloadJson: row[3] ?? "",
+    expiresAt: row[4] ?? "",
+    status: row[5] ?? "",
+    rowNumber: rowIndex + 2,
+  };
+}
+
+async function setPendingStatus(
+  rowNumber: number,
+  status: PendingStatus
+): Promise<void> {
+  const sheets = getSheetsClient();
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSpreadsheetId(),
+    range: `${SHEET_NAME}!F${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[status]],
+    },
+  });
+}
+
+function parsePayload<T>(payloadJson: string): T {
+  try {
+    return JSON.parse(payloadJson) as T;
+  } catch {
+    throw new Error("Stored confirmation data is invalid.");
+  }
+}
+
+async function takePendingAction<T>(input: {
+  token: string;
+  userId: number;
+  actionType: PendingActionType;
+  allowedStatuses?: PendingStatus[];
+  nextStatus?: PendingStatus;
+}): Promise<{ payload: T; rowNumber: number } | null> {
+  const row = await findPendingRow(input.token);
 
   if (
-    storedUserId !== String(userId) ||
-    actionType !== "calendar_add" ||
-    status !== "pending" ||
-    !expiresAt ||
-    new Date(expiresAt).getTime() < Date.now()
+    !row ||
+    row.userId !== input.userId ||
+    row.actionType !== input.actionType ||
+    isExpired(row.expiresAt) ||
+    !(input.allowedStatuses ?? ["pending"]).includes(
+      row.status as PendingStatus
+    )
   ) {
     return null;
   }
 
-  let payload: CalendarAddPayload;
+  const payload = parsePayload<T>(row.payloadJson);
 
-  try {
-    payload = JSON.parse(payloadJson) as CalendarAddPayload;
-  } catch {
-    throw new Error("Stored calendar confirmation data is invalid.");
+  if (input.nextStatus) {
+    await setPendingStatus(row.rowNumber, input.nextStatus);
   }
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${SHEET_NAME}!F${sheetRowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [["confirmed"]],
-    },
+  return {
+    payload,
+    rowNumber: row.rowNumber,
+  };
+}
+
+async function cancelPendingAction(input: {
+  token: string;
+  userId: number;
+  actionType: PendingActionType;
+  allowedStatuses?: PendingStatus[];
+}): Promise<boolean> {
+  const row = await findPendingRow(input.token);
+
+  if (
+    !row ||
+    row.userId !== input.userId ||
+    row.actionType !== input.actionType ||
+    isExpired(row.expiresAt) ||
+    !(input.allowedStatuses ?? ["pending"]).includes(
+      row.status as PendingStatus
+    )
+  ) {
+    return false;
+  }
+
+  await setPendingStatus(row.rowNumber, "cancelled");
+
+  return true;
+}
+
+export async function savePendingCalendarAction(input: {
+  userId: number;
+  payload: CalendarAddPayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "calendar_add",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingCalendarAction(
+  token: string,
+  userId: number
+): Promise<{ payload: CalendarAddPayload } | null> {
+  const result = await takePendingAction<CalendarAddPayload>({
+    token,
+    userId,
+    actionType: "calendar_add",
+    nextStatus: "confirmed",
   });
 
-  return {
-    token: storedToken,
-    userId,
-    payload,
-  };
+  return result ? { payload: result.payload } : null;
 }
 
 export async function cancelPendingCalendarAction(
   token: string,
   userId: number
 ): Promise<boolean> {
-  const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "calendar_add",
+  });
+}
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${SHEET_NAME}!A2:F`,
+export async function savePendingFinanceSelection(input: {
+  userId: number;
+  transactionIds: string[];
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "finance_select",
+    payload: {
+      transactionIds: input.transactionIds,
+    } satisfies FinanceSelectionPayload,
+  });
+}
+
+export async function takePendingFinanceSelection(
+  token: string,
+  userId: number
+): Promise<FinanceSelectionPayload | null> {
+  const result = await takePendingAction<FinanceSelectionPayload>({
+    token,
+    userId,
+    actionType: "finance_select",
+    nextStatus: "selected",
   });
 
-  const rows = response.data.values ?? [];
-  const rowIndex = rows.findIndex((row) => row[0] === token);
+  return result?.payload ?? null;
+}
 
-  if (rowIndex === -1) {
-    return false;
-  }
+export async function savePendingCalendarSelection(input: {
+  userId: number;
+  calendarName: "personal" | "work";
+  events: CalendarSelectionItem[];
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "calendar_select",
+    payload: {
+      calendarName: input.calendarName,
+      events: input.events,
+    } satisfies CalendarSelectionPayload,
+  });
+}
 
-  const row = rows[rowIndex];
-  const [storedToken, storedUserId, actionType, , expiresAt, status] = row;
-
-  const sheetRowNumber = rowIndex + 2;
-
-  if (
-    storedToken !== token ||
-    storedUserId !== String(userId) ||
-    actionType !== "calendar_add" ||
-    status !== "pending" ||
-    !expiresAt ||
-    new Date(expiresAt).getTime() < Date.now()
-  ) {
-    return false;
-  }
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${SHEET_NAME}!F${sheetRowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [["cancelled"]],
-    },
+export async function takePendingCalendarSelection(
+  token: string,
+  userId: number
+): Promise<CalendarSelectionPayload | null> {
+  const result = await takePendingAction<CalendarSelectionPayload>({
+    token,
+    userId,
+    actionType: "calendar_select",
+    nextStatus: "selected",
   });
 
-  return true;
+  return result?.payload ?? null;
+}
+
+export async function savePendingFinanceDeleteAction(input: {
+  userId: number;
+  payload: FinanceDeletePayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "finance_delete",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingFinanceDeleteAction(
+  token: string,
+  userId: number
+): Promise<FinanceDeletePayload | null> {
+  const result = await takePendingAction<FinanceDeletePayload>({
+    token,
+    userId,
+    actionType: "finance_delete",
+    nextStatus: "confirmed",
+  });
+
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingFinanceDeleteAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "finance_delete",
+  });
+}
+
+export async function savePendingCalendarDeleteAction(input: {
+  userId: number;
+  payload: CalendarDeletePayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "calendar_delete",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingCalendarDeleteAction(
+  token: string,
+  userId: number
+): Promise<CalendarDeletePayload | null> {
+  const result = await takePendingAction<CalendarDeletePayload>({
+    token,
+    userId,
+    actionType: "calendar_delete",
+    nextStatus: "confirmed",
+  });
+
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingCalendarDeleteAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "calendar_delete",
+  });
 }
