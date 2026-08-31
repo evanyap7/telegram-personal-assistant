@@ -5,14 +5,11 @@ export const CALENDARS = {
 
 export type CalendarName = keyof typeof CALENDARS;
 
-export function getCalendarId(name: string): string {
-  const normalized = name.trim().toLowerCase() as CalendarName;
-  const calendarId = CALENDARS[normalized];
+export function getCalendarId(name: CalendarName): string {
+  const calendarId = CALENDARS[name];
 
   if (!calendarId) {
-    throw new Error(
-      "Unknown calendar. Choose one of: personal, work."
-    );
+    throw new Error(`Calendar "${name}" is not configured.`);
   }
 
   return calendarId;

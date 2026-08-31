@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-import { addTransaction } from "@/lib/finance";
+import { parseAssistantIntent } from "@/lib/assistant-intent";
+import { createCalendarEvent } from "@/lib/calendar";
+import { addTransaction, listRecentTransactions } from "@/lib/finance";
+import {
+  cancelPendingActionsForUser,
+  savePendingAction,
+  takePendingAction,
+} from "@/lib/pending-actions";
 import { sendTelegramMessage } from "@/lib/telegram";
 
 const telegramUpdateSchema = z.object({
@@ -29,14 +36,29 @@ function helpText() {
   return [
     "Personal Assistant commands:",
     "",
+    "Natural language:",
+    "• I spent $6 on dinner today",
+    "• Schedule floorball tomorrow from 8 pm to 9:30 pm in personal",
+    "",
+    "Finance commands:",
     "/finance add <income|expense> | <amount> | <currency> | <category> | <description>",
     "/finance list",
     "",
+    "Confirmation:",
+    "/confirm <token>",
+    "/cancel",
+    "",
     "Example:",
     "/finance add expense | 14.80 | SGD | Food | Lunch at NUS",
-    "",
-    "Calendar commands will be added after finance is verified.",
   ].join("\n");
+}
+
+function formatSingaporeDateTime(value: string): string {
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 export async function POST(request: Request) {
@@ -62,11 +84,79 @@ export async function POST(request: Request) {
       return new Response("Forbidden", { status: 403 });
     }
 
+    const chatId = message.chat.id;
+    const userId = message.from.id;
     const text = message.text.trim();
 
     if (text === "/start" || text === "/help") {
-      await sendTelegramMessage(message.chat.id, helpText());
+      await sendTelegramMessage(chatId, helpText());
       return Response.json({ ok: true });
+    }
+
+    if (text === "/cancel") {
+      const cancelled = cancelPendingActionsForUser(userId);
+
+      await sendTelegramMessage(
+        chatId,
+        cancelled > 0
+          ? "Pending action cancelled."
+          : "There was no pending action to cancel."
+      );
+
+      return Response.json({ ok: true });
+    }
+
+    if (text.startsWith("/confirm ")) {
+      const token = text.replace("/confirm ", "").trim();
+      const pendingAction = takePendingAction(token, userId);
+
+      if (!pendingAction) {
+        await sendTelegramMessage(
+          chatId,
+          "That confirmation token is invalid or has expired. Please send the request again."
+        );
+
+        return Response.json({ ok: true });
+      }
+
+      if (pendingAction.type === "finance_add") {
+        const transaction = await addTransaction(pendingAction.payload);
+
+        await sendTelegramMessage(
+          chatId,
+          [
+            "Transaction added.",
+            `ID: ${transaction.transactionId}`,
+            `Type: ${pendingAction.payload.type}`,
+            `Amount: ${pendingAction.payload.amount.toFixed(2)} ${pendingAction.payload.currency}`,
+            `Category: ${pendingAction.payload.category}`,
+            `Description: ${pendingAction.payload.description}`,
+          ].join("\n")
+        );
+
+        return Response.json({ ok: true });
+      }
+
+      if (pendingAction.type === "calendar_add") {
+        const event = await createCalendarEvent(pendingAction.payload);
+
+        await sendTelegramMessage(
+          chatId,
+          [
+            "Calendar event created.",
+            `Calendar: ${pendingAction.payload.calendarName}`,
+            `Title: ${pendingAction.payload.title}`,
+            `Start: ${formatSingaporeDateTime(pendingAction.payload.start)}`,
+            `End: ${formatSingaporeDateTime(pendingAction.payload.end)}`,
+            `Event ID: ${event.id}`,
+            event.htmlLink ? `Link: ${event.htmlLink}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+
+        return Response.json({ ok: true });
+      }
     }
 
     if (text.startsWith("/finance add ")) {
@@ -77,9 +167,15 @@ export async function POST(request: Request) {
 
       if (rawFields.length !== 5) {
         await sendTelegramMessage(
-          message.chat.id,
-          "Invalid format.\n\nUse:\n/finance add expense | 14.80 | SGD | Food | Lunch at NUS"
+          chatId,
+          [
+            "Invalid format.",
+            "",
+            "Use:",
+            "/finance add expense | 14.80 | SGD | Food | Lunch at NUS",
+          ].join("\n")
         );
+
         return Response.json({ ok: true });
       }
 
@@ -96,7 +192,7 @@ export async function POST(request: Request) {
       const transaction = await addTransaction(input);
 
       await sendTelegramMessage(
-        message.chat.id,
+        chatId,
         [
           "Transaction added.",
           `ID: ${transaction.transactionId}`,
@@ -110,9 +206,111 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    if (text === "/finance list") {
+      const rows = await listRecentTransactions();
+
+      if (rows.length === 0) {
+        await sendTelegramMessage(chatId, "No finance transactions found.");
+        return Response.json({ ok: true });
+      }
+
+      const latestRows = rows.slice(-10).reverse();
+
+      const formattedRows = latestRows.map((row) => {
+        const [
+          transactionId,
+          timestamp,
+          type,
+          amount,
+          currency,
+          category,
+          description,
+        ] = row;
+
+        return [
+          `${type ?? "unknown"}: ${amount ?? "?"} ${currency ?? ""}`,
+          `Category: ${category ?? "Uncategorized"}`,
+          `Description: ${description ?? "No description"}`,
+          `ID: ${transactionId ?? "Unknown"}`,
+          `Recorded: ${timestamp ?? "Unknown"}`,
+        ].join("\n");
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        ["Recent transactions:", "", ...formattedRows].join("\n\n")
+      );
+
+      return Response.json({ ok: true });
+    }
+
+    const intent = await parseAssistantIntent(text);
+
+    if (intent.action === "finance_add") {
+      const token = savePendingAction({
+        type: "finance_add",
+        userId,
+        payload: {
+          type: intent.type,
+          amount: intent.amount,
+          currency: intent.currency,
+          category: intent.category,
+          description: intent.description,
+        },
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        [
+          "I understood this as a finance entry:",
+          "",
+          `Type: ${intent.type}`,
+          `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
+          `Category: ${intent.category}`,
+          `Description: ${intent.description}`,
+          `Date: ${intent.transactionDate}`,
+          "",
+          `Reply /confirm ${token} to save it.`,
+          "Reply /cancel to discard it.",
+        ].join("\n")
+      );
+
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "calendar_add") {
+      const token = savePendingAction({
+        type: "calendar_add",
+        userId,
+        payload: {
+          calendarName: intent.calendarName,
+          title: intent.title,
+          start: intent.start,
+          end: intent.end,
+        },
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        [
+          "Create this calendar event?",
+          "",
+          `Calendar: ${intent.calendarName}`,
+          `Title: ${intent.title}`,
+          `Start: ${formatSingaporeDateTime(intent.start)}`,
+          `End: ${formatSingaporeDateTime(intent.end)}`,
+          "",
+          `Reply /confirm ${token} to create it.`,
+          "Reply /cancel to discard it.",
+        ].join("\n")
+      );
+
+      return Response.json({ ok: true });
+    }
+
     await sendTelegramMessage(
-      message.chat.id,
-      "I did not understand that command.\n\nUse /help to see supported commands."
+      chatId,
+      `${intent.message}\n\nTry /help for examples.`
     );
 
     return Response.json({ ok: true });
