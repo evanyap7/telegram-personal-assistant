@@ -1,12 +1,24 @@
 import { getCalendarId } from "./calendars";
 import { getCalendarClient } from "./google";
 
-export type CreateEventInput = {
+export type TimedCalendarEventInput = {
   calendarName: "personal" | "work";
+  allDay?: false;
   title: string;
   start: string;
   end: string;
 };
+
+export type AllDayCalendarEventInput = {
+  calendarName: "personal" | "work";
+  allDay: true;
+  title: string;
+  date: string;
+};
+
+export type CreateEventInput =
+  | TimedCalendarEventInput
+  | AllDayCalendarEventInput;
 
 export type CalendarEventMatch = {
   calendarName: "personal" | "work";
@@ -17,15 +29,101 @@ export type CalendarEventMatch = {
   htmlLink: string | null;
 };
 
-export async function createCalendarEvent(input: CreateEventInput): Promise<{
+function isDateOnly(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function singaporeDateFromDateTime(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("The calendar event date is invalid.");
+  }
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function nextSingaporeDate(date: string): string {
+  const parsed = new Date(`${date}T00:00:00+08:00`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("The all-day event date is invalid.");
+  }
+
+  parsed.setUTCDate(parsed.getUTCDate() + 1);
+
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(parsed);
+}
+
+async function insertAllDayEvent(input: {
+  calendarName: "personal" | "work";
+  title: string;
+  date: string;
+}): Promise<{
   id: string;
   htmlLink: string | null;
 }> {
+  const calendar = getCalendarClient();
+  const calendarId = getCalendarId(input.calendarName);
+
+  const response = await calendar.events.insert({
+    calendarId,
+    requestBody: {
+      summary: input.title,
+      start: {
+        date: input.date,
+      },
+      end: {
+        date: nextSingaporeDate(input.date),
+      },
+    },
+  });
+
+  return {
+    id: response.data.id ?? "unknown",
+    htmlLink: response.data.htmlLink ?? null,
+  };
+}
+
+export async function createCalendarEvent(
+  input: CreateEventInput
+): Promise<{
+  id: string;
+  htmlLink: string | null;
+}> {
+  if (input.allDay === true) {
+    return insertAllDayEvent(input);
+  }
+
   const start = new Date(input.start);
   const end = new Date(input.end);
 
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
     throw new Error("The calendar event time is invalid.");
+  }
+
+  const isSameInstant = start.getTime() === end.getTime();
+  const isMidnightStart =
+    start.getUTCHours() === 16 &&
+    start.getUTCMinutes() === 0 &&
+    start.getUTCSeconds() === 0;
+
+  if (isSameInstant && isMidnightStart) {
+    return insertAllDayEvent({
+      calendarName: input.calendarName,
+      title: input.title,
+      date: singaporeDateFromDateTime(input.start),
+    });
   }
 
   if (end <= start) {
@@ -40,11 +138,11 @@ export async function createCalendarEvent(input: CreateEventInput): Promise<{
     requestBody: {
       summary: input.title,
       start: {
-        dateTime: start.toISOString(),
+        dateTime: input.start,
         timeZone: "Asia/Singapore",
       },
       end: {
-        dateTime: end.toISOString(),
+        dateTime: input.end,
         timeZone: "Asia/Singapore",
       },
     },
