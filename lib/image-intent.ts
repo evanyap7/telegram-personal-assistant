@@ -49,14 +49,32 @@ const imageIntentSchema = z.discriminatedUnion("action", [
 export type ImageAssistantIntent = z.infer<typeof imageIntentSchema>;
 
 function extractJson(text: string): unknown {
-  const cleaned = text
-    .trim()
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
+  const cleaned = text.trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {}
+
+  const stripped = cleaned
+    .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
 
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(stripped);
+  } catch {}
+
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const jsonSubstring = cleaned.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(jsonSubstring);
+    } catch {}
+  }
+
+  throw new Error("Failed to parse JSON from model output: " + cleaned.slice(0, 300));
 }
 
 export async function parseImageAssistantIntent(input: {
@@ -165,8 +183,12 @@ Rules:
       },
     ],
     temperature: 0,
-    maxOutputTokens: 1_500,
+    maxOutputTokens: 8_192,
   });
+
+  if (result.finishReason === "length") {
+    throw new Error("Model response was truncated due to output token limit.");
+  }
 
   return imageIntentSchema.parse(extractJson(result.text));
 }
