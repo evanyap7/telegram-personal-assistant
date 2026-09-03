@@ -1,3 +1,5 @@
+import { parseImageAssistantIntent } from "@/lib/image-intent";
+import { downloadTelegramPhoto } from "@/lib/telegram-files";
 import { z } from "zod";
 
 import { parseAssistantIntent } from "@/lib/assistant-intent";
@@ -19,15 +21,18 @@ import {
 import {
   cancelPendingCalendarAction,
   cancelPendingCalendarDeleteAction,
+  cancelPendingFinanceAddAction,
   cancelPendingFinanceDeleteAction,
   savePendingCalendarAction,
   savePendingCalendarDeleteAction,
   savePendingCalendarSelection,
+  savePendingFinanceAddAction,
   savePendingFinanceDeleteAction,
   savePendingFinanceSelection,
   takePendingCalendarAction,
   takePendingCalendarDeleteAction,
   takePendingCalendarSelection,
+  takePendingFinanceAddAction,
   takePendingFinanceDeleteAction,
   takePendingFinanceSelection,
 } from "@/lib/pending-actions";
@@ -49,6 +54,18 @@ const telegramUpdateSchema = z.object({
         id: z.number(),
       }),
       text: z.string().optional(),
+      caption: z.string().optional(),
+      photo: z
+        .array(
+          z.object({
+            file_id: z.string(),
+            file_unique_id: z.string(),
+            width: z.number(),
+            height: z.number(),
+            file_size: z.number().optional(),
+          })
+        )
+        .optional(),
     })
     .optional(),
   callback_query: z
@@ -83,11 +100,18 @@ function helpText() {
     "You can write naturally:",
     "• spent $6.20 for lunch",
     "• schedule floorball tomorrow from 8 pm to 9:30 pm",
+    "• add gym tomorrow",
     "• delete my coffee expense",
     "• delete gym tomorrow from personal",
     "",
+    "You can send a screenshot or photo with a caption:",
+    "• [calendar screenshot] Add these dates to my personal calendar",
+    "• [calendar screenshot] Add these dates to my work calendar",
+    "• [receipt image] Log this receipt as an expense",
+    "",
     "Finance entries are saved after I understand them.",
     "Calendar creation and every deletion require confirmation.",
+    "I will extract details from the image and ask for confirmation before creating calendar events or saving image-based transactions.",
     "",
     "Tap Menu to view commands.",
   ].join("\n");
@@ -104,6 +128,19 @@ function formatSingaporeDateTime(value: string): string {
     timeZone: "Asia/Singapore",
     dateStyle: "medium",
     timeStyle: "short",
+  }).format(date);
+}
+
+function formatCalendarDate(value: string): string {
+  const date = new Date(`${value}T00:00:00+08:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    dateStyle: "medium",
   }).format(date);
 }
 
@@ -180,15 +217,27 @@ function formatFinanceTransaction(input: {
 function formatCalendarEvent(input: {
   calendarName: "personal" | "work";
   title: string;
-  start: string;
-  end: string;
+  allDay?: boolean;
+  start?: string;
+  end?: string;
+  date?: string;
   eventId?: string;
 }): string {
+  const timeLines =
+    input.allDay || (!input.start && input.date)
+      ? [
+        `Date: ${formatCalendarDate(input.date ?? input.start ?? "")}`,
+        "Time: All day",
+      ]
+      : [
+        `Start: ${formatSingaporeDateTime(input.start ?? "")}`,
+        `End: ${formatSingaporeDateTime(input.end ?? "")}`,
+      ];
+
   return [
     `Calendar: ${input.calendarName}`,
     `Title: ${input.title}`,
-    `Start: ${formatSingaporeDateTime(input.start)}`,
-    `End: ${formatSingaporeDateTime(input.end)}`,
+    ...timeLines,
     input.eventId ? `Event ID: ${input.eventId}` : "",
   ]
     .filter(Boolean)
@@ -271,7 +320,22 @@ async function handleCalendarCreateCallback(input: {
     input.chatId,
     [
       "Calendar event created.",
-      formatCalendarEvent(pendingAction.payload),
+      formatCalendarEvent(
+        pendingAction.payload.allDay
+          ? {
+            calendarName: pendingAction.payload.calendarName,
+            allDay: true,
+            title: pendingAction.payload.title,
+            date: pendingAction.payload.date,
+          }
+          : {
+            calendarName: pendingAction.payload.calendarName,
+            allDay: false,
+            title: pendingAction.payload.title,
+            start: pendingAction.payload.start,
+            end: pendingAction.payload.end,
+          }
+      ),
       `Event ID: ${event.id}`,
       event.htmlLink ? `Link: ${event.htmlLink}` : "",
     ]
@@ -454,6 +518,97 @@ async function handleCalendarSelectionCallback(input: {
   );
 }
 
+async function handleFinanceAddCallback(input: {
+  callbackId: string;
+  action: "finance_add_yes" | "finance_add_no";
+  token: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+  startedAt: number;
+}) {
+  if (input.action === "finance_add_no") {
+    const cancelled = await cancelPendingFinanceAddAction(
+      input.token,
+      input.userId
+    );
+
+    await answerTelegramCallback(
+      input.callbackId,
+      cancelled ? "Transaction cancelled." : "This request has expired."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      cancelled
+        ? "Finance transaction logging cancelled."
+        : "This finance request has already expired or was handled."
+    );
+
+    await markUpdateCompleted(input.updateId, "finance_add_cancelled");
+    return;
+  }
+
+  const payload = await takePendingFinanceAddAction(
+    input.token,
+    input.userId
+  );
+
+  if (!payload) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "This confirmation has expired or was already used."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      "This finance request has expired or was already handled."
+    );
+
+    await markUpdateCompleted(
+      input.updateId,
+      "finance_add_confirmation_invalid"
+    );
+    return;
+  }
+
+  await answerTelegramCallback(input.callbackId, "Adding transaction...");
+
+  const transaction = await addTransaction({
+    type: payload.type,
+    amount: payload.amount,
+    currency: payload.currency,
+    category: payload.category,
+    description: payload.description,
+  });
+
+  await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+
+  await sendTelegramMessage(
+    input.chatId,
+    [
+      "Transaction added.",
+      `ID: ${transaction.transactionId}`,
+      `Type: ${payload.type}`,
+      `Amount: ${payload.amount.toFixed(2)} ${payload.currency}`,
+      `Category: ${payload.category}`,
+      `Description: ${payload.description}`,
+      `Date interpreted as: ${payload.transactionDate}`,
+    ].join("\n")
+  );
+
+  await markUpdateCompleted(input.updateId, "finance_add");
+
+  log("telegram.webhook.completed", {
+    updateId: input.updateId,
+    action: "finance_add",
+    durationMs: Date.now() - input.startedAt,
+  });
+}
+
 async function handleFinanceDeleteCallback(input: {
   callbackId: string;
   action: "finance_delete_yes" | "finance_delete_no";
@@ -621,6 +776,23 @@ async function handleCallback(input: {
   const parts = input.callbackData.split(":");
   const action = parts[0];
 
+  if (action === "finance_add_yes" || action === "finance_add_no") {
+    const token = parts[1];
+
+    if (!token) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    await handleFinanceAddCallback({
+      ...input,
+      action,
+      token,
+    });
+
+    return;
+  }
+
   if (action === "calendar_yes" || action === "calendar_no") {
     const token = parts[1];
 
@@ -783,12 +955,193 @@ export async function POST(request: Request) {
 
     const message = update.message;
 
-    if (!message?.text) {
-      await markUpdateCompleted(updateId, "ignored_no_text");
+    if (!message) {
+      await markUpdateCompleted(updateId, "ignored_no_message");
+
       return Response.json({ ok: true });
     }
 
     const chatId = message.chat.id;
+
+    if (message.photo?.length) {
+      const instruction = message.caption?.trim() ?? "";
+      const largestPhoto = message.photo[message.photo.length - 1];
+
+      if (!instruction) {
+        await sendTelegramMessage(
+          chatId,
+          [
+            "I received your image.",
+            "",
+            "Please resend it with an instruction in the caption, for example:",
+            "• Add these dates to my personal calendar",
+            "• Add these dates to my work calendar",
+            "• Log this receipt as an expense",
+          ].join("\n")
+        );
+
+        await markUpdateCompleted(updateId, "image_missing_instruction");
+
+        return Response.json({ ok: true });
+      }
+
+      await sendTelegramMessage(chatId, "Reading your image...");
+
+      const downloadedImage = await downloadTelegramPhoto(largestPhoto.file_id);
+
+      const imageIntent = await parseImageAssistantIntent({
+        instruction,
+        image: downloadedImage.data,
+        mediaType: downloadedImage.mediaType,
+      });
+
+      log("telegram.image_intent.parsed", {
+        updateId,
+        action: imageIntent.action,
+        imageBytes: downloadedImage.data.byteLength,
+      });
+
+      if (imageIntent.action === "unknown") {
+        await sendTelegramMessage(
+          chatId,
+          `${imageIntent.message}\n\nPlease send a clearer image or add more detail in the caption.`
+        );
+
+        await markUpdateCompleted(updateId, "image_unknown");
+
+        return Response.json({ ok: true });
+      }
+
+      if (imageIntent.action === "finance_from_image") {
+        const token = await savePendingFinanceAddAction({
+          userId: message.from.id,
+          payload: {
+            type: imageIntent.type,
+            amount: imageIntent.amount,
+            currency: imageIntent.currency,
+            category: imageIntent.category,
+            description: imageIntent.description,
+            transactionDate: imageIntent.transactionDate,
+          },
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          [
+            "I found this transaction in the image. Log it?",
+            "",
+            `Type: ${imageIntent.type}`,
+            `Amount: ${imageIntent.amount.toFixed(2)} ${imageIntent.currency}`,
+            `Category: ${imageIntent.category}`,
+            `Description: ${imageIntent.description}`,
+            `Date: ${imageIntent.transactionDate}`,
+          ].join("\n"),
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: "✅ Yes, log",
+                  callback_data: `finance_add_yes:${token}`,
+                },
+                {
+                  text: "❌ No, cancel",
+                  callback_data: `finance_add_no:${token}`,
+                },
+              ],
+            ],
+          }
+        );
+
+        await markUpdateCompleted(updateId, "image_finance_pending");
+
+        return Response.json({ ok: true });
+      }
+
+      if (imageIntent.action === "calendar_from_image") {
+        const event = imageIntent.events[0];
+
+        if (!event) {
+          await sendTelegramMessage(
+            chatId,
+            "I could not find a clear calendar event in that image."
+          );
+
+          await markUpdateCompleted(updateId, "image_calendar_empty");
+
+          return Response.json({ ok: true });
+        }
+
+        const payload = event.allDay
+          ? {
+            calendarName: imageIntent.calendarName,
+            allDay: true as const,
+            title: event.title,
+            date: event.date,
+          }
+          : {
+            calendarName: imageIntent.calendarName,
+            allDay: false as const,
+            title: event.title,
+            start: event.start,
+            end: event.end,
+          };
+
+        const token = await savePendingCalendarAction({
+          userId: message.from.id,
+          payload,
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          [
+            "I found this event in the image. Create it?",
+            "",
+            event.allDay
+              ? [
+                `Calendar: ${imageIntent.calendarName}`,
+                `Title: ${event.title}`,
+                `Date: ${formatCalendarDate(event.date)}`,
+                "Time: All day",
+              ].join("\n")
+              : [
+                `Calendar: ${imageIntent.calendarName}`,
+                `Title: ${event.title}`,
+                `Start: ${formatSingaporeDateTime(event.start)}`,
+                `End: ${formatSingaporeDateTime(event.end)}`,
+              ].join("\n"),
+          ].join("\n"),
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: "✅ Yes, create",
+                  callback_data: `calendar_yes:${token}`,
+                },
+                {
+                  text: "❌ No, cancel",
+                  callback_data: `calendar_no:${token}`,
+                },
+              ],
+            ],
+          }
+        );
+
+        await markUpdateCompleted(updateId, "image_calendar_pending");
+
+        return Response.json({ ok: true });
+      }
+
+      await markUpdateCompleted(updateId, "image_unhandled");
+
+      return Response.json({ ok: true });
+    }
+
+    if (!message.text) {
+      await markUpdateCompleted(updateId, "ignored_no_text");
+
+      return Response.json({ ok: true });
+    }
+
     const text = message.text.trim();
 
     log("telegram.webhook.received", {
@@ -834,11 +1187,18 @@ export async function POST(request: Request) {
           "Calendar assistant:",
           "",
           "Write naturally:",
+          "• Add gym tomorrow",
           "• Schedule floorball tomorrow from 8 pm to 9:30 pm",
           "• Add a project meeting next Friday from 2 pm to 3 pm in work",
           "• Delete gym tomorrow from personal",
           "",
+          "You can send a screenshot or photo with a caption:",
+          "• [calendar screenshot] Add these dates to my personal calendar",
+          "• [calendar screenshot] Add these dates to my work calendar",
+          "",
+          "A date without a time creates an all-day event.",
           "I will ask for confirmation before creating or deleting an event.",
+          "I will extract details from the image and ask for confirmation before creating calendar events or saving image-based transactions.",
         ].join("\n")
       );
 
@@ -951,14 +1311,24 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "calendar_add") {
-      const token = await savePendingCalendarAction({
-        userId: message.from.id,
-        payload: {
+      const payload = intent.allDay
+        ? {
           calendarName: intent.calendarName,
+          allDay: true as const,
+          title: intent.title,
+          date: intent.date,
+        }
+        : {
+          calendarName: intent.calendarName,
+          allDay: false as const,
           title: intent.title,
           start: intent.start,
           end: intent.end,
-        },
+        };
+
+      const token = await savePendingCalendarAction({
+        userId: message.from.id,
+        payload,
       });
 
       await sendTelegramMessage(
@@ -966,12 +1336,22 @@ export async function POST(request: Request) {
         [
           "Create this calendar event?",
           "",
-          formatCalendarEvent({
-            calendarName: intent.calendarName,
-            title: intent.title,
-            start: intent.start,
-            end: intent.end,
-          }),
+          formatCalendarEvent(
+            intent.allDay
+              ? {
+                calendarName: intent.calendarName,
+                allDay: true,
+                title: intent.title,
+                date: intent.date,
+              }
+              : {
+                calendarName: intent.calendarName,
+                allDay: false,
+                title: intent.title,
+                start: intent.start,
+                end: intent.end,
+              }
+          ),
         ].join("\n"),
         {
           inline_keyboard: [
@@ -1018,8 +1398,7 @@ export async function POST(request: Request) {
       await sendTelegramMessage(
         chatId,
         [
-          `Found ${limitedMatches.length} active finance match${
-            limitedMatches.length === 1 ? "" : "es"
+          `Found ${limitedMatches.length} active finance match${limitedMatches.length === 1 ? "" : "es"
           } for “${intent.query}”.`,
           "",
           "Choose the exact transaction to delete:",
@@ -1072,8 +1451,7 @@ export async function POST(request: Request) {
       await sendTelegramMessage(
         chatId,
         [
-          `Found ${limitedMatches.length} upcoming ${intent.calendarName} calendar match${
-            limitedMatches.length === 1 ? "" : "es"
+          `Found ${limitedMatches.length} upcoming ${intent.calendarName} calendar match${limitedMatches.length === 1 ? "" : "es"
           } for “${intent.query}”.`,
           "",
           "Choose the exact event to delete:",

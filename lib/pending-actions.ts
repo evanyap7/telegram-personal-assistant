@@ -3,11 +3,28 @@ import { getSheetsClient } from "./google";
 const SHEET_NAME = "PendingActions";
 const EXPIRY_MS = 5 * 60 * 1000;
 
-export type CalendarAddPayload = {
-  calendarName: "personal" | "work";
-  title: string;
-  start: string;
-  end: string;
+export type CalendarAddPayload =
+  | {
+      calendarName: "personal" | "work";
+      allDay: false;
+      title: string;
+      start: string;
+      end: string;
+    }
+  | {
+      calendarName: "personal" | "work";
+      allDay: true;
+      title: string;
+      date: string;
+    };
+
+export type FinanceAddPayload = {
+  type: "income" | "expense";
+  amount: number;
+  currency: string;
+  category: string;
+  description: string;
+  transactionDate: string;
 };
 
 export type FinanceSelectionPayload = {
@@ -37,6 +54,7 @@ export type CalendarDeletePayload = {
 
 type PendingActionType =
   | "calendar_add"
+  | "finance_add"
   | "finance_select"
   | "calendar_select"
   | "finance_delete"
@@ -247,6 +265,42 @@ export async function cancelPendingCalendarAction(
     token,
     userId,
     actionType: "calendar_add",
+  });
+}
+
+export async function savePendingFinanceAddAction(input: {
+  userId: number;
+  payload: FinanceAddPayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "finance_add",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingFinanceAddAction(
+  token: string,
+  userId: number
+): Promise<FinanceAddPayload | null> {
+  const result = await takePendingAction<FinanceAddPayload>({
+    token,
+    userId,
+    actionType: "finance_add",
+    nextStatus: "confirmed",
+  });
+
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingFinanceAddAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "finance_add",
   });
 }
 

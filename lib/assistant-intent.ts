@@ -9,7 +9,25 @@ const singaporeDateTimeSchema = z
     "Expected Singapore datetime ending in +08:00."
   );
 
-const intentSchema = z.discriminatedUnion("action", [
+const calendarAddSchema = z.discriminatedUnion("allDay", [
+  z.object({
+    action: z.literal("calendar_add"),
+    calendarName: z.enum(["personal", "work"]),
+    allDay: z.literal(false),
+    title: z.string().min(1).max(100),
+    start: singaporeDateTimeSchema,
+    end: singaporeDateTimeSchema,
+  }),
+  z.object({
+    action: z.literal("calendar_add"),
+    calendarName: z.enum(["personal", "work"]),
+    allDay: z.literal(true),
+    title: z.string().min(1).max(100),
+    date: z.string().date(),
+  }),
+]);
+
+const intentSchema = z.union([
   z.object({
     action: z.literal("finance_add"),
     type: z.enum(["income", "expense"]),
@@ -19,13 +37,7 @@ const intentSchema = z.discriminatedUnion("action", [
     description: z.string().min(1).max(200),
     transactionDate: z.string().date(),
   }),
-  z.object({
-    action: z.literal("calendar_add"),
-    calendarName: z.enum(["personal", "work"]),
-    title: z.string().min(1).max(100),
-    start: singaporeDateTimeSchema,
-    end: singaporeDateTimeSchema,
-  }),
+  calendarAddSchema,
   z.object({
     action: z.literal("calendar_delete_search"),
     calendarName: z.enum(["personal", "work"]),
@@ -93,13 +105,24 @@ Finance entry:
   "transactionDate": "YYYY-MM-DD"
 }
 
-Calendar creation:
+Timed calendar creation, only when the user gives a date and a clear
+start time plus end time or duration:
 {
   "action": "calendar_add",
   "calendarName": "personal" or "work",
+  "allDay": false,
   "title": "event title",
   "start": "YYYY-MM-DDTHH:mm:ss+08:00",
   "end": "YYYY-MM-DDTHH:mm:ss+08:00"
+}
+
+All-day calendar creation, when the user gives a date but no time:
+{
+  "action": "calendar_add",
+  "calendarName": "personal" or "work",
+  "allDay": true,
+  "title": "event title",
+  "date": "YYYY-MM-DD"
 }
 
 Calendar deletion search:
@@ -132,9 +155,18 @@ Finance rules:
 Calendar creation rules:
 - Only use personal or work. Default to personal if omitted.
 - Resolve relative dates using the stated Singapore date.
-- Require a clear start time and end time/duration.
-- Never invent a duration.
-- Include seconds as :00 and end with +08:00.
+- If the user gives a date but no time, create an all-day event:
+  set allDay to true and return date only.
+- If the user gives both a date and time, create a timed event:
+  set allDay to false and provide start and end.
+- For timed events, require a clear start time and end time or duration.
+- Never invent a date, time, or duration.
+- If no date can be determined, return unknown.
+- Include seconds as :00 and end timed datetimes with +08:00.
+- "Add gym tomorrow" means an all-day calendar_add.
+- "Schedule gym tomorrow at 7 pm for 1 hour" means a timed calendar_add.
+- "Meeting tomorrow at 3 pm" returns unknown because end time or duration
+  is missing.
 
 Deletion rules:
 - If the user asks to delete, remove, cancel, undo, or erase a calendar event,
