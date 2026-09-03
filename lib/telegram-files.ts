@@ -26,7 +26,9 @@ export async function downloadTelegramPhoto(fileId: string): Promise<{
   const botToken = getTelegramBotToken();
 
   const fileResponse = await fetch(
-    `https://api.telegram.org/bot${botToken}/getFile`,
+    `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(
+      fileId
+    )}`,
     {
       method: "GET",
       cache: "no-store",
@@ -34,7 +36,10 @@ export async function downloadTelegramPhoto(fileId: string): Promise<{
   );
 
   if (!fileResponse.ok) {
-    throw new Error("Telegram getFile request failed.");
+    const errorText = await fileResponse.text();
+    throw new Error(
+      `Telegram getFile request failed: ${fileResponse.status} ${errorText}`
+    );
   }
 
   const filePayload =
@@ -67,7 +72,10 @@ export async function downloadTelegramPhoto(fileId: string): Promise<{
   });
 
   if (!downloadResponse.ok) {
-    throw new Error("Telegram photo download failed.");
+    const errorText = await downloadResponse.text();
+    throw new Error(
+      `Telegram photo download failed: ${downloadResponse.status} ${errorText}`
+    );
   }
 
   const contentLength = Number(
