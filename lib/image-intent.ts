@@ -29,7 +29,7 @@ const imageIntentSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("calendar_from_image"),
     calendarName: z.enum(["personal", "work"]),
-    events: z.array(calendarEventSchema).min(1).max(5),
+    events: z.array(calendarEventSchema).min(1).max(30),
   }),
   z.object({
     action: z.literal("finance_from_image"),
@@ -157,8 +157,7 @@ Rules:
 - If an event has a date but no time, set allDay to true.
 - For timed events, require both a start and end time or an explicit duration.
 - Never invent dates, times, amounts, merchants, or durations.
-- Extract at most 5 calendar events.
-- If the image has more than 5 events, extract the first 5 clear events and mention this in unknown only if no valid output can be produced.
+- Extract all calendar events found in the image (up to 30 events).
 - For receipt/transaction images, use finance_from_image.
 - Treat "$" as SGD unless the image clearly identifies another currency.
 - Use a sensible category: Dining, Transport, Groceries, Shopping,

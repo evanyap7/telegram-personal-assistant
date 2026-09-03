@@ -20,16 +20,19 @@ import {
 } from "@/lib/finance";
 import {
   cancelPendingCalendarAction,
+  cancelPendingCalendarBatchAction,
   cancelPendingCalendarDeleteAction,
   cancelPendingFinanceAddAction,
   cancelPendingFinanceDeleteAction,
   savePendingCalendarAction,
+  savePendingCalendarBatchAction,
   savePendingCalendarDeleteAction,
   savePendingCalendarSelection,
   savePendingFinanceAddAction,
   savePendingFinanceDeleteAction,
   savePendingFinanceSelection,
   takePendingCalendarAction,
+  takePendingCalendarBatchAction,
   takePendingCalendarDeleteAction,
   takePendingCalendarSelection,
   takePendingFinanceAddAction,
@@ -348,6 +351,119 @@ async function handleCalendarCreateCallback(input: {
   log("telegram.webhook.completed", {
     updateId: input.updateId,
     action: "calendar_add",
+    durationMs: Date.now() - input.startedAt,
+  });
+}
+
+async function handleCalendarBatchCreateCallback(input: {
+  callbackId: string;
+  action: "calendar_batch_yes" | "calendar_batch_no";
+  token: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+  startedAt: number;
+}) {
+  if (input.action === "calendar_batch_no") {
+    const cancelled = await cancelPendingCalendarBatchAction(
+      input.token,
+      input.userId
+    );
+
+    await answerTelegramCallback(
+      input.callbackId,
+      cancelled ? "Calendar batch cancelled." : "This request has expired."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      cancelled
+        ? "Calendar batch creation cancelled."
+        : "This calendar batch request has already expired or was handled."
+    );
+
+    await markUpdateCompleted(
+      input.updateId,
+      "calendar_batch_create_cancelled"
+    );
+    return;
+  }
+
+  const batch = await takePendingCalendarBatchAction(
+    input.token,
+    input.userId
+  );
+
+  if (!batch || !batch.events.length) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "This confirmation has expired or was already used."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      "This calendar batch request has expired or was already handled."
+    );
+
+    await markUpdateCompleted(
+      input.updateId,
+      "calendar_batch_create_confirmation_invalid"
+    );
+    return;
+  }
+
+  await answerTelegramCallback(
+    input.callbackId,
+    `Creating ${batch.events.length} calendar events...`
+  );
+
+  await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+
+  const createdItems: string[] = [];
+
+  for (const eventItem of batch.events) {
+    const payload = eventItem.allDay
+      ? {
+          calendarName: batch.calendarName,
+          allDay: true as const,
+          title: eventItem.title,
+          date: eventItem.date,
+        }
+      : {
+          calendarName: batch.calendarName,
+          allDay: false as const,
+          title: eventItem.title,
+          start: eventItem.start,
+          end: eventItem.end,
+        };
+
+    await createCalendarEvent(payload);
+
+    const timing = eventItem.allDay
+      ? `${formatCalendarDate(eventItem.date)} (All day)`
+      : `${formatSingaporeDateTime(eventItem.start)} – ${formatSingaporeDateTime(eventItem.end)}`;
+
+    createdItems.push(`• ${eventItem.title}\n  ${timing}`);
+  }
+
+  await sendTelegramMessage(
+    input.chatId,
+    [
+      `✅ Created ${batch.events.length} ${batch.calendarName} calendar events:`,
+      "",
+      createdItems.join("\n\n"),
+    ].join("\n")
+  );
+
+  await markUpdateCompleted(input.updateId, "calendar_batch_add");
+
+  log("telegram.webhook.completed", {
+    updateId: input.updateId,
+    action: "calendar_batch_add",
+    eventCount: batch.events.length,
     durationMs: Date.now() - input.startedAt,
   });
 }
@@ -793,6 +909,23 @@ async function handleCallback(input: {
     return;
   }
 
+  if (action === "calendar_batch_yes" || action === "calendar_batch_no") {
+    const token = parts[1];
+
+    if (!token) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    await handleCalendarBatchCreateCallback({
+      ...input,
+      action,
+      token,
+    });
+
+    return;
+  }
+
   if (action === "calendar_yes" || action === "calendar_no") {
     const token = parts[1];
 
@@ -1058,12 +1191,10 @@ export async function POST(request: Request) {
       }
 
       if (imageIntent.action === "calendar_from_image") {
-        const event = imageIntent.events[0];
-
-        if (!event) {
+        if (!imageIntent.events.length) {
           await sendTelegramMessage(
             chatId,
-            "I could not find a clear calendar event in that image."
+            "I could not find any clear calendar events in that image."
           );
 
           await markUpdateCompleted(updateId, "image_calendar_empty");
@@ -1071,62 +1202,111 @@ export async function POST(request: Request) {
           return Response.json({ ok: true });
         }
 
-        const payload = event.allDay
-          ? {
-            calendarName: imageIntent.calendarName,
-            allDay: true as const,
-            title: event.title,
-            date: event.date,
-          }
-          : {
-            calendarName: imageIntent.calendarName,
-            allDay: false as const,
-            title: event.title,
-            start: event.start,
-            end: event.end,
-          };
+        if (imageIntent.events.length === 1) {
+          const event = imageIntent.events[0];
 
-        const token = await savePendingCalendarAction({
+          const payload = event.allDay
+            ? {
+              calendarName: imageIntent.calendarName,
+              allDay: true as const,
+              title: event.title,
+              date: event.date,
+            }
+            : {
+              calendarName: imageIntent.calendarName,
+              allDay: false as const,
+              title: event.title,
+              start: event.start,
+              end: event.end,
+            };
+
+          const token = await savePendingCalendarAction({
+            userId: message.from.id,
+            payload,
+          });
+
+          await sendTelegramMessage(
+            chatId,
+            [
+              "I found this event in the image. Create it?",
+              "",
+              event.allDay
+                ? [
+                  `Calendar: ${imageIntent.calendarName}`,
+                  `Title: ${event.title}`,
+                  `Date: ${formatCalendarDate(event.date)}`,
+                  "Time: All day",
+                ].join("\n")
+                : [
+                  `Calendar: ${imageIntent.calendarName}`,
+                  `Title: ${event.title}`,
+                  `Start: ${formatSingaporeDateTime(event.start)}`,
+                  `End: ${formatSingaporeDateTime(event.end)}`,
+                ].join("\n"),
+            ].join("\n"),
+            {
+              inline_keyboard: [
+                [
+                  {
+                    text: "✅ Yes, create",
+                    callback_data: `calendar_yes:${token}`,
+                  },
+                  {
+                    text: "❌ No, cancel",
+                    callback_data: `calendar_no:${token}`,
+                  },
+                ],
+              ],
+            }
+          );
+
+          await markUpdateCompleted(updateId, "image_calendar_pending");
+
+          return Response.json({ ok: true });
+        }
+
+        // Multiple events: Batch Review
+        const token = await savePendingCalendarBatchAction({
           userId: message.from.id,
-          payload,
+          payload: {
+            calendarName: imageIntent.calendarName,
+            events: imageIntent.events,
+          },
+        });
+
+        const eventPreviews = imageIntent.events.map((ev, idx) => {
+          const timing = ev.allDay
+            ? `${formatCalendarDate(ev.date)} (All day)`
+            : `${formatSingaporeDateTime(ev.start)} – ${formatSingaporeDateTime(ev.end)}`;
+          return `${idx + 1}. ${ev.title}\n   📅 ${timing}`;
         });
 
         await sendTelegramMessage(
           chatId,
           [
-            "I found this event in the image. Create it?",
+            `I found ${imageIntent.events.length} events for your ${imageIntent.calendarName} calendar:`,
             "",
-            event.allDay
-              ? [
-                `Calendar: ${imageIntent.calendarName}`,
-                `Title: ${event.title}`,
-                `Date: ${formatCalendarDate(event.date)}`,
-                "Time: All day",
-              ].join("\n")
-              : [
-                `Calendar: ${imageIntent.calendarName}`,
-                `Title: ${event.title}`,
-                `Start: ${formatSingaporeDateTime(event.start)}`,
-                `End: ${formatSingaporeDateTime(event.end)}`,
-              ].join("\n"),
+            eventPreviews.join("\n\n"),
+            "",
+            `Create all ${imageIntent.events.length} events?`,
           ].join("\n"),
           {
             inline_keyboard: [
               [
                 {
-                  text: "✅ Yes, create",
-                  callback_data: `calendar_yes:${token}`,
+                  text: `✅ Yes, create all (${imageIntent.events.length})`,
+                  callback_data: `calendar_batch_yes:${token}`,
                 },
                 {
                   text: "❌ No, cancel",
-                  callback_data: `calendar_no:${token}`,
+                  callback_data: `calendar_batch_no:${token}`,
                 },
               ],
             ],
           }
         );
 
-        await markUpdateCompleted(updateId, "image_calendar_pending");
+        await markUpdateCompleted(updateId, "image_calendar_batch_pending");
 
         return Response.json({ ok: true });
       }

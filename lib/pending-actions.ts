@@ -52,8 +52,27 @@ export type CalendarDeletePayload = {
   eventId: string;
 };
 
+export type CalendarBatchEventItem =
+  | {
+      allDay: false;
+      title: string;
+      start: string;
+      end: string;
+    }
+  | {
+      allDay: true;
+      title: string;
+      date: string;
+    };
+
+export type CalendarBatchAddPayload = {
+  calendarName: "personal" | "work";
+  events: CalendarBatchEventItem[];
+};
+
 type PendingActionType =
   | "calendar_add"
+  | "calendar_batch_add"
   | "finance_add"
   | "finance_select"
   | "calendar_select"
@@ -265,6 +284,42 @@ export async function cancelPendingCalendarAction(
     token,
     userId,
     actionType: "calendar_add",
+  });
+}
+
+export async function savePendingCalendarBatchAction(input: {
+  userId: number;
+  payload: CalendarBatchAddPayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "calendar_batch_add",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingCalendarBatchAction(
+  token: string,
+  userId: number
+): Promise<CalendarBatchAddPayload | null> {
+  const result = await takePendingAction<CalendarBatchAddPayload>({
+    token,
+    userId,
+    actionType: "calendar_batch_add",
+    nextStatus: "confirmed",
+  });
+
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingCalendarBatchAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "calendar_batch_add",
   });
 }
 
