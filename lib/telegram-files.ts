@@ -1,3 +1,52 @@
+function detectImageMediaType(
+  contentTypeHeader: string | null,
+  filePath: string,
+  data: Uint8Array
+): string {
+  if (contentTypeHeader && contentTypeHeader.startsWith("image/")) {
+    return contentTypeHeader.split(";")[0].trim();
+  }
+
+  // Check magic bytes
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (
+    data.length >= 8 &&
+    data[0] === 0x89 &&
+    data[1] === 0x50 &&
+    data[2] === 0x4e &&
+    data[3] === 0x47
+  ) {
+    return "image/png";
+  }
+
+  if (
+    data.length >= 12 &&
+    data[0] === 0x52 &&
+    data[1] === 0x49 &&
+    data[2] === 0x46 &&
+    data[3] === 0x46 &&
+    data[8] === 0x57 &&
+    data[9] === 0x45 &&
+    data[10] === 0x42 &&
+    data[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+
+  // Check file path extension
+  const lowerPath = filePath.toLowerCase();
+  if (lowerPath.endsWith(".png")) return "image/png";
+  if (lowerPath.endsWith(".webp")) return "image/webp";
+  if (lowerPath.endsWith(".gif")) return "image/gif";
+  if (lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg")) return "image/jpeg";
+
+  // Fallback default for Telegram photos
+  return "image/jpeg";
+}
+
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 type TelegramFileResponse = {
@@ -96,15 +145,15 @@ export async function downloadTelegramPhoto(fileId: string): Promise<{
     );
   }
 
-  const mediaType =
-    downloadResponse.headers.get("content-type") ?? "image/jpeg";
-
-  if (!mediaType.startsWith("image/")) {
-    throw new Error("Telegram file was not recognized as an image.");
-  }
+  const data = new Uint8Array(buffer);
+  const mediaType = detectImageMediaType(
+    downloadResponse.headers.get("content-type"),
+    filePayload.result.file_path,
+    data
+  );
 
   return {
-    data: new Uint8Array(buffer),
+    data,
     mediaType,
   };
 }
