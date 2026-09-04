@@ -192,38 +192,60 @@ export type FinanceSummary = {
 
 function parseSingaporeTimestamp(str: string): Date | null {
   if (!str) return null;
-  const match = str.match(
-    /^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s*@\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/i
+  const trimmed = str.trim();
+
+  const match = trimmed.match(
+    /^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:\s*@|\s+)?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i
   );
+
   if (match) {
-    const [, day, monthStr, year, hourStr, minStr, ampm] = match;
+    const [, dayStr, monthStr, yearStr, hourStr, minStr, secStr, ampm] = match;
     const months: Record<string, number> = {
-      jan: 0,
-      feb: 1,
-      mar: 2,
-      apr: 3,
+      jan: 0, january: 0,
+      feb: 1, february: 1,
+      mar: 2, march: 2,
+      apr: 3, april: 3,
       may: 4,
-      jun: 5,
-      jul: 6,
-      aug: 7,
-      sep: 8,
-      oct: 9,
-      nov: 10,
-      dec: 11,
+      jun: 5, june: 5,
+      jul: 6, july: 6,
+      aug: 7, august: 7,
+      sep: 8, sept: 8, september: 8,
+      oct: 9, october: 9,
+      nov: 10, november: 10,
+      dec: 11, december: 11,
     };
-    const month = months[monthStr.toLowerCase()];
+
+    const monthKey = monthStr.toLowerCase();
+    const month = months[monthKey];
+
     if (month !== undefined) {
       let hour = parseInt(hourStr, 10);
-      if (ampm.toUpperCase() === "PM" && hour < 12) hour += 12;
-      if (ampm.toUpperCase() === "AM" && hour === 12) hour = 0;
+      if (ampm) {
+        if (ampm.toUpperCase() === "PM" && hour < 12) hour += 12;
+        if (ampm.toUpperCase() === "AM" && hour === 12) hour = 0;
+      }
+      const day = parseInt(dayStr, 10);
       const min = parseInt(minStr, 10);
-      return new Date(
-        `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}:00+08:00`
-      );
+      const sec = secStr ? parseInt(secStr, 10) : 0;
+      const year = parseInt(yearStr, 10);
+
+      const iso = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}+08:00`;
+      const date = new Date(iso);
+      if (!Number.isNaN(date.getTime())) {
+        return date;
+      }
     }
   }
-  const parsed = new Date(str);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+
+  const dateOnlyMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnlyMatch) {
+    const date = new Date(`${trimmed}T12:00:00+08:00`);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+
+  return null;
 }
 
 export async function getFinanceSummary(
@@ -240,13 +262,16 @@ export async function getFinanceSummary(
   }).format(now);
 
   const sgCurrentMonth = sgToday.slice(0, 7);
-  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const todaySgMidnight = new Date(`${sgToday}T00:00:00+08:00`);
+  const sevenDaysAgoMidnight = new Date(
+    todaySgMidnight.getTime() - 7 * 24 * 60 * 60 * 1000
+  );
 
   const filtered = transactions.filter((txn) => {
     if (period === "all") return true;
 
     const txnDate = parseSingaporeTimestamp(txn.timestamp);
-    if (!txnDate) return true;
+    if (!txnDate) return false;
 
     const txnSgDate = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Singapore",
@@ -264,7 +289,7 @@ export async function getFinanceSummary(
     }
 
     if (period === "week") {
-      return txnDate >= oneWeekAgo;
+      return txnDate >= sevenDaysAgoMidnight;
     }
 
     return true;

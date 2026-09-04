@@ -1583,18 +1583,22 @@ export async function POST(request: Request) {
       text === "/finance summary" ||
       text.startsWith("/finance summary ") ||
       text === "/finance_summary" ||
-      text.startsWith("/finance_summary ")
+      text.startsWith("/finance_summary ") ||
+      text === "/financesummary" ||
+      text.startsWith("/financesummary ")
     ) {
       const subArg = text
         .replace("/finance_summary", "")
+        .replace("/financesummary", "")
         .replace("/finance summary", "")
         .trim()
         .toLowerCase();
 
-      let period: "today" | "week" | "month" | "all" = "month";
-      if (subArg === "today") period = "today";
+      let period: "today" | "week" | "month" | "all" = "today";
+      if (subArg === "month") period = "month";
       else if (subArg === "week") period = "week";
       else if (subArg === "all") period = "all";
+      else if (subArg === "today") period = "today";
 
       const summary = await getFinanceSummary(period);
       await sendTelegramMessage(chatId, formatFinanceSummary(summary));
