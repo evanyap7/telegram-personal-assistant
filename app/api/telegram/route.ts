@@ -1,15 +1,23 @@
 import { parseImageAssistantIntent } from "@/lib/image-intent";
-import { downloadTelegramPhoto } from "@/lib/telegram-files";
+import {
+  downloadTelegramAudio,
+  downloadTelegramPhoto,
+} from "@/lib/telegram-files";
+import { transcribeTelegramVoiceNote } from "@/lib/voice-transcribe";
 import { z } from "zod";
 
 import { parseAssistantIntent } from "@/lib/assistant-intent";
 import {
   createCalendarEvent,
   deleteCalendarEvent,
+  getUpcomingSchedule,
+  ScheduleEventItem,
   searchUpcomingCalendarEvents,
 } from "@/lib/calendar";
 import {
   addTransaction,
+  FinanceSummary,
+  getFinanceSummary,
   hasProcessedUpdate,
   listRecentTransactions,
   markUpdateCompleted,
@@ -43,6 +51,7 @@ import {
   answerTelegramCallback,
   removeTelegramInlineKeyboard,
   sendTelegramMessage,
+  setTelegramBotCommands,
 } from "@/lib/telegram";
 
 const telegramUpdateSchema = z.object({
@@ -68,6 +77,24 @@ const telegramUpdateSchema = z.object({
             file_size: z.number().optional(),
           })
         )
+        .optional(),
+      voice: z
+        .object({
+          file_id: z.string(),
+          file_unique_id: z.string(),
+          duration: z.number().optional(),
+          mime_type: z.string().optional(),
+          file_size: z.number().optional(),
+        })
+        .optional(),
+      audio: z
+        .object({
+          file_id: z.string(),
+          file_unique_id: z.string(),
+          duration: z.number().optional(),
+          mime_type: z.string().optional(),
+          file_size: z.number().optional(),
+        })
         .optional(),
     })
     .optional(),
@@ -100,23 +127,27 @@ function helpText() {
   return [
     "Hi — I’m your personal assistant.",
     "",
-    "You can write naturally:",
+    "You can write or send voice notes 🎤:",
     "• spent $6.20 for lunch",
+    "• what's on my calendar today?",
     "• schedule floorball tomorrow from 8 pm to 9:30 pm",
-    "• add gym tomorrow",
+    "• how much did I spend this month?",
     "• delete my coffee expense",
     "• delete gym tomorrow from personal",
     "",
     "You can send a screenshot or photo with a caption:",
     "• [calendar screenshot] Add these dates to my personal calendar",
-    "• [calendar screenshot] Add these dates to my work calendar",
     "• [receipt image] Log this receipt as an expense",
     "",
-    "Finance entries are saved after I understand them.",
-    "Calendar creation and every deletion require confirmation.",
-    "I will extract details from the image and ask for confirmation before creating calendar events or saving image-based transactions.",
+    "Commands:",
+    "• /agenda — View today's schedule",
+    "• /calendar list — View upcoming events (next 7 days)",
+    "• /finance summary — View monthly spending breakdown",
+    "• /finance list — View last 10 transactions",
+    "• /setcommands — Update Telegram command menu",
+    "• /help — Show this help message",
     "",
-    "Tap Menu to view commands.",
+    "Tap Menu or type / to browse commands.",
   ].join("\n");
 }
 
@@ -245,6 +276,71 @@ function formatCalendarEvent(input: {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatSingaporeScheduleItem(item: ScheduleEventItem): string {
+  const calBadge = item.calendarName === "work" ? "💼 Work" : "🏠 Personal";
+  if (item.isAllDay) {
+    const dateFormatted = formatCalendarDate(item.start);
+    return `• ${item.title}\n  📅 ${dateFormatted} (All day) [${calBadge}]`;
+  }
+  const startDate = new Date(item.start);
+  const endDate = new Date(item.end);
+  const dateStr = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+  }).format(startDate);
+
+  const startTimeStr = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(startDate);
+
+  const endTimeStr = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(endDate);
+
+  return `• ${item.title}\n  🕒 ${dateStr}, ${startTimeStr} – ${endTimeStr} [${calBadge}]`;
+}
+
+function formatFinanceSummary(summary: FinanceSummary): string {
+  const periodTitles: Record<string, string> = {
+    today: "Today",
+    week: "Past 7 Days",
+    month: "This Month",
+    all: "All Time",
+  };
+  const title = periodTitles[summary.period] ?? summary.period;
+  const netSign = summary.netSavings >= 0 ? "+" : "";
+
+  const lines = [
+    `📊 Finance Summary (${title})`,
+    "",
+    `💰 Total Income: $${summary.totalIncome.toFixed(2)} ${summary.currency}`,
+    `💸 Total Expenses: $${summary.totalExpense.toFixed(2)} ${summary.currency}`,
+    `📈 Net Balance: ${netSign}$${summary.netSavings.toFixed(2)} ${summary.currency}`,
+    `📝 Active Transactions: ${summary.transactionCount}`,
+  ];
+
+  if (summary.categories.length > 0) {
+    lines.push("", "Spending Breakdown by Category:");
+    for (const cat of summary.categories) {
+      lines.push(
+        `• ${cat.category}: $${cat.amount.toFixed(2)} (${cat.percentage.toFixed(1)}%)`
+      );
+    }
+  } else {
+    lines.push("", "No recorded expenses in this period.");
+  }
+
+  return lines.join("\n");
 }
 
 async function removeAndSend(
@@ -699,6 +795,7 @@ async function handleFinanceAddCallback(input: {
     currency: payload.currency,
     category: payload.category,
     description: payload.description,
+    transactionDate: payload.transactionDate,
   });
 
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
@@ -1316,13 +1413,53 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    if (!message.text) {
+    let text = message.text?.trim() ?? "";
+
+    if (!text && (message.voice || message.audio)) {
+      const audioObj = message.voice || message.audio;
+      if (audioObj) {
+        await sendTelegramMessage(chatId, "🎧 Listening to your voice note...");
+        try {
+          const downloaded = await downloadTelegramAudio(
+            audioObj.file_id,
+            audioObj.mime_type
+          );
+          const transcription = await transcribeTelegramVoiceNote({
+            audio: downloaded.data,
+            mediaType: downloaded.mediaType,
+          });
+
+          if (!transcription) {
+            await sendTelegramMessage(
+              chatId,
+              "I couldn't hear any words in that voice note. Please try again."
+            );
+            await markUpdateCompleted(updateId, "voice_empty");
+            return Response.json({ ok: true });
+          }
+
+          await sendTelegramMessage(chatId, `🎤 Heard: “${transcription}”`);
+          text = transcription;
+        } catch (voiceError) {
+          log("telegram.voice_transcribe.failed", {
+            updateId,
+            error: errorText(voiceError),
+          });
+          await sendTelegramMessage(
+            chatId,
+            "Sorry, I had trouble processing that voice note. Please try typing your message."
+          );
+          await markUpdateFailed(updateId, errorText(voiceError));
+          return Response.json({ ok: true });
+        }
+      }
+    }
+
+    if (!text) {
       await markUpdateCompleted(updateId, "ignored_no_text");
 
       return Response.json({ ok: true });
     }
-
-    const text = message.text.trim();
 
     log("telegram.webhook.received", {
       updateId,
@@ -1340,23 +1477,129 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    if (text === "/setcommands") {
+      await setTelegramBotCommands([
+        { command: "agenda", description: "View today's schedule" },
+        { command: "calendar", description: "Calendar commands & upcoming events" },
+        { command: "finance", description: "Finance commands & summary" },
+        { command: "finance_summary", description: "Monthly spending & breakdown" },
+        { command: "finance_list", description: "Recent active transactions" },
+        { command: "help", description: "Show help and example usage" },
+      ]);
+
+      await sendTelegramMessage(
+        chatId,
+        "✅ Telegram bot command menu has been updated! Tap Menu or type / to see the commands."
+      );
+      await markUpdateCompleted(updateId, "set_commands");
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/agenda" || text === "/calendar today") {
+      const now = new Date();
+      const sgTodayStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Singapore",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(now);
+
+      const timeMin = `${sgTodayStr}T00:00:00+08:00`;
+      const timeMax = `${sgTodayStr}T23:59:59+08:00`;
+
+      const events = await getUpcomingSchedule({
+        timeMin,
+        timeMax,
+        maxResults: 20,
+      });
+
+      if (events.length === 0) {
+        await sendTelegramMessage(
+          chatId,
+          `📅 No events scheduled for today (${formatCalendarDate(sgTodayStr)}). Enjoy your day!`
+        );
+      } else {
+        const formatted = events.map(formatSingaporeScheduleItem).join("\n\n");
+        await sendTelegramMessage(
+          chatId,
+          [`📅 Today’s Schedule (${formatCalendarDate(sgTodayStr)}):`, "", formatted].join("\n")
+        );
+      }
+
+      await markUpdateCompleted(updateId, "agenda_today");
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/calendar list" || text === "/calendar upcoming") {
+      const now = new Date();
+      const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+      const events = await getUpcomingSchedule({
+        timeMin: now.toISOString(),
+        timeMax: nextWeek.toISOString(),
+        maxResults: 25,
+      });
+
+      if (events.length === 0) {
+        await sendTelegramMessage(
+          chatId,
+          "📅 No upcoming calendar events found for the next 7 days."
+        );
+      } else {
+        const formatted = events.map(formatSingaporeScheduleItem).join("\n\n");
+        await sendTelegramMessage(
+          chatId,
+          ["📅 Upcoming Schedule (Next 7 days):", "", formatted].join("\n")
+        );
+      }
+
+      await markUpdateCompleted(updateId, "calendar_upcoming");
+      return Response.json({ ok: true });
+    }
+
     if (text === "/finance") {
       await sendTelegramMessage(
         chatId,
         [
           "Finance assistant:",
           "",
-          "Write naturally:",
+          "Write or speak naturally:",
           "• spent $6.20 for lunch",
           "• earned $100 from freelance work",
+          "• how much did I spend this month?",
           "• delete my coffee expense",
           "",
-          "Or use:",
-          "/finance list",
+          "Or use commands:",
+          "• /finance summary — View monthly spending breakdown",
+          "• /finance list — View last 10 active transactions",
         ].join("\n")
       );
 
       await markUpdateCompleted(updateId, "finance_help");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/finance summary" ||
+      text.startsWith("/finance summary ") ||
+      text === "/finance_summary" ||
+      text.startsWith("/finance_summary ")
+    ) {
+      const subArg = text
+        .replace("/finance_summary", "")
+        .replace("/finance summary", "")
+        .trim()
+        .toLowerCase();
+
+      let period: "today" | "week" | "month" | "all" = "month";
+      if (subArg === "today") period = "today";
+      else if (subArg === "week") period = "week";
+      else if (subArg === "all") period = "all";
+
+      const summary = await getFinanceSummary(period);
+      await sendTelegramMessage(chatId, formatFinanceSummary(summary));
+
+      await markUpdateCompleted(updateId, "finance_summary_command");
       return Response.json({ ok: true });
     }
 
@@ -1366,19 +1609,19 @@ export async function POST(request: Request) {
         [
           "Calendar assistant:",
           "",
-          "Write naturally:",
+          "Write or speak naturally:",
           "• Add gym tomorrow",
+          "• What's on my calendar today?",
           "• Schedule floorball tomorrow from 8 pm to 9:30 pm",
-          "• Add a project meeting next Friday from 2 pm to 3 pm in work",
+          "• Add project meeting next Friday from 2 pm to 3 pm in work",
           "• Delete gym tomorrow from personal",
           "",
-          "You can send a screenshot or photo with a caption:",
-          "• [calendar screenshot] Add these dates to my personal calendar",
-          "• [calendar screenshot] Add these dates to my work calendar",
+          "Commands:",
+          "• /agenda — View today's schedule",
+          "• /calendar list — View upcoming events (next 7 days)",
           "",
-          "A date without a time creates an all-day event.",
-          "I will ask for confirmation before creating or deleting an event.",
-          "I will extract details from the image and ask for confirmation before creating calendar events or saving image-based transactions.",
+          "Send screenshot photos:",
+          "• [calendar screenshot] Add these dates to my personal calendar",
         ].join("\n")
       );
 
@@ -1430,7 +1673,7 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    if (text === "/finance list") {
+    if (text === "/finance list" || text === "/finance_list") {
       const transactions = await listRecentTransactions();
 
       if (transactions.length === 0) {
@@ -1471,6 +1714,7 @@ export async function POST(request: Request) {
         currency: intent.currency,
         category: intent.category,
         description: intent.description,
+        transactionDate: intent.transactionDate,
       });
 
       await sendTelegramMessage(
@@ -1487,6 +1731,82 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_add_natural_language");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "calendar_view") {
+      const now = new Date();
+      let timeMin: string | undefined;
+      let timeMax: string | undefined;
+      let titleHeader = "Upcoming Events";
+
+      const sgTodayStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Singapore",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(now);
+
+      if (intent.timeframe === "today") {
+        timeMin = `${sgTodayStr}T00:00:00+08:00`;
+        timeMax = `${sgTodayStr}T23:59:59+08:00`;
+        titleHeader = `Today’s Schedule (${formatCalendarDate(sgTodayStr)})`;
+      } else if (intent.timeframe === "tomorrow") {
+        const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        const sgTomorrowStr = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Singapore",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        }).format(tomorrow);
+        timeMin = `${sgTomorrowStr}T00:00:00+08:00`;
+        timeMax = `${sgTomorrowStr}T23:59:59+08:00`;
+        titleHeader = `Tomorrow’s Schedule (${formatCalendarDate(sgTomorrowStr)})`;
+      } else if (intent.timeframe === "week") {
+        const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        timeMin = now.toISOString();
+        timeMax = weekEnd.toISOString();
+        titleHeader = "Schedule for Next 7 Days";
+      } else {
+        timeMin = now.toISOString();
+        titleHeader = "Upcoming Calendar Events";
+      }
+
+      const events = await getUpcomingSchedule({
+        calendarName: intent.calendarName,
+        timeMin,
+        timeMax,
+        maxResults: 15,
+      });
+
+      if (events.length === 0) {
+        await sendTelegramMessage(
+          chatId,
+          `📅 No events found for ${
+            intent.timeframe === "today"
+              ? "today"
+              : intent.timeframe === "tomorrow"
+              ? "tomorrow"
+              : "this period"
+          }.`
+        );
+      } else {
+        const formatted = events.map(formatSingaporeScheduleItem).join("\n\n");
+        await sendTelegramMessage(
+          chatId,
+          [`📅 ${titleHeader}:`, "", formatted].join("\n")
+        );
+      }
+
+      await markUpdateCompleted(updateId, "calendar_view");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "finance_summary") {
+      const summary = await getFinanceSummary(intent.period);
+      await sendTelegramMessage(chatId, formatFinanceSummary(summary));
+
+      await markUpdateCompleted(updateId, "finance_summary");
       return Response.json({ ok: true });
     }
 

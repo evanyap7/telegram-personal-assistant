@@ -9,6 +9,7 @@ export type TransactionInput = {
   currency: string;
   category: string;
   description: string;
+  transactionDate?: string;
 };
 
 export type FinanceTransaction = {
@@ -92,7 +93,14 @@ export async function addTransaction(input: TransactionInput): Promise<{
   const spreadsheetId = getSpreadsheetId();
 
   const transactionId = createTransactionId();
-  const timestamp = formatSingaporeTimestamp();
+  let dateObj = new Date();
+  if (input.transactionDate) {
+    const parsedDate = new Date(`${input.transactionDate}T12:00:00+08:00`);
+    if (!Number.isNaN(parsedDate.getTime())) {
+      dateObj = parsedDate;
+    }
+  }
+  const timestamp = formatSingaporeTimestamp(dateObj);
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
@@ -164,6 +172,141 @@ export async function searchActiveTransactions(
     })
     .slice(-10)
     .reverse();
+}
+
+export type CategorySpending = {
+  category: string;
+  amount: number;
+  percentage: number;
+};
+
+export type FinanceSummary = {
+  period: "today" | "week" | "month" | "all";
+  totalIncome: number;
+  totalExpense: number;
+  netSavings: number;
+  currency: string;
+  transactionCount: number;
+  categories: CategorySpending[];
+};
+
+function parseSingaporeTimestamp(str: string): Date | null {
+  if (!str) return null;
+  const match = str.match(
+    /^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s*@\s*(\d{1,2}):(\d{2})\s*(AM|PM)$/i
+  );
+  if (match) {
+    const [, day, monthStr, year, hourStr, minStr, ampm] = match;
+    const months: Record<string, number> = {
+      jan: 0,
+      feb: 1,
+      mar: 2,
+      apr: 3,
+      may: 4,
+      jun: 5,
+      jul: 6,
+      aug: 7,
+      sep: 8,
+      oct: 9,
+      nov: 10,
+      dec: 11,
+    };
+    const month = months[monthStr.toLowerCase()];
+    if (month !== undefined) {
+      let hour = parseInt(hourStr, 10);
+      if (ampm.toUpperCase() === "PM" && hour < 12) hour += 12;
+      if (ampm.toUpperCase() === "AM" && hour === 12) hour = 0;
+      const min = parseInt(minStr, 10);
+      return new Date(
+        `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}:00+08:00`
+      );
+    }
+  }
+  const parsed = new Date(str);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export async function getFinanceSummary(
+  period: "today" | "week" | "month" | "all" = "month"
+): Promise<FinanceSummary> {
+  const transactions = await listRecentTransactions();
+
+  const now = new Date();
+  const sgToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+
+  const sgCurrentMonth = sgToday.slice(0, 7);
+  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const filtered = transactions.filter((txn) => {
+    if (period === "all") return true;
+
+    const txnDate = parseSingaporeTimestamp(txn.timestamp);
+    if (!txnDate) return true;
+
+    const txnSgDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(txnDate);
+
+    if (period === "today") {
+      return txnSgDate === sgToday;
+    }
+
+    if (period === "month") {
+      return txnSgDate.startsWith(sgCurrentMonth);
+    }
+
+    if (period === "week") {
+      return txnDate >= oneWeekAgo;
+    }
+
+    return true;
+  });
+
+  let totalIncome = 0;
+  let totalExpense = 0;
+  const categoryMap: Record<string, number> = {};
+  let defaultCurrency = "SGD";
+
+  for (const txn of filtered) {
+    const amount = parseFloat(txn.amount) || 0;
+    if (txn.currency) {
+      defaultCurrency = txn.currency.toUpperCase();
+    }
+
+    if (txn.type.toLowerCase() === "income") {
+      totalIncome += amount;
+    } else {
+      totalExpense += amount;
+      const category = txn.category.trim() || "Uncategorized";
+      categoryMap[category] = (categoryMap[category] || 0) + amount;
+    }
+  }
+
+  const categories: CategorySpending[] = Object.entries(categoryMap)
+    .map(([category, amount]) => ({
+      category,
+      amount,
+      percentage: totalExpense > 0 ? (amount / totalExpense) * 100 : 0,
+    }))
+    .sort((a, b) => b.amount - a.amount);
+
+  return {
+    period,
+    totalIncome,
+    totalExpense,
+    netSavings: totalIncome - totalExpense,
+    currency: defaultCurrency,
+    transactionCount: filtered.length,
+    categories,
+  };
 }
 
 export async function softDeleteTransaction(

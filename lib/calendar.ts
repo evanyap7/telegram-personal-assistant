@@ -29,10 +29,6 @@ export type CalendarEventMatch = {
   htmlLink: string | null;
 };
 
-function isDateOnly(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
 function singaporeDateFromDateTime(value: string): string {
   const date = new Date(value);
 
@@ -194,4 +190,77 @@ export async function deleteCalendarEvent(input: {
     calendarId,
     eventId: input.eventId,
   });
+}
+
+export type ScheduleQueryOptions = {
+  calendarName?: "personal" | "work" | "all";
+  timeMin?: string;
+  timeMax?: string;
+  maxResults?: number;
+};
+
+export type ScheduleEventItem = {
+  calendarName: "personal" | "work";
+  eventId: string;
+  title: string;
+  start: string;
+  end: string;
+  isAllDay: boolean;
+  htmlLink: string | null;
+};
+
+export async function getUpcomingSchedule(
+  options: ScheduleQueryOptions = {}
+): Promise<ScheduleEventItem[]> {
+  const calendar = getCalendarClient();
+  const calendarTarget = options.calendarName ?? "all";
+  const calendarsToQuery: Array<"personal" | "work"> =
+    calendarTarget === "all"
+      ? ["personal", "work"]
+      : [calendarTarget];
+
+  const nowIso = new Date().toISOString();
+  const timeMin = options.timeMin ?? nowIso;
+  const timeMax = options.timeMax;
+  const maxResults = options.maxResults ?? 25;
+
+  const results = await Promise.all(
+    calendarsToQuery.map(async (calName) => {
+      try {
+        const calendarId = getCalendarId(calName);
+        const response = await calendar.events.list({
+          calendarId,
+          timeMin,
+          timeMax: timeMax || undefined,
+          maxResults,
+          singleEvents: true,
+          orderBy: "startTime",
+        });
+
+        return (response.data.items ?? [])
+          .filter((event) => event.id && event.start)
+          .map((event) => ({
+            calendarName: calName,
+            eventId: event.id as string,
+            title: event.summary ?? "Untitled event",
+            start: event.start?.dateTime ?? event.start?.date ?? "",
+            end: event.end?.dateTime ?? event.end?.date ?? "",
+            isAllDay: !event.start?.dateTime && Boolean(event.start?.date),
+            htmlLink: event.htmlLink ?? null,
+          }));
+      } catch (err) {
+        console.error(`Failed to list events for calendar ${calName}:`, err);
+        return [];
+      }
+    })
+  );
+
+  const merged = results.flat();
+  merged.sort((a, b) => {
+    const aTime = new Date(a.start).getTime();
+    const bTime = new Date(b.start).getTime();
+    return aTime - bTime;
+  });
+
+  return merged.slice(0, maxResults);
 }

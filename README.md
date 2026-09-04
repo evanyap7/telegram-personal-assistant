@@ -10,10 +10,11 @@ Built as an independent full-stack project with Next.js, TypeScript, Vercel AI S
 
 ### Finance Tracking
 
-- Record income and expenses using natural language
+- Record income and expenses using natural language or voice notes
 - Extract transaction type, amount, currency, category, description, and date
-- Store transactions in Google Sheets
+- Accurately preserve backdated transaction dates in Google Sheets
 - Generate unique transaction IDs
+- View monthly, weekly, or daily financial summaries & category breakdowns (`/finance summary`)
 - View recent active transactions with `/finance list`
 - Search for finance records using natural language
 - Soft-delete transactions instead of permanently removing rows
@@ -25,13 +26,16 @@ Examples:
 spent $6.20 for lunch
 spent $2.50 on coffee
 earned $100 from freelance work
+how much did I spend this month?
 delete my coffee expense
 ```
 
 ### Calendar Management
 
-- Create Google Calendar events using natural language
+- Create Google Calendar events using natural language or voice notes
 - Route events to Personal or Work calendars
+- View today's agenda across both calendars (`/agenda`)
+- View upcoming events for the next 7 days (`/calendar list`)
 - Require confirmation before creating an event
 - Search upcoming calendar events by title or keyword
 - Select the exact event before deletion
@@ -43,10 +47,18 @@ Examples:
 
 ```text
 Add gym tomorrow
+What's on my calendar today?
 Schedule floorball tomorrow from 8 pm to 9:30 pm
 Add project meeting next Friday from 2 pm to 3 pm in work
 delete gym tomorrow from personal
 ```
+
+### Voice Notes & Multimodal Processing
+
+- Send voice notes or audio messages directly on Telegram
+- Hands-free audio transcription powered by Google Gemini 3.6 Flash
+- Automatically routed through the finance or calendar engine
+- Vision OCR for receipts and calendar schedules with batch event creation
 
 ### Security and Reliability
 

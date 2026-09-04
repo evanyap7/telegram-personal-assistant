@@ -157,3 +157,87 @@ export async function downloadTelegramPhoto(fileId: string): Promise<{
     mediaType,
   };
 }
+
+const MAX_AUDIO_BYTES = 10 * 1024 * 1024; // 10 MB
+
+export async function downloadTelegramAudio(
+  fileId: string,
+  providedMimeType?: string
+): Promise<{
+  data: Uint8Array;
+  mediaType: string;
+}> {
+  const botToken = getTelegramBotToken();
+
+  const fileResponse = await fetch(
+    `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(
+      fileId
+    )}`,
+    {
+      method: "GET",
+      cache: "no-store",
+    }
+  );
+
+  if (!fileResponse.ok) {
+    const errorText = await fileResponse.text();
+    throw new Error(
+      `Telegram getFile request failed: ${fileResponse.status} ${errorText}`
+    );
+  }
+
+  const filePayload =
+    (await fileResponse.json()) as TelegramFileResponse;
+
+  if (!filePayload.ok || !filePayload.result?.file_path) {
+    throw new Error(
+      `Telegram could not resolve this audio file: ${
+        filePayload.description ?? "Unknown error"
+      }`
+    );
+  }
+
+  if (
+    filePayload.result.file_size &&
+    filePayload.result.file_size > MAX_AUDIO_BYTES
+  ) {
+    throw new Error(
+      "This voice note is too large. Please send a voice note smaller than 10 MB."
+    );
+  }
+
+  const fileUrl =
+    `https://api.telegram.org/file/bot${botToken}/` +
+    filePayload.result.file_path;
+
+  const downloadResponse = await fetch(fileUrl, {
+    method: "GET",
+    cache: "no-store",
+  });
+
+  if (!downloadResponse.ok) {
+    const errorText = await downloadResponse.text();
+    throw new Error(
+      `Telegram audio download failed: ${downloadResponse.status} ${errorText}`
+    );
+  }
+
+  const buffer = await downloadResponse.arrayBuffer();
+
+  if (buffer.byteLength > MAX_AUDIO_BYTES) {
+    throw new Error(
+      "This audio is too large. Please send an audio note smaller than 10 MB."
+    );
+  }
+
+  const data = new Uint8Array(buffer);
+  const mediaType =
+    providedMimeType ||
+    downloadResponse.headers.get("content-type") ||
+    "audio/ogg";
+
+  return {
+    data,
+    mediaType,
+  };
+}

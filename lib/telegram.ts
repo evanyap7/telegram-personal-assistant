@@ -77,3 +77,16 @@ export async function removeTelegramInlineKeyboard(
     },
   });
 }
+
+export type BotCommand = {
+  command: string;
+  description: string;
+};
+
+export async function setTelegramBotCommands(
+  commands: BotCommand[]
+): Promise<void> {
+  await callTelegram("setMyCommands", {
+    commands,
+  });
+}

@@ -39,9 +39,18 @@ const intentSchema = z.union([
   }),
   calendarAddSchema,
   z.object({
+    action: z.literal("calendar_view"),
+    calendarName: z.enum(["personal", "work", "all"]).default("all"),
+    timeframe: z.enum(["today", "tomorrow", "week", "upcoming"]).default("upcoming"),
+  }),
+  z.object({
     action: z.literal("calendar_delete_search"),
     calendarName: z.enum(["personal", "work"]),
     query: z.string().min(1).max(200),
+  }),
+  z.object({
+    action: z.literal("finance_summary"),
+    period: z.enum(["today", "week", "month", "all"]).default("month"),
   }),
   z.object({
     action: z.literal("finance_delete_search"),
@@ -90,9 +99,11 @@ Timezone: Asia/Singapore (+08:00).
 Supported actions:
 1. finance_add
 2. calendar_add
-3. calendar_delete_search
-4. finance_delete_search
-5. unknown
+3. calendar_view
+4. calendar_delete_search
+5. finance_summary
+6. finance_delete_search
+7. unknown
 
 Finance entry:
 {
@@ -123,6 +134,19 @@ All-day calendar creation, when the user gives a date but no time:
   "allDay": true,
   "title": "event title",
   "date": "YYYY-MM-DD"
+}
+
+Calendar view / agenda query:
+{
+  "action": "calendar_view",
+  "calendarName": "personal", "work", or "all",
+  "timeframe": "today", "tomorrow", "week", or "upcoming"
+}
+
+Finance spending summary:
+{
+  "action": "finance_summary",
+  "period": "today", "week", "month", or "all"
 }
 
 Calendar deletion search:
@@ -167,6 +191,21 @@ Calendar creation rules:
 - "Schedule gym tomorrow at 7 pm for 1 hour" means a timed calendar_add.
 - "Meeting tomorrow at 3 pm" returns unknown because end time or duration
   is missing.
+
+Calendar view rules:
+- If the user asks to see, check, list, or view their schedule, calendar, agenda, or events, return calendar_view.
+- "What do I have today?", "my schedule today", "agenda today" means calendar_view with timeframe "today".
+- "What do I have tomorrow?", "tomorrow's schedule" means calendar_view with timeframe "tomorrow".
+- "What's my schedule this week?", "agenda for the week" means calendar_view with timeframe "week".
+- "Show upcoming events", "upcoming schedule", "what's on my calendar" means calendar_view with timeframe "upcoming".
+- Use calendarName "all" unless user explicitly asks for personal or work only.
+
+Finance summary rules:
+- If the user asks for spending summary, expense total, how much they spent, or budget overview, return finance_summary.
+- "How much did I spend this month?", "spending this month", "monthly breakdown", "finance summary" means finance_summary with period "month".
+- "How much did I spend today?", "today's spending" means finance_summary with period "today".
+- "How much did I spend this week?", "spending this week" means finance_summary with period "week".
+- "Total spending", "overall expenses", "all-time spending" means finance_summary with period "all".
 
 Deletion rules:
 - If the user asks to delete, remove, cancel, undo, or erase a calendar event,
