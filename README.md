@@ -53,6 +53,45 @@ Add project meeting next Friday from 2 pm to 3 pm in work
 delete gym tomorrow from personal
 ```
 
+### To-Do List Tracking
+
+- Track tasks directly inside Telegram using natural language or voice notes
+- Ask for daily agenda: "What do I have to do for today?" (`/todo today`)
+- View full active to-do list with interactive inline checkmark buttons (`/todo`)
+- Complete tasks with a single tap in Telegram or naturally: "I'm done with buy groceries"
+- Remove tasks safely with confirmation: "Remove buy groceries from my list"
+- Automatic priority support (🔴 High, 🟡 Medium, 🟢 Low) and due dates
+- Data stored persistently in a dedicated `Todos` tab in Google Sheets
+
+Examples:
+
+```text
+What do I have to do for today?
+Add buy groceries to my to-do list
+Remind me to finish report by Friday
+I'm done with buy groceries
+Remove buy groceries from my list
+/todo
+/todo today
+/todo add Call dentist
+```
+
+### Email Drafting (Gmail API)
+
+- Draft emails using natural language voice notes or text messages
+- AI formats recipient, subject line, and polite body text
+- Safe Telegram confirmation preview card before creating draft
+- Direct draft creation in Gmail via Gmail API (`users.drafts.create`)
+- Quick link to open Gmail Drafts folder directly
+
+Examples:
+
+```text
+Draft an email to alex@example.com about project update
+Write an email to boss@company.com saying I will be late tomorrow
+```
+
+
 ### Voice Notes & Multimodal Processing
 
 - Send voice notes or audio messages directly on Telegram
@@ -276,6 +315,20 @@ A deleted transaction remains in the sheet:
 txn_abc123 | 31 Aug 2026 @ 4:43 PM | expense | 2.50 | SGD | Dining | coffee | deleted | 2026-08-31T...
 ```
 
+### `Todos`
+
+| Column | Field | Description |
+| --- | --- | --- |
+| A | Task ID | Unique ID (e.g. `todo_abc123`) |
+| B | Created At | Singapore timestamp |
+| C | Task | Task title or description |
+| D | Due Date | Optional due date (`YYYY-MM-DD`) |
+| E | Priority | `low`, `medium`, `high` |
+| F | Status | `active`, `completed`, or `deleted` |
+| G | Completed At | Completion Singapore timestamp |
+
+The `Todos` tab is automatically created and initialized with headers if it does not already exist.
+
 ### `PendingActions`
 
 | Column | Field |
@@ -356,6 +409,19 @@ GOOGLE_REFRESH_TOKEN=your_google_oauth_refresh_token
 ```
 
 Never commit `.env.local`, OAuth credentials, refresh tokens, or bot tokens.
+
+### Gmail API Setup (Drafting Emails)
+
+To enable email drafting with your Gmail account (`evanyap7@gmail.com`):
+1. In Google Cloud Console, enable the **Gmail API**.
+2. Go to **Credentials** -> **Create Credentials** -> **OAuth client ID** (Web application).
+3. Add `http://localhost:3000/oauth2callback` to **Authorized redirect URIs**.
+4. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.local`.
+5. Run the interactive token generator:
+   ```bash
+   npm run get-gmail-token
+   ```
+6. Follow the browser prompt to grant permission for `evanyap7@gmail.com` and copy the generated `GOOGLE_REFRESH_TOKEN` into `.env.local`.
 
 Start the development server:
 

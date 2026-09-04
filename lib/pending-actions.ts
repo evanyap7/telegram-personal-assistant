@@ -70,6 +70,28 @@ export type CalendarBatchAddPayload = {
   events: CalendarBatchEventItem[];
 };
 
+export type EmailDraftPayload = {
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string;
+  bcc?: string;
+};
+
+export type TodoDeletePayload = {
+  taskId: string;
+  task: string;
+};
+
+export type TodoSelectionItem = {
+  taskId: string;
+  task: string;
+};
+
+export type TodoSelectionPayload = {
+  todos: TodoSelectionItem[];
+};
+
 type PendingActionType =
   | "calendar_add"
   | "calendar_batch_add"
@@ -77,7 +99,10 @@ type PendingActionType =
   | "finance_select"
   | "calendar_select"
   | "finance_delete"
-  | "calendar_delete";
+  | "calendar_delete"
+  | "email_draft"
+  | "todo_select"
+  | "todo_delete";
 
 type PendingStatus = "pending" | "selected" | "confirmed" | "cancelled";
 
@@ -485,4 +510,102 @@ export async function cancelPendingCalendarDeleteAction(
     userId,
     actionType: "calendar_delete",
   });
+}
+
+export async function savePendingEmailDraftAction(input: {
+  userId: number;
+  payload: EmailDraftPayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "email_draft",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingEmailDraftAction(
+  token: string,
+  userId: number
+): Promise<EmailDraftPayload | null> {
+  const result = await takePendingAction<EmailDraftPayload>({
+    token,
+    userId,
+    actionType: "email_draft",
+    nextStatus: "confirmed",
+  });
+
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingEmailDraftAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "email_draft",
+  });
+}
+
+export async function savePendingTodoDeleteAction(input: {
+  userId: number;
+  payload: TodoDeletePayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "todo_delete",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingTodoDeleteAction(
+  token: string,
+  userId: number
+): Promise<TodoDeletePayload | null> {
+  const result = await takePendingAction<TodoDeletePayload>({
+    token,
+    userId,
+    actionType: "todo_delete",
+    nextStatus: "confirmed",
+  });
+
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingTodoDeleteAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "todo_delete",
+  });
+}
+
+export async function savePendingTodoSelection(input: {
+  userId: number;
+  payload: TodoSelectionPayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "todo_select",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingTodoSelection(
+  token: string,
+  userId: number
+): Promise<TodoSelectionPayload | null> {
+  const result = await takePendingAction<TodoSelectionPayload>({
+    token,
+    userId,
+    actionType: "todo_select",
+    allowedStatuses: ["pending"],
+    nextStatus: "selected",
+  });
+
+  return result?.payload ?? null;
 }

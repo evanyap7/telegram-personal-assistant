@@ -30,29 +30,47 @@ import {
   cancelPendingCalendarAction,
   cancelPendingCalendarBatchAction,
   cancelPendingCalendarDeleteAction,
+  cancelPendingEmailDraftAction,
   cancelPendingFinanceAddAction,
   cancelPendingFinanceDeleteAction,
+  cancelPendingTodoDeleteAction,
   savePendingCalendarAction,
   savePendingCalendarBatchAction,
   savePendingCalendarDeleteAction,
   savePendingCalendarSelection,
+  savePendingEmailDraftAction,
   savePendingFinanceAddAction,
   savePendingFinanceDeleteAction,
   savePendingFinanceSelection,
+  savePendingTodoDeleteAction,
+  savePendingTodoSelection,
   takePendingCalendarAction,
   takePendingCalendarBatchAction,
   takePendingCalendarDeleteAction,
   takePendingCalendarSelection,
+  takePendingEmailDraftAction,
   takePendingFinanceAddAction,
   takePendingFinanceDeleteAction,
   takePendingFinanceSelection,
+  takePendingTodoDeleteAction,
+  takePendingTodoSelection,
 } from "@/lib/pending-actions";
+import {
+  addTodo,
+  completeTodo,
+  deleteTodo,
+  listTodos,
+  searchActiveTodos,
+  TodoItem,
+} from "@/lib/todos";
+import { createEmailDraft } from "@/lib/gmail";
 import {
   answerTelegramCallback,
   removeTelegramInlineKeyboard,
   sendTelegramMessage,
   setTelegramBotCommands,
 } from "@/lib/telegram";
+
 
 const telegramUpdateSchema = z.object({
   update_id: z.number(),
@@ -131,6 +149,11 @@ function helpText() {
     "• spent $6.20 for lunch",
     "• what's on my calendar today?",
     "• schedule floorball tomorrow from 8 pm to 9:30 pm",
+    "• what do I have to do for today?",
+    "• add buy groceries to my to-do list",
+    "• I'm done with buy groceries",
+    "• remove buy groceries from my list",
+    "• draft an email to alex@example.com about project update",
     "• how much did I spend this month?",
     "• delete my coffee expense",
     "• delete gym tomorrow from personal",
@@ -142,6 +165,8 @@ function helpText() {
     "Commands:",
     "• /agenda — View today's schedule",
     "• /calendar list — View upcoming events (next 7 days)",
+    "• /todo — View your active to-do list with checkmark buttons",
+    "• /todo today — View today's tasks",
     "• /finance summary — View monthly spending breakdown",
     "• /finance list — View last 10 transactions",
     "• /setcommands — Update Telegram command menu",
@@ -150,6 +175,62 @@ function helpText() {
     "Tap Menu or type / to browse commands.",
   ].join("\n");
 }
+
+function formatTodoListMessage(
+  todos: TodoItem[],
+  title: string
+): {
+  text: string;
+  replyMarkup?: { inline_keyboard: { text: string; callback_data: string }[][] };
+} {
+  if (todos.length === 0) {
+    return {
+      text: `📝 ${title}\n\n🎉 No pending tasks found! You're all caught up.`,
+    };
+  }
+
+  const lines = [`📝 ${title} (${todos.length}):`, ""];
+  const buttons: { text: string; callback_data: string }[][] = [];
+
+  todos.forEach((todo, idx) => {
+    const priorityIcon =
+      todo.priority === "high" ? "🔴 " : todo.priority === "low" ? "🟢 " : "";
+    const dueStr = todo.dueDate ? ` (📅 ${formatCalendarDate(todo.dueDate)})` : "";
+    lines.push(`${idx + 1}. ${priorityIcon}${todo.task}${dueStr}`);
+
+    buttons.push([
+      {
+        text: `✅ Done: ${truncateButtonText(todo.task, 32)}`,
+        callback_data: `todo_done:${todo.taskId}`,
+      },
+    ]);
+  });
+
+  return {
+    text: lines.join("\n"),
+    replyMarkup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
+  };
+}
+
+function formatEmailDraftPreview(input: {
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string;
+  bcc?: string;
+}): string {
+  const parts = [
+    "📧 Email Draft Preview:",
+    "",
+    `👤 To: ${input.to}`,
+    `📌 Subject: ${input.subject}`,
+  ];
+  if (input.cc) parts.push(`👥 Cc: ${input.cc}`);
+  if (input.bcc) parts.push(`🔒 Bcc: ${input.bcc}`);
+  parts.push("", "📝 Body:", input.body);
+  return parts.join("\n");
+}
+
 
 function formatSingaporeDateTime(value: string): string {
   const date = new Date(value);
@@ -977,6 +1058,268 @@ async function handleCalendarDeleteCallback(input: {
   await markUpdateCompleted(input.updateId, "calendar_delete");
 }
 
+async function handleEmailDraftCallback(input: {
+  callbackId: string;
+  action: "email_draft_yes" | "email_draft_no";
+  token: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+  startedAt: number;
+}) {
+  if (input.action === "email_draft_no") {
+    const cancelled = await cancelPendingEmailDraftAction(
+      input.token,
+      input.userId
+    );
+
+    await answerTelegramCallback(
+      input.callbackId,
+      cancelled ? "Draft cancelled." : "This request has expired."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      cancelled
+        ? "Email draft creation cancelled."
+        : "This email draft request has already expired or was handled."
+    );
+
+    await markUpdateCompleted(input.updateId, "email_draft_cancelled");
+    return;
+  }
+
+  const pendingAction = await takePendingEmailDraftAction(
+    input.token,
+    input.userId
+  );
+
+  if (!pendingAction) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "This draft confirmation has expired or was already used."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      "This email draft request has expired or was already handled."
+    );
+
+    await markUpdateCompleted(
+      input.updateId,
+      "email_draft_confirmation_invalid"
+    );
+    return;
+  }
+
+  await answerTelegramCallback(input.callbackId, "Creating draft in Gmail...");
+
+  try {
+    const draft = await createEmailDraft(pendingAction);
+
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+
+    await sendTelegramMessage(
+      input.chatId,
+      [
+        "✉️ Draft created in Gmail!",
+        "",
+        `To: ${draft.to}`,
+        `Subject: ${draft.subject}`,
+        `Draft ID: ${draft.draftId}`,
+        "",
+        `🔗 Open Gmail Drafts: ${draft.gmailUrl}`,
+      ].join("\n")
+    );
+
+    await markUpdateCompleted(input.updateId, "email_draft_created");
+  } catch (error) {
+    log("telegram.email_draft.failed", {
+      updateId: input.updateId,
+      error: errorText(error),
+    });
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      `Failed to create draft in Gmail: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+
+    await markUpdateFailed(input.updateId, errorText(error));
+  }
+}
+
+async function handleTodoDoneCallback(input: {
+  callbackId: string;
+  taskId: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  const result = await completeTodo(input.taskId);
+
+  if (!result.success || !result.todo) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "Task not found or already completed."
+    );
+    return;
+  }
+
+  await answerTelegramCallback(input.callbackId, "✅ Task marked as completed!");
+
+  await sendTelegramMessage(
+    input.chatId,
+    `✅ Completed: "${result.todo.task}"! 🎉`
+  );
+
+  await markUpdateCompleted(input.updateId, "todo_completed_callback");
+}
+
+async function handleTodoDeleteCallback(input: {
+  callbackId: string;
+  action: "todo_del_yes" | "todo_del_no";
+  token: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  if (input.action === "todo_del_no") {
+    const cancelled = await cancelPendingTodoDeleteAction(
+      input.token,
+      input.userId
+    );
+
+    await answerTelegramCallback(
+      input.callbackId,
+      cancelled ? "Task deletion cancelled." : "This request has expired."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      cancelled
+        ? "Task was kept in your to-do list."
+        : "This task deletion request has already expired or was handled."
+    );
+
+    await markUpdateCompleted(input.updateId, "todo_delete_cancelled");
+    return;
+  }
+
+  const pendingAction = await takePendingTodoDeleteAction(
+    input.token,
+    input.userId
+  );
+
+  if (!pendingAction) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "This confirmation has expired or was already used."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      "This task deletion request has expired or was already handled."
+    );
+
+    await markUpdateCompleted(input.updateId, "todo_delete_invalid");
+    return;
+  }
+
+  await answerTelegramCallback(input.callbackId, "Removing task...");
+
+  await deleteTodo(pendingAction.taskId);
+
+  await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+
+  await sendTelegramMessage(
+    input.chatId,
+    `🗑️ Removed "${pendingAction.task}" from your to-do list.`
+  );
+
+  await markUpdateCompleted(input.updateId, "todo_delete_confirmed");
+}
+
+async function handleTodoSelectionCallback(input: {
+  callbackId: string;
+  selectionToken: string;
+  selectedIndex: number;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  const pending = await takePendingTodoSelection(
+    input.selectionToken,
+    input.userId
+  );
+
+  if (!pending) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "This selection has expired or was already used."
+    );
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      "This task selection has expired or was already used."
+    );
+    await markUpdateCompleted(input.updateId, "todo_selection_invalid");
+    return;
+  }
+
+  const selectedTodo = pending.todos[input.selectedIndex];
+  if (!selectedTodo) {
+    await answerTelegramCallback(input.callbackId, "Selected task not found.");
+    return;
+  }
+
+  const confirmToken = await savePendingTodoDeleteAction({
+    userId: input.userId,
+    payload: {
+      taskId: selectedTodo.taskId,
+      task: selectedTodo.task,
+    },
+  });
+
+  await answerTelegramCallback(input.callbackId);
+  await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+
+  await sendTelegramMessage(
+    input.chatId,
+    [
+      "Are you sure you want to remove this task?",
+      "",
+      `• ${selectedTodo.task}`,
+    ].join("\n"),
+    {
+      inline_keyboard: [
+        [
+          {
+            text: "🗑️ Yes, remove",
+            callback_data: `todo_del_yes:${confirmToken}`,
+          },
+          {
+            text: "❌ No, keep",
+            callback_data: `todo_del_no:${confirmToken}`,
+          },
+        ],
+      ],
+    }
+  );
+
+  await markUpdateCompleted(input.updateId, "todo_delete_confirmation_prompted");
+}
+
 async function handleCallback(input: {
   callbackId: string;
   callbackData: string;
@@ -1035,6 +1378,78 @@ async function handleCallback(input: {
       ...input,
       action,
       token,
+    });
+
+    return;
+  }
+
+  if (action === "email_draft_yes" || action === "email_draft_no") {
+    const token = parts[1];
+
+    if (!token) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    await handleEmailDraftCallback({
+      ...input,
+      action,
+      token,
+    });
+
+    return;
+  }
+
+  if (action === "todo_done") {
+    const taskId = parts[1];
+
+    if (!taskId) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    await handleTodoDoneCallback({
+      ...input,
+      taskId,
+    });
+
+    return;
+  }
+
+  if (action === "todo_del_yes" || action === "todo_del_no") {
+    const token = parts[1];
+
+    if (!token) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    await handleTodoDeleteCallback({
+      ...input,
+      action,
+      token,
+    });
+
+    return;
+  }
+
+  if (action === "todo_del_select") {
+    const selectionToken = parts[1];
+    const selectedIndex = Number(parts[2]);
+
+    if (
+      !selectionToken ||
+      !Number.isInteger(selectedIndex) ||
+      selectedIndex < 0
+    ) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    await handleTodoSelectionCallback({
+      ...input,
+      selectionToken,
+      selectedIndex,
     });
 
     return;
@@ -1480,6 +1895,8 @@ export async function POST(request: Request) {
     if (text === "/setcommands") {
       await setTelegramBotCommands([
         { command: "agenda", description: "View today's schedule" },
+        { command: "todo", description: "View active to-do list" },
+        { command: "todotoday", description: "View today's to-do list" },
         { command: "calendar", description: "Calendar commands & upcoming events" },
         { command: "finance", description: "Finance commands & summary" },
         { command: "finance_summary", description: "Monthly spending & breakdown" },
@@ -1556,6 +1973,76 @@ export async function POST(request: Request) {
       await markUpdateCompleted(updateId, "calendar_upcoming");
       return Response.json({ ok: true });
     }
+
+    if (text === "/todo" || text === "/todos" || text === "/tasks") {
+      const todos = await listTodos({ status: "active" });
+      const formatted = formatTodoListMessage(todos, "Active To-Do List");
+      await sendTelegramMessage(chatId, formatted.text, formatted.replyMarkup);
+      await markUpdateCompleted(updateId, "todo_list_command");
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/todo today" || text === "/todotoday") {
+      const todos = await listTodos({ date: "today", status: "active" });
+      const formatted = formatTodoListMessage(todos, "Today's To-Do List");
+      await sendTelegramMessage(chatId, formatted.text, formatted.replyMarkup);
+      await markUpdateCompleted(updateId, "todo_today_command");
+      return Response.json({ ok: true });
+    }
+
+    if (text.startsWith("/todo add ")) {
+      const taskText = text.replace("/todo add ", "").trim();
+      if (!taskText) {
+        await sendTelegramMessage(chatId, "Please specify a task: /todo add <task>");
+        await markUpdateCompleted(updateId, "todo_add_empty");
+        return Response.json({ ok: true });
+      }
+
+      const todo = await addTodo({ task: taskText });
+      await sendTelegramMessage(
+        chatId,
+        `✅ Added to your to-do list:\n• ${todo.task}`,
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Mark Done",
+                callback_data: `todo_done:${todo.taskId}`,
+              },
+            ],
+          ],
+        }
+      );
+      await markUpdateCompleted(updateId, "todo_add_command");
+      return Response.json({ ok: true });
+    }
+
+    if (text.startsWith("/todo done ")) {
+      const query = text.replace("/todo done ", "").trim();
+      const matches = await searchActiveTodos(query);
+      if (matches.length === 0) {
+        await sendTelegramMessage(chatId, `No active tasks matching "${query}".`);
+      } else if (matches.length === 1) {
+        await completeTodo(matches[0].taskId);
+        await sendTelegramMessage(chatId, `✅ Completed: "${matches[0].task}"! 🎉`);
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          "Multiple tasks match. Tap which one you finished:",
+          {
+            inline_keyboard: matches.map((m) => [
+              {
+                text: `✅ ${truncateButtonText(m.task, 40)}`,
+                callback_data: `todo_done:${m.taskId}`,
+              },
+            ]),
+          }
+        );
+      }
+      await markUpdateCompleted(updateId, "todo_done_command");
+      return Response.json({ ok: true });
+    }
+
 
     if (text === "/finance") {
       await sendTelegramMessage(
@@ -1973,6 +2460,196 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "calendar_delete_search_found");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "todo_add") {
+      const todo = await addTodo({
+        task: intent.task,
+        dueDate: intent.dueDate,
+        priority: intent.priority,
+      });
+
+      const dueStr = todo.dueDate
+        ? `\n📅 Due: ${formatCalendarDate(todo.dueDate)}`
+        : "";
+
+      await sendTelegramMessage(
+        chatId,
+        `✅ Added to your to-do list:\n• ${todo.task}${dueStr}`,
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Mark Done",
+                callback_data: `todo_done:${todo.taskId}`,
+              },
+            ],
+          ],
+        }
+      );
+
+      await markUpdateCompleted(updateId, "todo_add_natural_language");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "todo_view") {
+      const isToday = intent.timeframe === "today";
+      const todos = await listTodos({
+        date: isToday ? "today" : undefined,
+        status: "active",
+      });
+
+      const title = isToday ? "Today's To-Do List" : "Active To-Do List";
+      const formatted = formatTodoListMessage(todos, title);
+      await sendTelegramMessage(chatId, formatted.text, formatted.replyMarkup);
+
+      await markUpdateCompleted(updateId, "todo_view_natural_language");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "todo_complete") {
+      const matches = await searchActiveTodos(intent.query);
+      if (matches.length === 0) {
+        await sendTelegramMessage(
+          chatId,
+          `I couldn't find any active tasks matching “${intent.query}”.`
+        );
+      } else if (matches.length === 1) {
+        await completeTodo(matches[0].taskId);
+        await sendTelegramMessage(
+          chatId,
+          `✅ Marked as done: “${matches[0].task}”! 🎉`
+        );
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          `Found ${matches.length} tasks matching “${intent.query}”. Tap which one you finished:`,
+          {
+            inline_keyboard: matches.map((m) => [
+              {
+                text: `✅ ${truncateButtonText(m.task, 40)}`,
+                callback_data: `todo_done:${m.taskId}`,
+              },
+            ]),
+          }
+        );
+      }
+
+      await markUpdateCompleted(updateId, "todo_complete_natural_language");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "todo_delete_search") {
+      const matches = await searchActiveTodos(intent.query);
+      if (matches.length === 0) {
+        await sendTelegramMessage(
+          chatId,
+          `I couldn't find any active tasks matching “${intent.query}” to remove.`
+        );
+        await markUpdateCompleted(updateId, "todo_delete_search_empty");
+        return Response.json({ ok: true });
+      }
+
+      if (matches.length === 1) {
+        const match = matches[0];
+        const token = await savePendingTodoDeleteAction({
+          userId: message.from.id,
+          payload: {
+            taskId: match.taskId,
+            task: match.task,
+          },
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          `Remove this task from your to-do list?\n\n• ${match.task}`,
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: "🗑️ Yes, remove",
+                  callback_data: `todo_del_yes:${token}`,
+                },
+                {
+                  text: "❌ No, keep",
+                  callback_data: `todo_del_no:${token}`,
+                },
+              ],
+            ],
+          }
+        );
+
+        await markUpdateCompleted(updateId, "todo_delete_prompt");
+        return Response.json({ ok: true });
+      }
+
+      const token = await savePendingTodoSelection({
+        userId: message.from.id,
+        payload: {
+          todos: matches.map((m) => ({ taskId: m.taskId, task: m.task })),
+        },
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        `Found ${matches.length} tasks matching “${intent.query}”. Which one would you like to remove?`,
+        {
+          inline_keyboard: matches.map((m, idx) => [
+            {
+              text: `🗑️ ${truncateButtonText(m.task, 40)}`,
+              callback_data: `todo_del_select:${token}:${idx}`,
+            },
+          ]),
+        }
+      );
+
+      await markUpdateCompleted(updateId, "todo_delete_selection_prompt");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "email_draft") {
+      const token = await savePendingEmailDraftAction({
+        userId: message.from.id,
+        payload: {
+          to: intent.to,
+          subject: intent.subject,
+          body: intent.body,
+          cc: intent.cc,
+          bcc: intent.bcc,
+        },
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        [
+          "Create this draft in your Gmail (evanyap7@gmail.com)?",
+          "",
+          formatEmailDraftPreview({
+            to: intent.to,
+            subject: intent.subject,
+            body: intent.body,
+            cc: intent.cc,
+            bcc: intent.bcc,
+          }),
+        ].join("\n"),
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "📝 Create Draft in Gmail",
+                callback_data: `email_draft_yes:${token}`,
+              },
+              {
+                text: "❌ Cancel",
+                callback_data: `email_draft_no:${token}`,
+              },
+            ],
+          ],
+        }
+      );
+
+      await markUpdateCompleted(updateId, "email_draft_prompt");
       return Response.json({ ok: true });
     }
 

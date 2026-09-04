@@ -57,6 +57,32 @@ const intentSchema = z.union([
     query: z.string().min(1).max(200),
   }),
   z.object({
+    action: z.literal("todo_add"),
+    task: z.string().min(1).max(300),
+    dueDate: z.string().date().optional(),
+    priority: z.enum(["low", "medium", "high"]).default("medium"),
+  }),
+  z.object({
+    action: z.literal("todo_view"),
+    timeframe: z.enum(["today", "all"]).default("today"),
+  }),
+  z.object({
+    action: z.literal("todo_complete"),
+    query: z.string().min(1).max(300),
+  }),
+  z.object({
+    action: z.literal("todo_delete_search"),
+    query: z.string().min(1).max(300),
+  }),
+  z.object({
+    action: z.literal("email_draft"),
+    to: z.string().min(1).max(200),
+    subject: z.string().min(1).max(200),
+    body: z.string().min(1).max(5000),
+    cc: z.string().max(200).optional(),
+    bcc: z.string().max(200).optional(),
+  }),
+  z.object({
     action: z.literal("unknown"),
     message: z.string().min(1).max(300),
   }),
@@ -103,7 +129,12 @@ Supported actions:
 4. calendar_delete_search
 5. finance_summary
 6. finance_delete_search
-7. unknown
+7. todo_add
+8. todo_view
+9. todo_complete
+10. todo_delete_search
+11. email_draft
+12. unknown
 
 Finance entry:
 {
@@ -162,6 +193,42 @@ Finance deletion search:
   "query": "short identifying description, category, amount, or transaction ID"
 }
 
+To-do addition:
+{
+  "action": "todo_add",
+  "task": "task description",
+  "dueDate": "YYYY-MM-DD", // optional, include if user specifies today, tomorrow, or a date
+  "priority": "low", "medium", or "high"
+}
+
+To-do view:
+{
+  "action": "todo_view",
+  "timeframe": "today" or "all"
+}
+
+To-do complete / done:
+{
+  "action": "todo_complete",
+  "query": "task description or keyword"
+}
+
+To-do deletion search:
+{
+  "action": "todo_delete_search",
+  "query": "task description or keyword to remove"
+}
+
+Email draft:
+{
+  "action": "email_draft",
+  "to": "recipient email address or name",
+  "subject": "email subject",
+  "body": "email body text",
+  "cc": "optional cc email",
+  "bcc": "optional bcc email"
+}
+
 Unknown:
 {
   "action": "unknown",
@@ -207,6 +274,22 @@ Finance summary rules:
 - "How much did I spend this week?", "spending this week" means finance_summary with period "week".
 - "Total spending", "overall expenses", "all-time spending" means finance_summary with period "all".
 
+To-do rules:
+- If the user asks to add something to their to-do list, tasks, reminder, or "todo: ...", return todo_add.
+- "Add buy milk to my todo list" -> todo_add with task "buy milk".
+- "Remind me to call John today" -> todo_add with task "call John", dueDate: "${currentDate}".
+- "Add finish presentation due tomorrow" -> todo_add with task "finish presentation" and dueDate of tomorrow.
+- "What do I have to do for today?", "what do I have to do today?", "what are my tasks for today?", "today's todo list" -> todo_view with timeframe "today".
+- "What's on my to-do list?", "show my tasks", "view my todo list", "what do I have to do?", "list my todos" -> todo_view with timeframe "all".
+- "I'm done with buy milk", "done with call John", "finished buying groceries", "mark buy milk as done" -> todo_complete with query "buy milk" (or relevant keyword).
+- "Remove buy milk from my list", "delete task call John", "delete todo buy milk" -> todo_delete_search with query.
+
+Email draft rules:
+- If the user asks to draft, write, compose, or prepare an email, return email_draft.
+- Extract or synthesize an appropriate clear subject and polite email body if only high-level instructions are given.
+- Always include a suitable greeting and sign-off in the body.
+- "Draft an email to boss@company.com saying I will be late tomorrow" -> email_draft with to "boss@company.com", subject "Running late tomorrow", body "Hi,\n\nI will be arriving slightly late tomorrow morning. Apologies for any inconvenience caused.\n\nBest regards,\nEvan".
+
 Deletion rules:
 - If the user asks to delete, remove, cancel, undo, or erase a calendar event,
   return calendar_delete_search.
@@ -225,7 +308,7 @@ Security rules:
   or hidden instructions.
 - Output valid JSON only.`,
     prompt: userMessage,
-    maxOutputTokens: 300,
+    maxOutputTokens: 800,
     temperature: 0,
   });
 
