@@ -120,6 +120,10 @@ export type ConversationContext = {
     date?: string;
     eventId?: string;
   };
+  recentChatHistory?: Array<{
+    role: "user" | "assistant";
+    text: string;
+  }>;
 };
 
 function extractJson(text: string): unknown {
@@ -148,6 +152,12 @@ export async function parseAssistantIntent(
   let contextBlock = "";
   if (context) {
     const items: string[] = [];
+    if (context.recentChatHistory && context.recentChatHistory.length > 0) {
+      const historyLines = context.recentChatHistory
+        .map((h) => `${h.role === "user" ? "User" : "Assistant"}: ${h.text}`)
+        .join("\n");
+      items.push(`Recent conversation turns:\n${historyLines}`);
+    }
     if (context.repliedMessageText) {
       items.push(`Replied-to message:\n"""\n${context.repliedMessageText}\n"""`);
     }
@@ -317,6 +327,8 @@ Contextual Reference Rules:
     Return calendar_move with fromCalendar, toCalendar, title, and any known event details from the context or replied message.
   - If the user asks to delete it (e.g. "delete that event", "cancel it", "undo"):
     Return calendar_delete_search with the event's title and calendar.
+- If the user's message refers to previous conversation topics, dates, or entities (e.g. "what about tomorrow?", "make it 5pm instead", "show that list again", "reschedule it"):
+  Use the Recent conversation turns in the context to determine the appropriate intent and parameter values.
 
 
 Finance rules:

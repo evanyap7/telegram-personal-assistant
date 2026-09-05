@@ -92,10 +92,31 @@ export type TodoSelectionPayload = {
   todos: TodoSelectionItem[];
 };
 
+export type PendingImagePayload = {
+  fileId: string;
+  mediaType?: string;
+  sentAt: string;
+};
+
+export type FinanceBatchItemPayload = {
+  type: "income" | "expense";
+  amount: number;
+  currency: string;
+  category: string;
+  description: string;
+  transactionDate: string;
+};
+
+export type FinanceBatchAddPayload = {
+  transactions: FinanceBatchItemPayload[];
+};
+
 type PendingActionType =
   | "calendar_add"
   | "calendar_batch_add"
   | "finance_add"
+  | "finance_batch_add"
+  | "pending_image"
   | "finance_select"
   | "calendar_select"
   | "finance_delete"
@@ -382,6 +403,95 @@ export async function cancelPendingFinanceAddAction(
     userId,
     actionType: "finance_add",
   });
+}
+
+export async function savePendingFinanceBatchAction(input: {
+  userId: number;
+  payload: FinanceBatchAddPayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "finance_batch_add",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingFinanceBatchAction(
+  token: string,
+  userId: number
+): Promise<FinanceBatchAddPayload | null> {
+  const result = await takePendingAction<FinanceBatchAddPayload>({
+    token,
+    userId,
+    actionType: "finance_batch_add",
+    nextStatus: "confirmed",
+  });
+
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingFinanceBatchAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "finance_batch_add",
+  });
+}
+
+export async function savePendingImageAction(input: {
+  userId: number;
+  payload: PendingImagePayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "pending_image",
+    payload: input.payload,
+  });
+}
+
+export async function getLatestPendingImage(
+  userId: number
+): Promise<{ token: string; payload: PendingImagePayload; rowNumber: number } | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const rowUserId = Number(row[1]);
+    const actionType = row[2];
+    const payloadJson = row[3] ?? "{}";
+    const expiresAt = row[4] ?? "";
+    const status = row[5] ?? "";
+
+    if (
+      rowUserId === userId &&
+      actionType === "pending_image" &&
+      status === "pending" &&
+      !isExpired(expiresAt)
+    ) {
+      try {
+        const payload = JSON.parse(payloadJson) as PendingImagePayload;
+        return { token: row[0], payload, rowNumber: i + 2 };
+      } catch {}
+    }
+  }
+  return null;
+}
+
+export async function consumePendingImage(token: string): Promise<boolean> {
+  const row = await findPendingRow(token);
+  if (!row) return false;
+  await setPendingStatus(row.rowNumber, "confirmed");
+  return true;
 }
 
 export async function savePendingFinanceSelection(input: {

@@ -25,6 +25,17 @@ const calendarEventSchema = z.discriminatedUnion("allDay", [
   }),
 ]);
 
+const financeItemSchema = z.object({
+  type: z.enum(["income", "expense"]),
+  amount: z.number().positive(),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  category: z.string().min(1).max(50),
+  description: z.string().min(1).max(200),
+  transactionDate: singaporeDateSchema,
+});
+
+export type ImageFinanceItem = z.infer<typeof financeItemSchema>;
+
 const imageIntentSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("calendar_from_image"),
@@ -39,6 +50,10 @@ const imageIntentSchema = z.discriminatedUnion("action", [
     category: z.string().min(1).max(50),
     description: z.string().min(1).max(200),
     transactionDate: singaporeDateSchema,
+  }),
+  z.object({
+    action: z.literal("finance_batch_from_image"),
+    transactions: z.array(financeItemSchema).min(1).max(25),
   }),
   z.object({
     action: z.literal("unknown"),
@@ -103,7 +118,8 @@ Timezone: Asia/Singapore (+08:00).
 Supported actions:
 1. calendar_from_image
 2. finance_from_image
-3. unknown
+3. finance_batch_from_image
+4. unknown
 
 Calendar output:
 {
@@ -132,7 +148,7 @@ Timed calendar-event output:
   ]
 }
 
-Finance output:
+Finance output (single transaction):
 {
   "action": "finance_from_image",
   "type": "expense" or "income",
@@ -141,6 +157,21 @@ Finance output:
   "category": "Dining",
   "description": "short merchant or transaction description",
   "transactionDate": "YYYY-MM-DD"
+}
+
+Finance batch output (multiple distinct transactions, items, or receipts in the image):
+{
+  "action": "finance_batch_from_image",
+  "transactions": [
+    {
+      "type": "expense" or "income",
+      "amount": positive number,
+      "currency": "SGD",
+      "category": "Transport",
+      "description": "short merchant or transaction description",
+      "transactionDate": "YYYY-MM-DD"
+    }
+  ]
 }
 
 Unknown output:
@@ -158,8 +189,11 @@ Rules:
 - For timed events, require both a start and end time or an explicit duration.
 - Never invent dates, times, amounts, merchants, or durations.
 - Extract all calendar events found in the image (up to 30 events).
-- For receipt/transaction images, use finance_from_image.
-- Treat "$" as SGD unless the image clearly identifies another currency.
+- For receipt, invoice, bank statement, or transaction screenshots:
+  - If multiple distinct transactions or line items are visible (e.g. a ride-hail ride and a shopping order, or multiple charges), return finance_batch_from_image containing all extracted items (up to 25 items).
+  - If only a single transaction/charge is visible, return finance_from_image.
+- Treat "$" or "S$" as SGD unless the image clearly identifies another currency.
+- Infer reasonable dates from the image (e.g. "5 Sep" or "4 Sep 2026" -> YYYY-MM-DD based on Singapore time).
 - Use a sensible category: Dining, Transport, Groceries, Shopping,
   Entertainment, Health, Education, Utilities, Salary, or Other.
 - If amount, transaction date, or merchant/description is unreadable for finance,

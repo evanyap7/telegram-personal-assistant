@@ -129,6 +129,54 @@ export async function addTransaction(input: TransactionInput): Promise<{
   };
 }
 
+export async function addTransactionsBatch(
+  items: TransactionInput[]
+): Promise<Array<{ transactionId: string; timestamp: string }>> {
+  if (items.length === 0) return [];
+
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const results: Array<{ transactionId: string; timestamp: string }> = [];
+  const rows: (string | number)[][] = [];
+
+  for (const input of items) {
+    const transactionId = createTransactionId();
+    let dateObj = new Date();
+    if (input.transactionDate) {
+      const parsedDate = new Date(`${input.transactionDate}T12:00:00+08:00`);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        dateObj = parsedDate;
+      }
+    }
+    const timestamp = formatSingaporeTimestamp(dateObj);
+
+    results.push({ transactionId, timestamp });
+    rows.push([
+      transactionId,
+      timestamp,
+      input.type,
+      input.amount,
+      input.currency.toUpperCase(),
+      input.category,
+      input.description,
+      "active",
+      "",
+    ]);
+  }
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${TRANSACTIONS_SHEET}!A:I`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: rows,
+    },
+  });
+
+  return results;
+}
+
 export async function listRecentTransactions(): Promise<FinanceTransaction[]> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();

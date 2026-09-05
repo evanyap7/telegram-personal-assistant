@@ -16,6 +16,7 @@ import {
 } from "@/lib/calendar";
 import {
   addTransaction,
+  addTransactionsBatch,
   FinanceSummary,
   getFinanceSummary,
   hasProcessedUpdate,
@@ -33,8 +34,11 @@ import {
   cancelPendingCalendarDeleteAction,
   cancelPendingEmailDraftAction,
   cancelPendingFinanceAddAction,
+  cancelPendingFinanceBatchAction,
   cancelPendingFinanceDeleteAction,
   cancelPendingTodoDeleteAction,
+  consumePendingImage,
+  getLatestPendingImage,
   getLatestUserCalendarContext,
   recordConfirmedCalendarEvent,
   savePendingCalendarAction,
@@ -43,8 +47,10 @@ import {
   savePendingCalendarSelection,
   savePendingEmailDraftAction,
   savePendingFinanceAddAction,
+  savePendingFinanceBatchAction,
   savePendingFinanceDeleteAction,
   savePendingFinanceSelection,
+  savePendingImageAction,
   savePendingTodoDeleteAction,
   savePendingTodoSelection,
   takePendingCalendarAction,
@@ -53,11 +59,16 @@ import {
   takePendingCalendarSelection,
   takePendingEmailDraftAction,
   takePendingFinanceAddAction,
+  takePendingFinanceBatchAction,
   takePendingFinanceDeleteAction,
   takePendingFinanceSelection,
   takePendingTodoDeleteAction,
   takePendingTodoSelection,
 } from "@/lib/pending-actions";
+import {
+  getRecentChatHistory,
+  logChatMessage,
+} from "@/lib/chat-history";
 import {
   addTodo,
   completeTodo,
@@ -93,6 +104,17 @@ const telegramUpdateSchema = z.object({
         .object({
           message_id: z.number(),
           text: z.string().optional(),
+          photo: z
+            .array(
+              z.object({
+                file_id: z.string(),
+                file_unique_id: z.string(),
+                width: z.number(),
+                height: z.number(),
+                file_size: z.number().optional(),
+              })
+            )
+            .optional(),
         })
         .optional(),
 
@@ -919,6 +941,101 @@ async function handleFinanceAddCallback(input: {
   });
 }
 
+async function handleFinanceBatchCreateCallback(input: {
+  callbackId: string;
+  action: "finance_batch_yes" | "finance_batch_no";
+  token: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+  startedAt: number;
+}) {
+  if (input.action === "finance_batch_no") {
+    const cancelled = await cancelPendingFinanceBatchAction(
+      input.token,
+      input.userId
+    );
+
+    await answerTelegramCallback(
+      input.callbackId,
+      cancelled ? "Transaction logging cancelled." : "This request has expired."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      cancelled
+        ? "Finance batch logging cancelled."
+        : "This finance batch request has already expired or was handled."
+    );
+
+    await markUpdateCompleted(input.updateId, "finance_batch_cancelled");
+    return;
+  }
+
+  const batch = await takePendingFinanceBatchAction(
+    input.token,
+    input.userId
+  );
+
+  if (!batch || !batch.transactions.length) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "This confirmation has expired or was already used."
+    );
+
+    await removeAndSend(
+      input.chatId,
+      input.messageId,
+      "This finance batch request has expired or was already handled."
+    );
+
+    await markUpdateCompleted(
+      input.updateId,
+      "finance_batch_confirmation_invalid"
+    );
+    return;
+  }
+
+  await answerTelegramCallback(
+    input.callbackId,
+    `Logging ${batch.transactions.length} transactions...`
+  );
+
+  await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+
+  const results = await addTransactionsBatch(batch.transactions);
+
+  const summaryLines = batch.transactions.map((t, idx) => {
+    return `${idx + 1}. ${t.description} — ${t.amount.toFixed(2)} ${t.currency} (${t.category}, ${t.transactionDate})`;
+  });
+
+  const totalAmount = batch.transactions.reduce(
+    (acc, curr) => acc + curr.amount,
+    0
+  );
+  const currency = batch.transactions[0]?.currency ?? "SGD";
+
+  await sendTelegramMessage(
+    input.chatId,
+    [
+      `✅ Logged ${results.length} transactions (Total: ${totalAmount.toFixed(2)} ${currency}):`,
+      "",
+      summaryLines.join("\n"),
+    ].join("\n")
+  );
+
+  await markUpdateCompleted(input.updateId, "finance_batch_add");
+
+  log("telegram.webhook.completed", {
+    updateId: input.updateId,
+    action: "finance_batch_add",
+    count: results.length,
+    durationMs: Date.now() - input.startedAt,
+  });
+}
+
 async function handleFinanceDeleteCallback(input: {
   callbackId: string;
   action: "finance_delete_yes" | "finance_delete_no";
@@ -1365,6 +1482,23 @@ async function handleCallback(input: {
     return;
   }
 
+  if (action === "finance_batch_yes" || action === "finance_batch_no") {
+    const token = parts[1];
+
+    if (!token) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    await handleFinanceBatchCreateCallback({
+      ...input,
+      action,
+      token,
+    });
+
+    return;
+  }
+
   if (action === "calendar_batch_yes" || action === "calendar_batch_no") {
     const token = parts[1];
 
@@ -1552,6 +1686,315 @@ async function handleCallback(input: {
   await answerTelegramCallback(input.callbackId, "This action is invalid.");
 }
 
+async function processAssistantImage(input: {
+  chatId: number;
+  userId: number;
+  fileId: string;
+  instruction: string;
+  updateId: number;
+}): Promise<boolean> {
+  const { chatId, userId, fileId, instruction, updateId } = input;
+  await sendTelegramMessage(chatId, "Reading your image...");
+
+  const downloadedImage = await downloadTelegramPhoto(fileId);
+
+  const imageIntent = await parseImageAssistantIntent({
+    instruction,
+    image: downloadedImage.data,
+    mediaType: downloadedImage.mediaType,
+  });
+
+  log("telegram.image_intent.parsed", {
+    updateId,
+    action: imageIntent.action,
+    imageBytes: downloadedImage.data.byteLength,
+  });
+
+  if (imageIntent.action === "unknown") {
+    await sendTelegramMessage(
+      chatId,
+      `${imageIntent.message}\n\nPlease send a clearer image or add more detail in your request.`
+    );
+
+    await markUpdateCompleted(updateId, "image_unknown");
+
+    return true;
+  }
+
+  if (imageIntent.action === "finance_from_image") {
+    const token = await savePendingFinanceAddAction({
+      userId,
+      payload: {
+        type: imageIntent.type,
+        amount: imageIntent.amount,
+        currency: imageIntent.currency,
+        category: imageIntent.category,
+        description: imageIntent.description,
+        transactionDate: imageIntent.transactionDate,
+      },
+    });
+
+    await sendTelegramMessage(
+      chatId,
+      [
+        "I found this transaction in the image. Log it?",
+        "",
+        `Type: ${imageIntent.type}`,
+        `Amount: ${imageIntent.amount.toFixed(2)} ${imageIntent.currency}`,
+        `Category: ${imageIntent.category}`,
+        `Description: ${imageIntent.description}`,
+        `Date: ${imageIntent.transactionDate}`,
+      ].join("\n"),
+      {
+        inline_keyboard: [
+          [
+            {
+              text: "✅ Yes, log",
+              callback_data: `finance_add_yes:${token}`,
+            },
+            {
+              text: "❌ No, cancel",
+              callback_data: `finance_add_no:${token}`,
+            },
+          ],
+        ],
+      }
+    );
+
+    await markUpdateCompleted(updateId, "image_finance_pending");
+
+    return true;
+  }
+
+  if (imageIntent.action === "finance_batch_from_image") {
+    if (!imageIntent.transactions.length) {
+      await sendTelegramMessage(
+        chatId,
+        "I could not find any clear transactions in that image."
+      );
+
+      await markUpdateCompleted(updateId, "image_finance_empty");
+
+      return true;
+    }
+
+    if (imageIntent.transactions.length === 1) {
+      const single = imageIntent.transactions[0];
+      const token = await savePendingFinanceAddAction({
+        userId,
+        payload: {
+          type: single.type,
+          amount: single.amount,
+          currency: single.currency,
+          category: single.category,
+          description: single.description,
+          transactionDate: single.transactionDate,
+        },
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        [
+          "I found this transaction in the image. Log it?",
+          "",
+          `Type: ${single.type}`,
+          `Amount: ${single.amount.toFixed(2)} ${single.currency}`,
+          `Category: ${single.category}`,
+          `Description: ${single.description}`,
+          `Date: ${single.transactionDate}`,
+        ].join("\n"),
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Yes, log",
+                callback_data: `finance_add_yes:${token}`,
+              },
+              {
+                text: "❌ No, cancel",
+                callback_data: `finance_add_no:${token}`,
+              },
+            ],
+          ],
+        }
+      );
+
+      await markUpdateCompleted(updateId, "image_finance_pending");
+
+      return true;
+    }
+
+    const token = await savePendingFinanceBatchAction({
+      userId,
+      payload: {
+        transactions: imageIntent.transactions,
+      },
+    });
+
+    const previews = imageIntent.transactions.map((t, idx) => {
+      return `${idx + 1}. ${t.description} — ${t.amount.toFixed(2)} ${t.currency} (${t.category}, ${t.transactionDate})`;
+    });
+
+    const total = imageIntent.transactions.reduce(
+      (acc, curr) => acc + curr.amount,
+      0
+    );
+    const curr = imageIntent.transactions[0]?.currency ?? "SGD";
+
+    await sendTelegramMessage(
+      chatId,
+      [
+        `I found ${imageIntent.transactions.length} transactions in the image (Total: ${total.toFixed(2)} ${curr}):`,
+        "",
+        previews.join("\n"),
+        "",
+        `Log all ${imageIntent.transactions.length} transactions?`,
+      ].join("\n"),
+      {
+        inline_keyboard: [
+          [
+            {
+              text: `✅ Yes, log all (${imageIntent.transactions.length})`,
+              callback_data: `finance_batch_yes:${token}`,
+            },
+            {
+              text: "❌ No, cancel",
+              callback_data: `finance_batch_no:${token}`,
+            },
+          ],
+        ],
+      }
+    );
+
+    await markUpdateCompleted(updateId, "image_finance_batch_pending");
+
+    return true;
+  }
+
+  if (imageIntent.action === "calendar_from_image") {
+    if (!imageIntent.events.length) {
+      await sendTelegramMessage(
+        chatId,
+        "I could not find any clear calendar events in that image."
+      );
+
+      await markUpdateCompleted(updateId, "image_calendar_empty");
+
+      return true;
+    }
+
+    if (imageIntent.events.length === 1) {
+      const event = imageIntent.events[0];
+
+      const payload = event.allDay
+        ? {
+            calendarName: imageIntent.calendarName,
+            allDay: true as const,
+            title: event.title,
+            date: event.date,
+          }
+        : {
+            calendarName: imageIntent.calendarName,
+            allDay: false as const,
+            title: event.title,
+            start: event.start,
+            end: event.end,
+          };
+
+      const token = await savePendingCalendarAction({
+        userId,
+        payload,
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        [
+          "I found this event in the image. Create it?",
+          "",
+          event.allDay
+            ? [
+                `Calendar: ${imageIntent.calendarName}`,
+                `Title: ${event.title}`,
+                `Date: ${formatCalendarDate(event.date)}`,
+                "Time: All day",
+              ].join("\n")
+            : [
+                `Calendar: ${imageIntent.calendarName}`,
+                `Title: ${event.title}`,
+                `Start: ${formatSingaporeDateTime(event.start)}`,
+                `End: ${formatSingaporeDateTime(event.end)}`,
+              ].join("\n"),
+        ].join("\n"),
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Yes, create",
+                callback_data: `calendar_yes:${token}`,
+              },
+              {
+                text: "❌ No, cancel",
+                callback_data: `calendar_no:${token}`,
+              },
+            ],
+          ],
+        }
+      );
+
+      await markUpdateCompleted(updateId, "image_calendar_pending");
+
+      return true;
+    }
+
+    // Multiple events: Batch Review
+    const token = await savePendingCalendarBatchAction({
+      userId,
+      payload: {
+        calendarName: imageIntent.calendarName,
+        events: imageIntent.events,
+      },
+    });
+
+    const eventPreviews = imageIntent.events.map((ev, idx) => {
+      const timing = ev.allDay
+        ? `${formatCalendarDate(ev.date)} (All day)`
+        : `${formatSingaporeDateTime(ev.start)} – ${formatSingaporeDateTime(ev.end)}`;
+      return `${idx + 1}. ${ev.title}\n   📅 ${timing}`;
+    });
+
+    await sendTelegramMessage(
+      chatId,
+      [
+        `I found ${imageIntent.events.length} events for your ${imageIntent.calendarName} calendar:`,
+        "",
+        eventPreviews.join("\n\n"),
+        "",
+        `Create all ${imageIntent.events.length} events?`,
+      ].join("\n"),
+      {
+        inline_keyboard: [
+          [
+            {
+              text: `✅ Yes, create all (${imageIntent.events.length})`,
+              callback_data: `calendar_batch_yes:${token}`,
+            },
+            {
+              text: "❌ No, cancel",
+              callback_data: `calendar_batch_no:${token}`,
+            },
+          ],
+        ],
+      }
+    );
+
+    await markUpdateCompleted(updateId, "image_calendar_batch_pending");
+
+    return true;
+  }
+
+  return false;
+}
+
 export async function POST(request: Request) {
   const startedAt = Date.now();
 
@@ -1629,212 +2072,63 @@ export async function POST(request: Request) {
       const largestPhoto = message.photo[message.photo.length - 1];
 
       if (!instruction) {
-        await sendTelegramMessage(
-          chatId,
-          [
-            "I received your image.",
-            "",
-            "Please resend it with an instruction in the caption, for example:",
-            "• Add these dates to my personal calendar",
-            "• Add these dates to my work calendar",
-            "• Log this receipt as an expense",
-          ].join("\n")
-        );
+        await savePendingImageAction({
+          userId: message.from.id,
+          payload: {
+            fileId: largestPhoto.file_id,
+            sentAt: new Date().toISOString(),
+          },
+        });
 
-        await markUpdateCompleted(updateId, "image_missing_instruction");
+        const promptText = [
+          "I received your image! 📸",
+          "",
+          "What would you like me to do with it?",
+          "• “Log these as an expense”",
+          "• “Add these dates to my personal calendar”",
+          "• “Add these dates to my work calendar”",
+        ].join("\n");
+
+        await sendTelegramMessage(chatId, promptText);
+
+        logChatMessage({
+          messageId: message.message_id,
+          userId: message.from.id,
+          role: "user",
+          text: "[Image uploaded]",
+          photoFileId: largestPhoto.file_id,
+          actionType: "image_upload",
+        }).catch(() => {});
+
+        logChatMessage({
+          userId: message.from.id,
+          role: "assistant",
+          text: promptText,
+          actionType: "pending_image_instruction",
+        }).catch(() => {});
+
+        await markUpdateCompleted(updateId, "image_pending_instruction");
 
         return Response.json({ ok: true });
       }
 
-      await sendTelegramMessage(chatId, "Reading your image...");
-
-      const downloadedImage = await downloadTelegramPhoto(largestPhoto.file_id);
-
-      const imageIntent = await parseImageAssistantIntent({
+      const handled = await processAssistantImage({
+        chatId,
+        userId: message.from.id,
+        fileId: largestPhoto.file_id,
         instruction,
-        image: downloadedImage.data,
-        mediaType: downloadedImage.mediaType,
-      });
-
-      log("telegram.image_intent.parsed", {
         updateId,
-        action: imageIntent.action,
-        imageBytes: downloadedImage.data.byteLength,
       });
 
-      if (imageIntent.action === "unknown") {
-        await sendTelegramMessage(
-          chatId,
-          `${imageIntent.message}\n\nPlease send a clearer image or add more detail in the caption.`
-        );
-
-        await markUpdateCompleted(updateId, "image_unknown");
-
-        return Response.json({ ok: true });
-      }
-
-      if (imageIntent.action === "finance_from_image") {
-        const token = await savePendingFinanceAddAction({
+      if (handled) {
+        logChatMessage({
+          messageId: message.message_id,
           userId: message.from.id,
-          payload: {
-            type: imageIntent.type,
-            amount: imageIntent.amount,
-            currency: imageIntent.currency,
-            category: imageIntent.category,
-            description: imageIntent.description,
-            transactionDate: imageIntent.transactionDate,
-          },
-        });
-
-        await sendTelegramMessage(
-          chatId,
-          [
-            "I found this transaction in the image. Log it?",
-            "",
-            `Type: ${imageIntent.type}`,
-            `Amount: ${imageIntent.amount.toFixed(2)} ${imageIntent.currency}`,
-            `Category: ${imageIntent.category}`,
-            `Description: ${imageIntent.description}`,
-            `Date: ${imageIntent.transactionDate}`,
-          ].join("\n"),
-          {
-            inline_keyboard: [
-              [
-                {
-                  text: "✅ Yes, log",
-                  callback_data: `finance_add_yes:${token}`,
-                },
-                {
-                  text: "❌ No, cancel",
-                  callback_data: `finance_add_no:${token}`,
-                },
-              ],
-            ],
-          }
-        );
-
-        await markUpdateCompleted(updateId, "image_finance_pending");
-
-        return Response.json({ ok: true });
-      }
-
-      if (imageIntent.action === "calendar_from_image") {
-        if (!imageIntent.events.length) {
-          await sendTelegramMessage(
-            chatId,
-            "I could not find any clear calendar events in that image."
-          );
-
-          await markUpdateCompleted(updateId, "image_calendar_empty");
-
-          return Response.json({ ok: true });
-        }
-
-        if (imageIntent.events.length === 1) {
-          const event = imageIntent.events[0];
-
-          const payload = event.allDay
-            ? {
-              calendarName: imageIntent.calendarName,
-              allDay: true as const,
-              title: event.title,
-              date: event.date,
-            }
-            : {
-              calendarName: imageIntent.calendarName,
-              allDay: false as const,
-              title: event.title,
-              start: event.start,
-              end: event.end,
-            };
-
-          const token = await savePendingCalendarAction({
-            userId: message.from.id,
-            payload,
-          });
-
-          await sendTelegramMessage(
-            chatId,
-            [
-              "I found this event in the image. Create it?",
-              "",
-              event.allDay
-                ? [
-                  `Calendar: ${imageIntent.calendarName}`,
-                  `Title: ${event.title}`,
-                  `Date: ${formatCalendarDate(event.date)}`,
-                  "Time: All day",
-                ].join("\n")
-                : [
-                  `Calendar: ${imageIntent.calendarName}`,
-                  `Title: ${event.title}`,
-                  `Start: ${formatSingaporeDateTime(event.start)}`,
-                  `End: ${formatSingaporeDateTime(event.end)}`,
-                ].join("\n"),
-            ].join("\n"),
-            {
-              inline_keyboard: [
-                [
-                  {
-                    text: "✅ Yes, create",
-                    callback_data: `calendar_yes:${token}`,
-                  },
-                  {
-                    text: "❌ No, cancel",
-                    callback_data: `calendar_no:${token}`,
-                  },
-                ],
-              ],
-            }
-          );
-
-          await markUpdateCompleted(updateId, "image_calendar_pending");
-
-          return Response.json({ ok: true });
-        }
-
-        // Multiple events: Batch Review
-        const token = await savePendingCalendarBatchAction({
-          userId: message.from.id,
-          payload: {
-            calendarName: imageIntent.calendarName,
-            events: imageIntent.events,
-          },
-        });
-
-        const eventPreviews = imageIntent.events.map((ev, idx) => {
-          const timing = ev.allDay
-            ? `${formatCalendarDate(ev.date)} (All day)`
-            : `${formatSingaporeDateTime(ev.start)} – ${formatSingaporeDateTime(ev.end)}`;
-          return `${idx + 1}. ${ev.title}\n   📅 ${timing}`;
-        });
-
-        await sendTelegramMessage(
-          chatId,
-          [
-            `I found ${imageIntent.events.length} events for your ${imageIntent.calendarName} calendar:`,
-            "",
-            eventPreviews.join("\n\n"),
-            "",
-            `Create all ${imageIntent.events.length} events?`,
-          ].join("\n"),
-          {
-            inline_keyboard: [
-              [
-                {
-                  text: `✅ Yes, create all (${imageIntent.events.length})`,
-                  callback_data: `calendar_batch_yes:${token}`,
-                },
-                {
-                  text: "❌ No, cancel",
-                  callback_data: `calendar_batch_no:${token}`,
-                },
-              ],
-            ],
-          }
-        );
-
-        await markUpdateCompleted(updateId, "image_calendar_batch_pending");
+          role: "user",
+          text: instruction,
+          photoFileId: largestPhoto.file_id,
+          actionType: "image_with_caption",
+        }).catch(() => {});
 
         return Response.json({ ok: true });
       }
@@ -1899,6 +2193,54 @@ export async function POST(request: Request) {
     });
 
     if (!text.startsWith("/")) {
+      let followUpImageFileId: string | undefined;
+      let pendingImageToken: string | undefined;
+
+      if (message.reply_to_message?.photo?.length) {
+        const replyPhotos = message.reply_to_message.photo;
+        followUpImageFileId = replyPhotos[replyPhotos.length - 1].file_id;
+      } else {
+        const pendingImage = await getLatestPendingImage(message.from.id);
+        if (pendingImage) {
+          const isImageReply =
+            message.reply_to_message?.text?.includes("received your image") ?? false;
+          const isInstruction =
+            /log\s+(this|these)|expense|receipt|screenshot|dates?|calendar|add\s+(this|these)|record|spend/i.test(
+              text
+            );
+          if (isImageReply || isInstruction) {
+            followUpImageFileId = pendingImage.payload.fileId;
+            pendingImageToken = pendingImage.token;
+          }
+        }
+      }
+
+      if (followUpImageFileId) {
+        if (pendingImageToken) {
+          await consumePendingImage(pendingImageToken);
+        }
+
+        const handled = await processAssistantImage({
+          chatId,
+          userId: message.from.id,
+          fileId: followUpImageFileId,
+          instruction: text,
+          updateId,
+        });
+
+        if (handled) {
+          logChatMessage({
+            messageId: message.message_id,
+            userId: message.from.id,
+            role: "user",
+            text,
+            actionType: "image_followup",
+          }).catch(() => {});
+
+          return Response.json({ ok: true });
+        }
+      }
+
       await sendTelegramMessage(chatId, "Processing your request...");
     }
 
@@ -2205,6 +2547,8 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    const recentChatHistory = await getRecentChatHistory(message.from.id, 8);
+
     const userCalendarContext = await getLatestUserCalendarContext(
       message.from.id
     );
@@ -2212,7 +2556,15 @@ export async function POST(request: Request) {
       repliedMessageText: message.reply_to_message?.text,
       activePendingCalendar: userCalendarContext.activePending?.payload,
       recentCalendarEvent: userCalendarContext.recentConfirmed,
+      recentChatHistory,
     };
+
+    logChatMessage({
+      messageId: message.message_id,
+      userId: message.from.id,
+      role: "user",
+      text,
+    }).catch(() => {});
 
     const intentStartAt = Date.now();
     const intent = await parseAssistantIntent(text, conversationContext);
@@ -2739,10 +3091,15 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "unknown") {
-      await sendTelegramMessage(
-        chatId,
-        `${intent.message}\n\nTry /help for examples.`
-      );
+      const replyMsg = `${intent.message}\n\nTry /help for examples.`;
+      await sendTelegramMessage(chatId, replyMsg);
+
+      logChatMessage({
+        userId: message.from.id,
+        role: "assistant",
+        text: replyMsg,
+        actionType: "unknown",
+      }).catch(() => {});
 
       await markUpdateCompleted(updateId, "unknown");
       return Response.json({ ok: true });
