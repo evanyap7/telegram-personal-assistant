@@ -192,6 +192,134 @@ export async function deleteCalendarEvent(input: {
   });
 }
 
+export type MoveCalendarEventInput = {
+  fromCalendar: "personal" | "work";
+  toCalendar: "personal" | "work";
+  title: string;
+  eventId?: string;
+  allDay?: boolean;
+  start?: string;
+  end?: string;
+  date?: string;
+};
+
+export async function moveCalendarEvent(
+  input: MoveCalendarEventInput
+): Promise<{
+  id: string;
+  htmlLink: string | null;
+  fromCalendar: "personal" | "work";
+  toCalendar: "personal" | "work";
+  title: string;
+  start: string;
+  end?: string;
+  allDay: boolean;
+}> {
+  const calendar = getCalendarClient();
+  const fromCalId = getCalendarId(input.fromCalendar);
+
+  let eventDetails: {
+    title: string;
+    allDay: boolean;
+    start: string;
+    end: string;
+    date: string;
+  } | null = null;
+
+  let targetOldEventId: string | null = input.eventId ?? null;
+
+  if (targetOldEventId) {
+    try {
+      const existing = await calendar.events.get({
+        calendarId: fromCalId,
+        eventId: targetOldEventId,
+      });
+
+      const isAllDay = Boolean(existing.data.start?.date);
+      eventDetails = {
+        title: existing.data.summary || input.title,
+        allDay: isAllDay,
+        start: existing.data.start?.dateTime || existing.data.start?.date || "",
+        end: existing.data.end?.dateTime || existing.data.end?.date || "",
+        date: existing.data.start?.date || "",
+      };
+    } catch {
+      targetOldEventId = null;
+    }
+  }
+
+  if (!targetOldEventId) {
+    const matches = await searchUpcomingCalendarEvents({
+      calendarName: input.fromCalendar,
+      query: input.title,
+    });
+
+    if (matches.length > 0) {
+      targetOldEventId = matches[0].eventId;
+      const isAllDay = !matches[0].start.includes("T");
+      eventDetails = {
+        title: matches[0].title,
+        allDay: isAllDay,
+        start: matches[0].start,
+        end: matches[0].end,
+        date: isAllDay ? matches[0].start : "",
+      };
+    }
+  }
+
+  const title = eventDetails?.title || input.title;
+  const isAllDay = eventDetails?.allDay ?? input.allDay ?? Boolean(input.date);
+  const start = eventDetails?.start || input.start || "";
+  const end = eventDetails?.end || input.end || "";
+  const date =
+    eventDetails?.date ||
+    input.date ||
+    (start ? singaporeDateFromDateTime(start) : "");
+
+  if (targetOldEventId) {
+    try {
+      await deleteCalendarEvent({
+        calendarName: input.fromCalendar,
+        eventId: targetOldEventId,
+      });
+    } catch (err) {
+      console.warn("Failed to delete old event during move:", err);
+    }
+  }
+
+  let createRes: { id: string; htmlLink: string | null };
+  if (isAllDay) {
+    createRes = await createCalendarEvent({
+      calendarName: input.toCalendar,
+      allDay: true,
+      title,
+      date:
+        date ||
+        nextSingaporeDate(singaporeDateFromDateTime(new Date().toISOString())),
+    });
+  } else {
+    createRes = await createCalendarEvent({
+      calendarName: input.toCalendar,
+      allDay: false,
+      title,
+      start,
+      end,
+    });
+  }
+
+  return {
+    id: createRes.id,
+    htmlLink: createRes.htmlLink,
+    fromCalendar: input.fromCalendar,
+    toCalendar: input.toCalendar,
+    title,
+    start: isAllDay ? date : start,
+    end: isAllDay ? undefined : end,
+    allDay: isAllDay,
+  };
+}
+
+
 export type ScheduleQueryOptions = {
   calendarName?: "personal" | "work" | "all";
   timeMin?: string;

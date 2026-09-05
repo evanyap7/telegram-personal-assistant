@@ -83,12 +83,44 @@ const intentSchema = z.union([
     bcc: z.string().max(200).optional(),
   }),
   z.object({
+    action: z.literal("calendar_move"),
+    fromCalendar: z.enum(["personal", "work"]).default("personal"),
+    toCalendar: z.enum(["personal", "work"]),
+    title: z.string().min(1).max(100),
+    eventId: z.string().optional(),
+    allDay: z.boolean().default(false),
+    start: singaporeDateTimeSchema.optional(),
+    end: singaporeDateTimeSchema.optional(),
+    date: z.string().date().optional(),
+  }),
+  z.object({
     action: z.literal("unknown"),
     message: z.string().min(1).max(300),
   }),
 ]);
 
 export type AssistantIntent = z.infer<typeof intentSchema>;
+
+export type ConversationContext = {
+  repliedMessageText?: string;
+  activePendingCalendar?: {
+    calendarName: "personal" | "work";
+    title: string;
+    allDay: boolean;
+    start?: string;
+    end?: string;
+    date?: string;
+  };
+  recentCalendarEvent?: {
+    calendarName: "personal" | "work";
+    title: string;
+    allDay?: boolean;
+    start?: string;
+    end?: string;
+    date?: string;
+    eventId?: string;
+  };
+};
 
 function extractJson(text: string): unknown {
   const cleaned = text
@@ -102,7 +134,8 @@ function extractJson(text: string): unknown {
 }
 
 export async function parseAssistantIntent(
-  userMessage: string
+  userMessage: string,
+  context?: ConversationContext
 ): Promise<AssistantIntent> {
   if (!process.env.PERPLEXITY_API_KEY) {
     throw new Error("PERPLEXITY_API_KEY is missing.");
@@ -111,6 +144,29 @@ export async function parseAssistantIntent(
   const currentDate = new Date().toLocaleDateString("en-CA", {
     timeZone: "Asia/Singapore",
   });
+
+  let contextBlock = "";
+  if (context) {
+    const items: string[] = [];
+    if (context.repliedMessageText) {
+      items.push(`Replied-to message:\n"""\n${context.repliedMessageText}\n"""`);
+    }
+    if (context.activePendingCalendar) {
+      const p = context.activePendingCalendar;
+      items.push(
+        `Active pending calendar confirmation:\n- Calendar: ${p.calendarName}\n- Title: "${p.title}"\n- All-day: ${p.allDay}\n- Timing: ${p.allDay ? p.date : `${p.start} to ${p.end}`}`
+      );
+    }
+    if (context.recentCalendarEvent) {
+      const r = context.recentCalendarEvent;
+      items.push(
+        `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}\n- Event ID: ${r.eventId ?? "none"}`
+      );
+    }
+    if (items.length > 0) {
+      contextBlock = `\n\n--- Conversation Context ---\n${items.join("\n\n")}\n-----------------------------`;
+    }
+  }
 
   const result = await generateText({
     model: perplexity("sonar"),
@@ -134,7 +190,8 @@ Supported actions:
 9. todo_complete
 10. todo_delete_search
 11. email_draft
-12. unknown
+12. calendar_move
+13. unknown
 
 Finance entry:
 {
@@ -229,11 +286,38 @@ Email draft:
   "bcc": "optional bcc email"
 }
 
+Calendar move / switch calendar:
+{
+  "action": "calendar_move",
+  "fromCalendar": "personal" or "work",
+  "toCalendar": "personal" or "work",
+  "title": "event title",
+  "eventId": "event id if known",
+  "allDay": false,
+  "start": "YYYY-MM-DDTHH:mm:ss+08:00",
+  "end": "YYYY-MM-DDTHH:mm:ss+08:00"
+}
+
 Unknown:
 {
   "action": "unknown",
   "message": "Short explanation of what is missing."
 }
+${contextBlock}
+
+Contextual Reference Rules:
+- If an active pending calendar confirmation is present in the context:
+  - If the user asks to change the calendar (e.g. "add it to my work calendar", "change it to work calendar", "switch to work", "make it work instead", "put this in work", "work calendar instead"):
+    Return calendar_add with the requested calendarName ("personal" or "work") retaining the title and timing (start/end or date) from the pending event! DO NOT return unknown.
+  - If the user asks to change the time (e.g. "make it 7pm", "change to 8pm"), update the start and end times while retaining the title and calendar.
+  - If the user asks to change the date (e.g. "make it tomorrow", "change to 8 sept"), update the date while retaining the title and calendar.
+  - If the user asks to change the title (e.g. "rename it to ...", "title should be ..."), update the title while retaining the timing and calendar.
+- If the user replied to an event creation message OR asks to change an event that was just created:
+  - If the user asks to move it or change its calendar (e.g. "sorry can u add this to my work calendar instead", "move this to my work calendar", "switch to work calendar", "change this to work"):
+    Return calendar_move with fromCalendar, toCalendar, title, and any known event details from the context or replied message.
+  - If the user asks to delete it (e.g. "delete that event", "cancel it", "undo"):
+    Return calendar_delete_search with the event's title and calendar.
+
 
 Finance rules:
 - Treat "$" as SGD unless another currency is named.

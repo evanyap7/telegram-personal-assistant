@@ -6,11 +6,11 @@ import {
 import { transcribeTelegramVoiceNote } from "@/lib/voice-transcribe";
 import { z } from "zod";
 
-import { parseAssistantIntent } from "@/lib/assistant-intent";
 import {
   createCalendarEvent,
   deleteCalendarEvent,
   getUpcomingSchedule,
+  moveCalendarEvent,
   ScheduleEventItem,
   searchUpcomingCalendarEvents,
 } from "@/lib/calendar";
@@ -27,6 +27,7 @@ import {
   softDeleteTransaction,
 } from "@/lib/finance";
 import {
+  cancelActivePendingCalendarAction,
   cancelPendingCalendarAction,
   cancelPendingCalendarBatchAction,
   cancelPendingCalendarDeleteAction,
@@ -34,6 +35,8 @@ import {
   cancelPendingFinanceAddAction,
   cancelPendingFinanceDeleteAction,
   cancelPendingTodoDeleteAction,
+  getLatestUserCalendarContext,
+  recordConfirmedCalendarEvent,
   savePendingCalendarAction,
   savePendingCalendarBatchAction,
   savePendingCalendarDeleteAction,
@@ -64,6 +67,7 @@ import {
   TodoItem,
 } from "@/lib/todos";
 import { createEmailDraft } from "@/lib/gmail";
+import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-intent";
 import {
   answerTelegramCallback,
   removeTelegramInlineKeyboard,
@@ -85,6 +89,13 @@ const telegramUpdateSchema = z.object({
       }),
       text: z.string().optional(),
       caption: z.string().optional(),
+      reply_to_message: z
+        .object({
+          message_id: z.number(),
+          text: z.string().optional(),
+        })
+        .optional(),
+
       photo: z
         .array(
           z.object({
@@ -493,6 +504,11 @@ async function handleCalendarCreateCallback(input: {
   await answerTelegramCallback(input.callbackId, "Creating calendar event...");
 
   const event = await createCalendarEvent(pendingAction.payload);
+
+  await recordConfirmedCalendarEvent({
+    token: input.token,
+    eventId: event.id,
+  });
 
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
@@ -2189,8 +2205,17 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    const userCalendarContext = await getLatestUserCalendarContext(
+      message.from.id
+    );
+    const conversationContext: ConversationContext = {
+      repliedMessageText: message.reply_to_message?.text,
+      activePendingCalendar: userCalendarContext.activePending?.payload,
+      recentCalendarEvent: userCalendarContext.recentConfirmed,
+    };
+
     const intentStartAt = Date.now();
-    const intent = await parseAssistantIntent(text);
+    const intent = await parseAssistantIntent(text, conversationContext);
 
     log("telegram.intent.parsed", {
       updateId,
@@ -2302,7 +2327,12 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "calendar_add") {
+      if (userCalendarContext.activePending) {
+        await cancelActivePendingCalendarAction(message.from.id);
+      }
+
       const payload = intent.allDay
+
         ? {
           calendarName: intent.calendarName,
           allDay: true as const,
@@ -2651,6 +2681,61 @@ export async function POST(request: Request) {
 
       await markUpdateCompleted(updateId, "email_draft_prompt");
       return Response.json({ ok: true });
+    }
+
+    if (intent.action === "calendar_move") {
+      try {
+        const moveRes = await moveCalendarEvent({
+          fromCalendar: intent.fromCalendar,
+          toCalendar: intent.toCalendar,
+          title: intent.title,
+          eventId: intent.eventId,
+          allDay: intent.allDay,
+          start: intent.start,
+          end: intent.end,
+          date: intent.date,
+        });
+
+        const fromBadge =
+          intent.fromCalendar === "work" ? "💼 Work" : "🏠 Personal";
+        const toBadge =
+          intent.toCalendar === "work" ? "💼 Work" : "🏠 Personal";
+
+        const timingLine = moveRes.allDay
+          ? `Date: ${formatCalendarDate(moveRes.start)} (All day)`
+          : `Start: ${formatSingaporeDateTime(moveRes.start)}\nEnd: ${formatSingaporeDateTime(moveRes.end ?? "")}`;
+
+        await sendTelegramMessage(
+          chatId,
+          [
+            `✅ Moved event from ${fromBadge} to ${toBadge}!`,
+            "",
+            `Title: ${moveRes.title}`,
+            timingLine,
+            moveRes.htmlLink ? `Link: ${moveRes.htmlLink}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        );
+
+        await markUpdateCompleted(updateId, "calendar_move");
+        return Response.json({ ok: true });
+      } catch (moveError) {
+        log("telegram.calendar_move.failed", {
+          updateId,
+          error: errorText(moveError),
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          `Sorry, I couldn't move "${intent.title}" to ${intent.toCalendar}: ${
+            moveError instanceof Error ? moveError.message : "Unknown error"
+          }`
+        );
+
+        await markUpdateFailed(updateId, errorText(moveError));
+        return Response.json({ ok: true });
+      }
     }
 
     if (intent.action === "unknown") {

@@ -609,3 +609,120 @@ export async function takePendingTodoSelection(
 
   return result?.payload ?? null;
 }
+
+export type UserCalendarContext = {
+  activePending?: {
+    token: string;
+    rowNumber: number;
+    payload: CalendarAddPayload;
+  };
+  recentConfirmed?: {
+    calendarName: "personal" | "work";
+    title: string;
+    allDay?: boolean;
+    start?: string;
+    end?: string;
+    date?: string;
+    eventId?: string;
+  };
+};
+
+export async function getLatestUserCalendarContext(
+  userId: number
+): Promise<UserCalendarContext> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+  let activePending: UserCalendarContext["activePending"] | undefined;
+  let recentConfirmed: UserCalendarContext["recentConfirmed"] | undefined;
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const rowUserId = Number(row[1]);
+    const actionType = row[2] as PendingActionType;
+    const payloadJson = row[3] ?? "{}";
+    const expiresAt = row[4] ?? "";
+    const status = row[5] ?? "";
+
+    if (rowUserId !== userId) continue;
+
+    if (
+      !activePending &&
+      actionType === "calendar_add" &&
+      status === "pending" &&
+      !isExpired(expiresAt)
+    ) {
+      try {
+        activePending = {
+          token: row[0],
+          rowNumber: i + 2,
+          payload: JSON.parse(payloadJson),
+        };
+      } catch {}
+    }
+
+    if (
+      !recentConfirmed &&
+      actionType === "calendar_add" &&
+      status === "confirmed"
+    ) {
+      try {
+        const parsed = JSON.parse(payloadJson);
+        recentConfirmed = {
+          calendarName: parsed.calendarName,
+          title: parsed.title,
+          allDay: parsed.allDay,
+          start: parsed.start,
+          end: parsed.end,
+          date: parsed.date,
+          eventId: parsed.eventId,
+        };
+      } catch {}
+    }
+
+    if (activePending && recentConfirmed) break;
+  }
+
+  return { activePending, recentConfirmed };
+}
+
+export async function recordConfirmedCalendarEvent(input: {
+  token: string;
+  eventId: string;
+}): Promise<void> {
+  const row = await findPendingRow(input.token);
+  if (!row) return;
+
+  const sheets = getSheetsClient();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = JSON.parse(row.payloadJson);
+  } catch {}
+
+  payload.eventId = input.eventId;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: getSpreadsheetId(),
+    range: `${SHEET_NAME}!D${row.rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[JSON.stringify(payload)]],
+    },
+  });
+}
+
+export async function cancelActivePendingCalendarAction(
+  userId: number
+): Promise<boolean> {
+  const context = await getLatestUserCalendarContext(userId);
+  if (!context.activePending) return false;
+
+  await setPendingStatus(context.activePending.rowNumber, "cancelled");
+  return true;
+}
