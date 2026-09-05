@@ -35,7 +35,7 @@ const intentSchema = z.union([
     currency: z.string().regex(/^[A-Z]{3}$/),
     category: z.string().min(1).max(50),
     description: z.string().min(1).max(200),
-    transactionDate: z.string().date(),
+    explicitDate: z.string().date().optional(),
   }),
   calendarAddSchema,
   z.object({
@@ -134,8 +134,24 @@ function extractJson(text: string): unknown {
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
-
   return JSON.parse(cleaned);
+}
+
+export function messageMentionsDate(message: string): boolean {
+  const lower = message.toLowerCase();
+  const datePatterns = [
+    /\b(yesterday|today|tomorrow)\b/,
+    /\b(last|this|next|prev|previous)\s+(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|year)\b/,
+    /\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/,
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/,
+    /\b(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\b/,
+    /\b\d{1,2}(st|nd|rd|th)?\s+(of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)/,
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}/,
+    /\b\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?\b/,
+    /\b\d{4}-\d{2}-\d{2}\b/,
+    /\b\d+\s+days?\s+ago\b/,
+  ];
+  return datePatterns.some((pattern) => pattern.test(lower));
 }
 
 export async function parseAssistantIntent(
@@ -226,7 +242,7 @@ Finance entry:
   "currency": "SGD",
   "category": "Dining",
   "description": "short description",
-  "transactionDate": "YYYY-MM-DD"
+  "explicitDate": "YYYY-MM-DD (ONLY if user explicitly mentioned a date like yesterday or last week; otherwise omit entirely)"
 }
 
 Timed calendar creation, only when the user gives a date and a clear
@@ -351,8 +367,8 @@ Finance rules:
 - Use uppercase three-letter currency codes.
 - Use a sensible category: Dining, Transport, Groceries, Shopping,
   Entertainment, Health, Education, Utilities, Salary, or Other.
-- For transactionDate, ALWAYS default to "${currentDate}" (today in Singapore, ${currentTime} SGT) unless the user explicitly mentions a different past date (e.g. "yesterday", "last Friday", "on 3 Sep").
-- If no date is mentioned (e.g. "spent $6 on lunch", "i spent $6 on a test"), transactionDate MUST be "${currentDate}". Never invent a past date.
+- DO NOT set explicitDate unless the user explicitly mentioned a specific date or relative day in their current message (e.g. "yesterday", "last Friday", "on 3 Sep").
+- If the user did NOT mention any date in their current message (e.g. "spent $6 on lunch", "i spent $6 on a test"), OMIT explicitDate completely.
 - If amount is missing for a finance add, return unknown.
 
 Calendar creation rules:
@@ -425,7 +441,13 @@ Security rules:
   });
 
   try {
-    return intentSchema.parse(extractJson(result.text));
+    const parsed = intentSchema.parse(extractJson(result.text));
+    if (parsed.action === "finance_add") {
+      if (parsed.explicitDate && !messageMentionsDate(userMessage)) {
+        delete parsed.explicitDate;
+      }
+    }
+    return parsed;
   } catch (error) {
     throw new Error(
       `Perplexity returned invalid intent JSON: ${

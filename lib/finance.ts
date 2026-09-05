@@ -9,6 +9,7 @@ export type TransactionInput = {
   currency: string;
   category: string;
   description: string;
+  explicitDate?: string;
   transactionDate?: string;
   transactionTimestamp?: Date | string | number;
 };
@@ -78,12 +79,13 @@ export function resolveTransactionDateObj(input: TransactionInput): Date {
     ? new Date(input.transactionTimestamp)
     : new Date();
 
-  if (!input.transactionDate) {
+  const customDate = input.explicitDate || input.transactionDate;
+  if (!customDate) {
     return baseDate;
   }
 
   const todaySg = getSingaporeDateString(baseDate);
-  if (input.transactionDate === todaySg) {
+  if (customDate === todaySg) {
     return baseDate;
   }
 
@@ -99,7 +101,7 @@ export function resolveTransactionDateObj(input: TransactionInput): Date {
   const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
   const ss = parts.find((p) => p.type === "second")?.value ?? "00";
 
-  const parsed = new Date(`${input.transactionDate}T${hh}:${mm}:${ss}+08:00`);
+  const parsed = new Date(`${customDate}T${hh}:${mm}:${ss}+08:00`);
   if (!Number.isNaN(parsed.getTime())) {
     return parsed;
   }

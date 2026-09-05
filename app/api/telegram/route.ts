@@ -2508,7 +2508,10 @@ export async function POST(request: Request) {
         description,
       });
 
-      const transaction = await addTransaction(input);
+      const transaction = await addTransaction({
+        ...input,
+        transactionTimestamp: message.date ? new Date(message.date * 1000) : new Date(),
+      });
 
       await sendTelegramMessage(
         chatId,
@@ -2589,7 +2592,7 @@ export async function POST(request: Request) {
         currency: intent.currency,
         category: intent.category,
         description: intent.description,
-        transactionDate: intent.transactionDate,
+        explicitDate: intent.explicitDate,
         transactionTimestamp: messageDateObj,
       });
 
