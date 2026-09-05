@@ -18,7 +18,10 @@ import {
   addTransaction,
   addTransactionsBatch,
   FinanceSummary,
+  FinanceTransaction,
   getFinanceSummary,
+  getLatestTransaction,
+  getTransactionById,
   hasProcessedUpdate,
   listRecentTransactions,
   markUpdateCompleted,
@@ -26,6 +29,7 @@ import {
   markUpdateStarted,
   searchActiveTransactions,
   softDeleteTransaction,
+  updateTransaction,
 } from "@/lib/finance";
 import {
   cancelActivePendingCalendarAction,
@@ -2561,12 +2565,29 @@ export async function POST(request: Request) {
     const userCalendarContext = await getLatestUserCalendarContext(
       message.from.id
     );
+
+    const latestTxn = await getLatestTransaction();
+    const repliedTxnMatch = message.reply_to_message?.text?.match(/txn_[a-zA-Z0-9_-]+/);
+    const repliedTxn = repliedTxnMatch ? await getTransactionById(repliedTxnMatch[0]) : null;
+    const targetTransaction = repliedTxn || latestTxn;
+
     const conversationContext: ConversationContext = {
       messageTime: messageDateObj,
       repliedMessageText: message.reply_to_message?.text,
       activePendingCalendar: userCalendarContext.activePending?.payload,
       recentCalendarEvent: userCalendarContext.recentConfirmed,
       recentChatHistory,
+      recentTransaction: targetTransaction
+        ? {
+            transactionId: targetTransaction.transactionId,
+            type: targetTransaction.type,
+            amount: targetTransaction.amount,
+            currency: targetTransaction.currency,
+            category: targetTransaction.category,
+            description: targetTransaction.description,
+            timestamp: targetTransaction.timestamp,
+          }
+        : undefined,
     };
 
     logChatMessage({
@@ -2758,12 +2779,60 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "finance_delete_search") {
-      const matches = await searchActiveTransactions(intent.query);
+      const resolvedTxnId =
+        intent.transactionId ||
+        (message.reply_to_message || text.toLowerCase().includes("this") || text.toLowerCase().includes("that")
+          ? targetTransaction?.transactionId
+          : undefined);
+
+      if (resolvedTxnId) {
+        const transaction = await getTransactionById(resolvedTxnId);
+        if (transaction) {
+          const confirmationToken = await savePendingFinanceDeleteAction({
+            userId: message.from.id,
+            payload: { transactionId: transaction.transactionId },
+          });
+
+          await sendTelegramMessage(
+            chatId,
+            [
+              "Delete this finance transaction?",
+              "",
+              formatFinanceTransaction(transaction),
+              "",
+              "This will mark the row as deleted in Google Sheets.",
+            ].join("\n"),
+            {
+              inline_keyboard: [
+                [
+                  {
+                    text: "🗑️ Yes, delete",
+                    callback_data: `finance_delete_yes:${confirmationToken}`,
+                  },
+                  {
+                    text: "❌ No, keep it",
+                    callback_data: `finance_delete_no:${confirmationToken}`,
+                  },
+                ],
+              ],
+            }
+          );
+
+          await markUpdateCompleted(
+            updateId,
+            "finance_delete_direct_confirmation_sent"
+          );
+          return Response.json({ ok: true });
+        }
+      }
+
+      const query = intent.query || text;
+      const matches = await searchActiveTransactions(query);
 
       if (matches.length === 0) {
         await sendTelegramMessage(
           chatId,
-          `No active finance transactions matched “${intent.query}”.`
+          `No active finance transactions matched “${query}”.`
         );
 
         await markUpdateCompleted(updateId, "finance_delete_search_empty");
@@ -2782,8 +2851,9 @@ export async function POST(request: Request) {
       await sendTelegramMessage(
         chatId,
         [
-          `Found ${limitedMatches.length} active finance match${limitedMatches.length === 1 ? "" : "es"
-          } for “${intent.query}”.`,
+          `Found ${limitedMatches.length} active finance match${
+            limitedMatches.length === 1 ? "" : "es"
+          } for “${query}”.`,
           "",
           "Choose the exact transaction to delete:",
         ].join("\n"),
@@ -2800,6 +2870,68 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_delete_search_found");
+      return Response.json({ ok: true });
+    }
+
+    if (intent.action === "finance_modify") {
+      const resolvedTxnId =
+        intent.transactionId ||
+        (message.reply_to_message || text.toLowerCase().includes("this") || text.toLowerCase().includes("that")
+          ? targetTransaction?.transactionId
+          : undefined);
+
+      let transaction: FinanceTransaction | null = null;
+      if (resolvedTxnId) {
+        transaction = await getTransactionById(resolvedTxnId);
+      }
+      if (!transaction && intent.query) {
+        const matches = await searchActiveTransactions(intent.query);
+        if (matches.length > 0) {
+          transaction = matches[0];
+        }
+      }
+      if (!transaction) {
+        transaction = targetTransaction;
+      }
+
+      if (!transaction) {
+        await sendTelegramMessage(
+          chatId,
+          "I couldn't find the transaction you want to modify. Please specify the description or reply to the transaction message."
+        );
+        await markUpdateCompleted(updateId, "finance_modify_not_found");
+        return Response.json({ ok: true });
+      }
+
+      const updated = await updateTransaction(
+        transaction.transactionId,
+        intent.updates
+      );
+
+      if (!updated) {
+        await sendTelegramMessage(
+          chatId,
+          `Failed to update transaction ${transaction.transactionId}. It may have already been deleted.`
+        );
+        await markUpdateCompleted(updateId, "finance_modify_failed");
+        return Response.json({ ok: true });
+      }
+
+      await sendTelegramMessage(
+        chatId,
+        [
+          "✅ Transaction updated!",
+          "",
+          `ID: ${updated.transactionId}`,
+          `Type: ${updated.type}`,
+          `Amount: ${Number(updated.amount).toFixed(2)} ${updated.currency}`,
+          `Category: ${updated.category}`,
+          `Description: ${updated.description}`,
+          `Date & Time: ${updated.timestamp} (SGT)`,
+        ].join("\n")
+      );
+
+      await markUpdateCompleted(updateId, "finance_modify_success");
       return Response.json({ ok: true });
     }
 
@@ -3102,6 +3234,45 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "unknown") {
+      const isDeleteRequest = /\b(delete|remove|cancel|undo|erase)\b/i.test(text);
+      if (isDeleteRequest && targetTransaction) {
+        const confirmationToken = await savePendingFinanceDeleteAction({
+          userId: message.from.id,
+          payload: { transactionId: targetTransaction.transactionId },
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          [
+            "Delete this finance transaction?",
+            "",
+            formatFinanceTransaction(targetTransaction),
+            "",
+            "This will mark the row as deleted in Google Sheets.",
+          ].join("\n"),
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: "🗑️ Yes, delete",
+                  callback_data: `finance_delete_yes:${confirmationToken}`,
+                },
+                {
+                  text: "❌ No, keep it",
+                  callback_data: `finance_delete_no:${confirmationToken}`,
+                },
+              ],
+            ],
+          }
+        );
+
+        await markUpdateCompleted(
+          updateId,
+          "finance_delete_fallback_confirmation_sent"
+        );
+        return Response.json({ ok: true });
+      }
+
       const replyMsg = `${intent.message}\n\nTry /help for examples.`;
       await sendTelegramMessage(chatId, replyMsg);
 

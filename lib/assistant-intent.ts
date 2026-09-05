@@ -54,7 +54,21 @@ const intentSchema = z.union([
   }),
   z.object({
     action: z.literal("finance_delete_search"),
-    query: z.string().min(1).max(200),
+    query: z.string().max(200).optional(),
+    transactionId: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("finance_modify"),
+    transactionId: z.string().optional(),
+    query: z.string().optional(),
+    updates: z.object({
+      type: z.enum(["income", "expense"]).optional(),
+      amount: z.number().positive().optional(),
+      currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+      category: z.string().min(1).max(50).optional(),
+      description: z.string().min(1).max(200).optional(),
+      explicitDate: z.string().date().optional(),
+    }),
   }),
   z.object({
     action: z.literal("todo_add"),
@@ -125,6 +139,15 @@ export type ConversationContext = {
     role: "user" | "assistant";
     text: string;
   }>;
+  recentTransaction?: {
+    transactionId: string;
+    type: string;
+    amount: string;
+    currency: string;
+    category: string;
+    description: string;
+    timestamp: string;
+  };
 };
 
 function extractJson(text: string): unknown {
@@ -202,6 +225,12 @@ export async function parseAssistantIntent(
         `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}\n- Event ID: ${r.eventId ?? "none"}`
       );
     }
+    if (context.recentTransaction) {
+      const t = context.recentTransaction;
+      items.push(
+        `Most recently created/modified finance transaction:\n- Transaction ID: ${t.transactionId}\n- Type: ${t.type}\n- Amount: ${t.amount} ${t.currency}\n- Category: ${t.category}\n- Description: "${t.description}"\n- Timestamp: ${t.timestamp}`
+      );
+    }
     if (items.length > 0) {
       contextBlock = `\n\n--- Conversation Context ---\n${items.join("\n\n")}\n-----------------------------`;
     }
@@ -232,7 +261,8 @@ Supported actions:
 10. todo_delete_search
 11. email_draft
 12. calendar_move
-13. unknown
+13. finance_modify
+14. unknown
 
 Finance entry:
 {
@@ -285,10 +315,26 @@ Calendar deletion search:
   "query": "short event title or keyword"
 }
 
-Finance deletion search:
+Finance deletion:
 {
   "action": "finance_delete_search",
+  "transactionId": "txn_... (if known from replied message or context; otherwise omit)",
   "query": "short identifying description, category, amount, or transaction ID"
+}
+
+Finance modify / edit transaction:
+{
+  "action": "finance_modify",
+  "transactionId": "txn_... (if known from replied message or context; otherwise omit)",
+  "query": "short identifying description if transactionId is not known",
+  "updates": {
+    "amount": 10.00,
+    "category": "Dining",
+    "description": "new description",
+    "type": "income" or "expense",
+    "currency": "SGD",
+    "explicitDate": "YYYY-MM-DD"
+  }
 }
 
 To-do addition:
@@ -358,6 +404,11 @@ Contextual Reference Rules:
     Return calendar_move with fromCalendar, toCalendar, title, and any known event details from the context or replied message.
   - If the user asks to delete it (e.g. "delete that event", "cancel it", "undo"):
     Return calendar_delete_search with the event's title and calendar.
+- If the user replied to a finance transaction message OR asks to delete/modify a transaction that was just created:
+  - If the user asks to delete it (e.g. "delete this", "delete that", "cancel it", "delete", "remove this transaction", "undo"):
+    Return finance_delete_search with transactionId set to the ID from the replied message or the most recent finance transaction! DO NOT return unknown.
+  - If the user asks to modify it (e.g. "change amount to $10", "make it $12", "it was $12 not $6", "change category to Dining", "rename to lunch with friends", "change description to ...", "it was income", "it was yesterday"):
+    Return finance_modify with transactionId from the replied message or the recent finance transaction, and include the updated values in "updates"! DO NOT return unknown.
 - If the user's message refers to previous conversation topics, dates, or entities (e.g. "what about tomorrow?", "make it 5pm instead", "show that list again", "reschedule it"):
   Use the Recent conversation turns in the context to determine the appropriate intent and parameter values.
 
@@ -370,6 +421,7 @@ Finance rules:
 - DO NOT set explicitDate unless the user explicitly mentioned a specific date or relative day in their current message (e.g. "yesterday", "last Friday", "on 3 Sep").
 - If the user did NOT mention any date in their current message (e.g. "spent $6 on lunch", "i spent $6 on a test"), OMIT explicitDate completely.
 - If amount is missing for a finance add, return unknown.
+- When modifying transactions (finance_modify), only include the specific fields that the user asked to change in "updates".
 
 Calendar creation rules:
 - Only use personal or work. Default to personal if omitted.
@@ -445,6 +497,11 @@ Security rules:
     if (parsed.action === "finance_add") {
       if (parsed.explicitDate && !messageMentionsDate(userMessage)) {
         delete parsed.explicitDate;
+      }
+    }
+    if (parsed.action === "finance_modify") {
+      if (parsed.updates?.explicitDate && !messageMentionsDate(userMessage)) {
+        delete parsed.updates.explicitDate;
       }
     }
     return parsed;

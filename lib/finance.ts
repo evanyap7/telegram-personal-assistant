@@ -14,6 +14,15 @@ export type TransactionInput = {
   transactionTimestamp?: Date | string | number;
 };
 
+export type TransactionUpdateInput = {
+  type?: "income" | "expense";
+  amount?: number;
+  currency?: string;
+  category?: string;
+  description?: string;
+  explicitDate?: string;
+};
+
 export type FinanceTransaction = {
   rowNumber: number;
   transactionId: string;
@@ -460,6 +469,109 @@ export async function softDeleteTransaction(
     status: "deleted",
     deletedAt,
   };
+}
+
+export async function getTransactionById(
+  transactionId: string
+): Promise<FinanceTransaction | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${TRANSACTIONS_SHEET}!A2:I`,
+  });
+
+  const rows = response.data.values ?? [];
+  const rowIndex = rows.findIndex((row) => {
+    const rowTransactionId = normaliseCell(row[0]);
+    const rowStatus = normaliseCell(row[7]) || "active";
+    return (
+      rowTransactionId === transactionId &&
+      rowStatus.toLowerCase() === "active"
+    );
+  });
+
+  if (rowIndex === -1) {
+    return null;
+  }
+
+  return rowToTransaction(rows[rowIndex], rowIndex + 2);
+}
+
+export async function getLatestTransaction(): Promise<FinanceTransaction | null> {
+  const recent = await listRecentTransactions();
+  if (recent.length === 0) return null;
+  return recent[recent.length - 1];
+}
+
+export async function updateTransaction(
+  transactionId: string,
+  updates: TransactionUpdateInput
+): Promise<FinanceTransaction | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${TRANSACTIONS_SHEET}!A2:I`,
+  });
+
+  const rows = response.data.values ?? [];
+  const rowIndex = rows.findIndex((row) => {
+    const rowTransactionId = normaliseCell(row[0]);
+    const rowStatus = normaliseCell(row[7]) || "active";
+    return (
+      rowTransactionId === transactionId &&
+      rowStatus.toLowerCase() === "active"
+    );
+  });
+
+  if (rowIndex === -1) {
+    return null;
+  }
+
+  const rowNumber = rowIndex + 2;
+  const current = rowToTransaction(rows[rowIndex], rowNumber);
+
+  let newTimestamp = current.timestamp;
+  if (updates.explicitDate) {
+    const dateObj = new Date(`${updates.explicitDate}T12:00:00+08:00`);
+    if (!Number.isNaN(dateObj.getTime())) {
+      newTimestamp = formatSingaporeTimestamp(dateObj);
+    }
+  }
+
+  const updated: FinanceTransaction = {
+    ...current,
+    timestamp: newTimestamp,
+    type: updates.type ?? current.type,
+    amount:
+      updates.amount !== undefined ? updates.amount.toFixed(2) : current.amount,
+    currency: updates.currency ? updates.currency.toUpperCase() : current.currency,
+    category: updates.category ?? current.category,
+    description: updates.description ?? current.description,
+  };
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${TRANSACTIONS_SHEET}!B${rowNumber}:G${rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [
+        [
+          updated.timestamp,
+          updated.type,
+          updated.amount,
+          updated.currency,
+          updated.category,
+          updated.description,
+        ],
+      ],
+    },
+  });
+
+  return updated;
 }
 
 export async function hasProcessedUpdate(updateId: number): Promise<boolean> {
