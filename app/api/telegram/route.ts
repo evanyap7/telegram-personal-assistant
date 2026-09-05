@@ -92,6 +92,7 @@ const telegramUpdateSchema = z.object({
   message: z
     .object({
       message_id: z.number(),
+      date: z.number().optional(),
       chat: z.object({
         id: z.number(),
       }),
@@ -103,6 +104,7 @@ const telegramUpdateSchema = z.object({
       reply_to_message: z
         .object({
           message_id: z.number(),
+          date: z.number().optional(),
           text: z.string().optional(),
           photo: z
             .array(
@@ -158,6 +160,7 @@ const telegramUpdateSchema = z.object({
       data: z.string().optional(),
       message: z.object({
         message_id: z.number(),
+        date: z.number().optional(),
         chat: z.object({
           id: z.number(),
         }),
@@ -915,6 +918,7 @@ async function handleFinanceAddCallback(input: {
     category: payload.category,
     description: payload.description,
     transactionDate: payload.transactionDate,
+    transactionTimestamp: new Date(),
   });
 
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
@@ -928,7 +932,7 @@ async function handleFinanceAddCallback(input: {
       `Amount: ${payload.amount.toFixed(2)} ${payload.currency}`,
       `Category: ${payload.category}`,
       `Description: ${payload.description}`,
-      `Date interpreted as: ${payload.transactionDate}`,
+      `Date & Time: ${transaction.timestamp} (SGT)`,
     ].join("\n")
   );
 
@@ -2547,12 +2551,15 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    const messageDateObj = message.date ? new Date(message.date * 1000) : new Date();
+
     const recentChatHistory = await getRecentChatHistory(message.from.id, 8);
 
     const userCalendarContext = await getLatestUserCalendarContext(
       message.from.id
     );
     const conversationContext: ConversationContext = {
+      messageTime: messageDateObj,
       repliedMessageText: message.reply_to_message?.text,
       activePendingCalendar: userCalendarContext.activePending?.payload,
       recentCalendarEvent: userCalendarContext.recentConfirmed,
@@ -2583,6 +2590,7 @@ export async function POST(request: Request) {
         category: intent.category,
         description: intent.description,
         transactionDate: intent.transactionDate,
+        transactionTimestamp: messageDateObj,
       });
 
       await sendTelegramMessage(
@@ -2594,7 +2602,7 @@ export async function POST(request: Request) {
           `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
           `Category: ${intent.category}`,
           `Description: ${intent.description}`,
-          `Date interpreted as: ${intent.transactionDate}`,
+          `Date & Time: ${transaction.timestamp} (SGT)`,
         ].join("\n")
       );
 

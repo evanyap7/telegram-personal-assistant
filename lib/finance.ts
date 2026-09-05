@@ -10,6 +10,7 @@ export type TransactionInput = {
   category: string;
   description: string;
   transactionDate?: string;
+  transactionTimestamp?: Date | string | number;
 };
 
 export type FinanceTransaction = {
@@ -39,7 +40,7 @@ function createTransactionId(): string {
   return `txn_${crypto.randomUUID()}`;
 }
 
-function formatSingaporeTimestamp(date = new Date()): string {
+export function formatSingaporeTimestamp(date: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-SG", {
     timeZone: "Asia/Singapore",
     day: "2-digit",
@@ -61,6 +62,49 @@ function formatSingaporeTimestamp(date = new Date()): string {
   const dayPeriod = getPart("dayPeriod").toUpperCase();
 
   return `${day} ${month} ${year} @ ${hour}:${minute} ${dayPeriod}`;
+}
+
+export function getSingaporeDateString(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+export function resolveTransactionDateObj(input: TransactionInput): Date {
+  const baseDate = input.transactionTimestamp
+    ? new Date(input.transactionTimestamp)
+    : new Date();
+
+  if (!input.transactionDate) {
+    return baseDate;
+  }
+
+  const todaySg = getSingaporeDateString(baseDate);
+  if (input.transactionDate === todaySg) {
+    return baseDate;
+  }
+
+  const parts = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(baseDate);
+
+  const hh = parts.find((p) => p.type === "hour")?.value ?? "12";
+  const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+  const ss = parts.find((p) => p.type === "second")?.value ?? "00";
+
+  const parsed = new Date(`${input.transactionDate}T${hh}:${mm}:${ss}+08:00`);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  return baseDate;
 }
 
 function normaliseCell(value: string | undefined): string {
@@ -93,13 +137,7 @@ export async function addTransaction(input: TransactionInput): Promise<{
   const spreadsheetId = getSpreadsheetId();
 
   const transactionId = createTransactionId();
-  let dateObj = new Date();
-  if (input.transactionDate) {
-    const parsedDate = new Date(`${input.transactionDate}T12:00:00+08:00`);
-    if (!Number.isNaN(parsedDate.getTime())) {
-      dateObj = parsedDate;
-    }
-  }
+  const dateObj = resolveTransactionDateObj(input);
   const timestamp = formatSingaporeTimestamp(dateObj);
 
   await sheets.spreadsheets.values.append({
@@ -142,13 +180,7 @@ export async function addTransactionsBatch(
 
   for (const input of items) {
     const transactionId = createTransactionId();
-    let dateObj = new Date();
-    if (input.transactionDate) {
-      const parsedDate = new Date(`${input.transactionDate}T12:00:00+08:00`);
-      if (!Number.isNaN(parsedDate.getTime())) {
-        dateObj = parsedDate;
-      }
-    }
+    const dateObj = resolveTransactionDateObj(input);
     const timestamp = formatSingaporeTimestamp(dateObj);
 
     results.push({ transactionId, timestamp });

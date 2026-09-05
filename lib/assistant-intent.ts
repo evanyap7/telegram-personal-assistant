@@ -102,6 +102,7 @@ const intentSchema = z.union([
 export type AssistantIntent = z.infer<typeof intentSchema>;
 
 export type ConversationContext = {
+  messageTime?: Date | string | number;
   repliedMessageText?: string;
   activePendingCalendar?: {
     calendarName: "personal" | "work";
@@ -145,9 +146,21 @@ export async function parseAssistantIntent(
     throw new Error("PERPLEXITY_API_KEY is missing.");
   }
 
-  const currentDate = new Date().toLocaleDateString("en-CA", {
+  const now = context?.messageTime ? new Date(context.messageTime) : new Date();
+  const currentDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Singapore",
-  });
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+
+  const currentTime = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(now);
 
   let contextBlock = "";
   if (context) {
@@ -186,6 +199,8 @@ Return ONLY one valid JSON object. Do not use Markdown code fences.
 Do not explain your output. Do not browse, search the web, call tools, or execute actions.
 
 Current date in Singapore: ${currentDate}.
+Current time in Singapore: ${currentTime} (Asia/Singapore, +08:00).
+Today is: ${currentDate}.
 Timezone: Asia/Singapore (+08:00).
 
 Supported actions:
@@ -336,7 +351,8 @@ Finance rules:
 - Use uppercase three-letter currency codes.
 - Use a sensible category: Dining, Transport, Groceries, Shopping,
   Entertainment, Health, Education, Utilities, Salary, or Other.
-- Use the current Singapore date for "today".
+- For transactionDate, ALWAYS default to "${currentDate}" (today in Singapore, ${currentTime} SGT) unless the user explicitly mentions a different past date (e.g. "yesterday", "last Friday", "on 3 Sep").
+- If no date is mentioned (e.g. "spent $6 on lunch", "i spent $6 on a test"), transactionDate MUST be "${currentDate}". Never invent a past date.
 - If amount is missing for a finance add, return unknown.
 
 Calendar creation rules:
