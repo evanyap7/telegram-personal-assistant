@@ -249,7 +249,13 @@ function resolveDbsDate(rawDate?: string): Date {
   return new Date();
 }
 
-export async function syncPayLahTransactions(): Promise<{
+export type SyncPayLahOptions = {
+  newerThan?: string;
+  maxResults?: number;
+  messageIds?: string[];
+};
+
+export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promise<{
   scanned: number;
   logged: number;
   items: Array<{
@@ -261,17 +267,28 @@ export async function syncPayLahTransactions(): Promise<{
 }> {
   const gmail = getGmailClient();
 
-  // Query for recent DBS PayLah / PayNow emails
-  const query = 'from:(dbs.com) ("PayLah" OR "PayNow") newer_than:7d';
+  let targetIds: string[] = [];
 
-  const listRes = await gmail.users.messages.list({
-    userId: "me",
-    q: query,
-    maxResults: 10,
-  });
+  if (options?.messageIds && options.messageIds.length > 0) {
+    targetIds = options.messageIds;
+  } else {
+    // Default to only searching the last 1 day to prevent backfilling old receipts
+    const newerThan = options?.newerThan || "1d";
+    const maxResults = options?.maxResults || 5;
+    const query = `from:(dbs.com) ("PayLah" OR "PayNow") newer_than:${newerThan}`;
 
-  const messages = listRes.data.messages || [];
-  if (messages.length === 0) {
+    const listRes = await gmail.users.messages.list({
+      userId: "me",
+      q: query,
+      maxResults,
+    });
+
+    targetIds = (listRes.data.messages || [])
+      .map((m) => m.id)
+      .filter((id): id is string => Boolean(id));
+  }
+
+  if (targetIds.length === 0) {
     return { scanned: 0, logged: 0, items: [] };
   }
 
@@ -283,9 +300,7 @@ export async function syncPayLahTransactions(): Promise<{
     category: string;
   }> = [];
 
-  for (const msg of messages) {
-    const messageId = msg.id;
-    if (!messageId) continue;
+  for (const messageId of targetIds) {
 
     const externalId = `gmail_${messageId}`;
     const alreadyProcessed = await hasProcessedExternalId(externalId);
@@ -400,7 +415,7 @@ export async function syncPayLahTransactions(): Promise<{
   }
 
   return {
-    scanned: messages.length,
+    scanned: targetIds.length,
     logged: loggedCount,
     items: loggedItems,
   };

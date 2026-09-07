@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "get-gmail-token": "node scripts/get-gmail-token.mjs"
+    "get-gmail-token": "node scripts/get-gmail-token.mjs",
+    "setup-gmail-watch": "node scripts/setup-gmail-watch.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.58",
