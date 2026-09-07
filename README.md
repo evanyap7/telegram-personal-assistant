@@ -545,7 +545,7 @@ delete gym tomorrow from personal
 ## Resume Highlights
 
 - **Architected a serverless Next.js assistant** on Vercel, orchestrating Gemini 3.6 Flash and Perplexity Sonar via Vercel AI SDK to parse text, Opus voice notes, and images into type-safe, Zod-validated intents.
-- **Engineered real-time fintech pipelines for Apple Pay & DBS PayLah**, integrating iOS 17 Shortcuts webhooks and Gmail API receipt parsing with LLM auto-categorization to log transactions in <3 seconds.
+- **Engineered sub-3-second fintech pipelines for Apple Pay & DBS PayLah**, coupling iOS Shortcuts webhooks with Google Cloud Pub/Sub event-driven Gmail push notifications and a regex-LLM hybrid parser to auto-log and categorize transactions.
 - **Built an in-memory multimodal pipeline** with magic-byte validation and audio-buffer processing, transcribing voice memos and extracting up to 30 batch calendar events or receipt items per screenshot.
-- **Developed a Google Sheets & Calendar analytics engine** synchronizing across 2 calendars (Personal/Work) with time-window resolution, category spending breakdowns, and soft-delete audit trails.
+- **Developed a Google Sheets & Calendar analytics engine** synchronizing across 2 calendars (Personal/Work) with time-window resolution, category spending breakdowns, and interactive Telegram action cards for 1-tap edits and soft-delete audit trails.
 - **Enforced zero-trust security and idempotency** via single-use cryptographic tokens with 5-minute expiry, webhook secret authorization, user allowlisting, and stateful deduplication to prevent duplicate operations.
