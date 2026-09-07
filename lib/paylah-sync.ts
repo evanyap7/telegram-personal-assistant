@@ -31,35 +31,168 @@ const VALID_CATEGORIES = [
   "General",
 ] as const;
 
-function extractMessageBody(payload: any): string {
+type Category = (typeof VALID_CATEGORIES)[number];
+
+function extractCleanMessageText(payload: any): string {
   if (!payload) return "";
 
-  if (payload.body?.data) {
-    return Buffer.from(payload.body.data, "base64url").toString("utf-8");
-  }
-
-  if (payload.parts && Array.isArray(payload.parts)) {
-    for (const part of payload.parts) {
-      if (part.mimeType === "text/plain" && part.body?.data) {
-        return Buffer.from(part.body.data, "base64url").toString("utf-8");
+  function collectText(part: any): string {
+    let result = "";
+    if (part.body?.data) {
+      result += Buffer.from(part.body.data, "base64url").toString("utf-8") + "\n";
+    }
+    if (part.parts && Array.isArray(part.parts)) {
+      for (const p of part.parts) {
+        result += collectText(p) + "\n";
       }
     }
-    for (const part of payload.parts) {
-      if (part.mimeType === "text/html" && part.body?.data) {
-        const html = Buffer.from(part.body.data, "base64url").toString("utf-8");
-        // Strip basic HTML tags
-        return html.replace(/<[^>]+>/g, " ");
-      }
-    }
+    return result;
   }
 
-  return "";
+  let raw = collectText(payload);
+  if (!raw.trim()) return "";
+
+  // 1. Remove <style>...</style> blocks and contents
+  raw = raw.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ");
+  // 2. Remove <script>...</script> blocks and contents
+  raw = raw.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ");
+  // 3. Remove all other HTML tags
+  raw = raw.replace(/<[^>]+>/g, " ");
+  // 4. Decode HTML entities
+  raw = raw
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&ldquo;/g, '"')
+    .replace(/&rdquo;/g, '"')
+    .replace(/&amp;/g, "&");
+
+  // 5. Normalize whitespace
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+function parseDbsRegex(text: string): Partial<PayLahParsedResult> | null {
+  const isPayLahAlert =
+    text.includes("PayLah!") ||
+    text.includes("Scan & Pay") ||
+    text.includes("PayNow Transfer") ||
+    text.includes("Transaction Ref:");
+
+  if (!isPayLahAlert) return null;
+
+  // Amount: e.g. "Amount: SGD8.60" or "Amount: SGD 97.42"
+  const amountMatch = text.match(/Amount:\s*(?:SGD|USD)?\s*([0-9]+(?:\.[0-9]{2})?)/i);
+  const amount = amountMatch ? parseFloat(amountMatch[1]) : undefined;
+
+  // Merchant: e.g. "To: FOMO PAY PTE. LTD. To view" -> "FOMO PAY PTE. LTD."
+  const merchantMatch = text.match(/To:\s*(.+?)(?:\s+(?:To view|Please call|Yours faithfully|Date & Time|From:)|$)/i);
+  let merchant = merchantMatch ? merchantMatch[1].trim() : undefined;
+  if (merchant) {
+    // Strip trailing periods or commas
+    merchant = merchant.replace(/[\s,]+$/, "");
+  }
+
+  // Ref: e.g. "Transaction Ref: IPS78876518592130786"
+  const refMatch = text.match(/Transaction Ref:\s*([A-Za-z0-9]+)/i);
+  const referenceNumber = refMatch ? refMatch[1].trim() : undefined;
+
+  // Date: e.g. "Date & Time: 07 Sep 15:13 (SGT)"
+  const dateMatch = text.match(/Date\s*(?:&|and)\s*Time:\s*([0-9]{1,2}\s+[A-Za-z]{3}(?:\s+[0-9]{2}:[0-9]{2})?)/i);
+  const rawDate = dateMatch ? dateMatch[1].trim() : undefined;
+
+  if (amount && amount > 0) {
+    return {
+      isPayLahPayment: true,
+      amount,
+      currency: "SGD",
+      merchant: merchant || "DBS PayLah Merchant",
+      date: rawDate,
+      referenceNumber,
+    };
+  }
+
+  return null;
+}
+
+async function inferCategory(merchant: string, item?: string): Promise<Category> {
+  const lower = `${merchant} ${item || ""}`.toLowerCase();
+
+  if (
+    lower.includes("kopitiam") ||
+    lower.includes("food") ||
+    lower.includes("cafe") ||
+    lower.includes("coffee") ||
+    lower.includes("toast box") ||
+    lower.includes("yakun") ||
+    lower.includes("restaurant") ||
+    lower.includes("bakery") ||
+    lower.includes("mcdonald") ||
+    lower.includes("koi") ||
+    lower.includes("fomo pay") || // FOMO Pay is typically hawker / food court QR in Singapore
+    lower.includes("bar")
+  ) {
+    return "Dining";
+  }
+
+  if (
+    lower.includes("grab") ||
+    lower.includes("gojek") ||
+    lower.includes("comfort") ||
+    lower.includes("simplygo") ||
+    lower.includes("transit") ||
+    lower.includes("mrt") ||
+    lower.includes("bus")
+  ) {
+    return "Transport";
+  }
+
+  if (
+    lower.includes("fairprice") ||
+    lower.includes("cold storage") ||
+    lower.includes("sheng siong") ||
+    lower.includes("supermarket") ||
+    lower.includes("market")
+  ) {
+    return "Groceries";
+  }
+
+  try {
+    const result = await generateText({
+      model: google("gemini-3.6-flash"),
+      system: `You are a financial transaction categorizer.
+Available categories: Dining, Transport, Groceries, Shopping, Entertainment, Utilities, Healthcare, General.
+Output ONLY the category name.`,
+      prompt: `Merchant: "${merchant}"\nItem: "${item || "None"}"`,
+    });
+    const matched = VALID_CATEGORIES.find(
+      (c) => c.toLowerCase() === result.text.trim().toLowerCase()
+    );
+    return matched || "General";
+  } catch {
+    return "General";
+  }
 }
 
 async function parsePayLahEmail(
   subject: string,
-  bodySnippet: string
+  cleanBody: string
 ): Promise<PayLahParsedResult> {
+  // 1. Try deterministic regex first (fast & 100% reliable on DBS alert emails)
+  const regexResult = parseDbsRegex(cleanBody);
+  if (regexResult && regexResult.isPayLahPayment && regexResult.amount) {
+    const category = await inferCategory(regexResult.merchant || "");
+    return {
+      isPayLahPayment: true,
+      amount: regexResult.amount,
+      currency: regexResult.currency || "SGD",
+      merchant: regexResult.merchant || "DBS PayLah Merchant",
+      category,
+      date: regexResult.date,
+      referenceNumber: regexResult.referenceNumber,
+    };
+  }
+
+  // 2. Fallback to Gemini AI if regex did not match
   try {
     const result = await generateText({
       model: google("gemini-3.6-flash"),
@@ -79,9 +212,9 @@ Return ONLY one valid JSON object in this format:
 }
 
 If this email is merely a login notification, marketing promotion, password reset, or failed transaction, set "isPayLahPayment": false.`,
-      prompt: `Email Subject: "${subject}"\nEmail Body/Snippet:\n"""\n${bodySnippet.slice(
+      prompt: `Email Subject: "${subject}"\nEmail Body/Snippet:\n"""\n${cleanBody.slice(
         0,
-        1500
+        2500
       )}\n"""`,
     });
 
@@ -96,6 +229,24 @@ If this email is merely a login notification, marketing promotion, password rese
     console.error("Failed to parse PayLah email with AI:", error);
     return { isPayLahPayment: false };
   }
+}
+
+function resolveDbsDate(rawDate?: string): Date {
+  if (!rawDate) return new Date();
+
+  // Handle format like "07 Sep 15:13" or "07 Sep"
+  const currentYear = new Date().getFullYear();
+  const parsed = new Date(`${rawDate} ${currentYear} +08:00`);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  const fallback = new Date(rawDate);
+  if (!Number.isNaN(fallback.getTime())) {
+    return fallback;
+  }
+
+  return new Date();
 }
 
 export async function syncPayLahTransactions(): Promise<{
@@ -152,10 +303,9 @@ export async function syncPayLahTransactions(): Promise<{
       const headers = msgRes.data.payload?.headers || [];
       const subjectHeader =
         headers.find((h) => h.name?.toLowerCase() === "subject")?.value || "";
-      const bodyContent =
-        extractMessageBody(msgRes.data.payload) || msgRes.data.snippet || "";
+      const cleanBody = extractCleanMessageText(msgRes.data.payload);
 
-      const parsed = await parsePayLahEmail(subjectHeader, bodyContent);
+      const parsed = await parsePayLahEmail(subjectHeader, cleanBody);
 
       if (parsed.isPayLahPayment && parsed.amount && parsed.amount > 0) {
         const amount = Math.round(parsed.amount * 100) / 100;
@@ -171,7 +321,7 @@ export async function syncPayLahTransactions(): Promise<{
           ? `${parsed.item} @ ${merchant} (DBS PayLah)`
           : `${merchant} (DBS PayLah)`;
 
-        const dateObj = parsed.date ? new Date(parsed.date) : new Date();
+        const dateObj = resolveDbsDate(parsed.date);
 
         // Add to Google Sheets
         const result = await addTransaction({
@@ -236,11 +386,13 @@ export async function syncPayLahTransactions(): Promise<{
           });
         }
       } else {
-        // Not a payment email (e.g. login alert), mark processed so we don't scan it again
-        await markExternalIdProcessed(
-          externalId,
-          `Non-payment email: ${subjectHeader.slice(0, 50)}`
-        );
+        // Only mark non-payment if not an alert
+        if (!subjectHeader.toLowerCase().includes("transaction alert")) {
+          await markExternalIdProcessed(
+            externalId,
+            `Non-payment email: ${subjectHeader.slice(0, 50)}`
+          );
+        }
       }
     } catch (msgErr) {
       console.error(`Failed to process Gmail message ${messageId}:`, msgErr);
