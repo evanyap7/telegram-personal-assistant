@@ -225,24 +225,24 @@ export default function Home() {
             <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-400 flex items-center justify-center text-zinc-950 font-black text-sm shadow-md shadow-emerald-500/30">
               ⚡
             </div>
-            <div>
-              <div className="text-xs font-bold tracking-wider uppercase text-white flex items-center gap-2">
-                NEXUS BOT
-                <span className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-mono text-emerald-400 font-normal">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  ONLINE
-                </span>
-              </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold tracking-wide text-zinc-200">
+                Personal Assistant
+              </span>
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-mono text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                ONLINE
+              </span>
             </div>
           </div>
 
           {/* Center navigation links */}
           <nav className="hidden lg:flex items-center gap-6 text-xs font-medium text-zinc-400">
+            <a href="#showcase" className="hover:text-emerald-400 transition-colors">
+              Interactive Demo
+            </a>
             <a href="#features" className="hover:text-emerald-400 transition-colors">
               Capabilities
-            </a>
-            <a href="#showcase" className="hover:text-emerald-400 transition-colors">
-              Interactive Simulator
             </a>
             <a href="#architecture" className="hover:text-emerald-400 transition-colors">
               Architecture
@@ -295,9 +295,9 @@ export default function Home() {
       </div>
 
       {/* Main Container */}
-      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-8 pt-32 pb-24">
+      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-8 pt-28 pb-24">
         {/* HERO SECTION */}
-        <section className="py-12 sm:py-20 text-center sm:text-left">
+        <section className="py-12 sm:py-16 text-center sm:text-left">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-cyan-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold mb-6 shadow-sm">
             <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
             v2.5 Live • Apple Pay Tap & Real-Time DBS PayLah Push
@@ -316,27 +316,15 @@ export default function Home() {
             fintech pipelines with strict two-step confirmation safeguards.
           </p>
 
-          {/* CTA Buttons */}
-          <div className="mt-9 flex flex-wrap items-center justify-center sm:justify-start gap-4">
-            <a
-              href="https://t.me/your_telegram_bot"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 hover:from-emerald-400 hover:to-teal-500 text-zinc-950 font-bold text-sm flex items-center gap-2.5 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 hover:scale-[1.02] transition-all"
-            >
-              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69.01-.03.01-.14-.07-.19-.08-.05-.19-.02-.27 0-.12.03-1.97 1.25-5.55 3.69-.53.36-1 .54-1.43.53-.47-.01-1.37-.26-2.04-.48-.82-.27-1.47-.42-1.42-.88.03-.24.37-.49 1.02-.75 3.99-1.74 6.66-2.88 8.01-3.44 3.82-1.58 4.61-1.86 5.13-1.87.12 0 .37.03.54.17.14.12.18.28.2.45-.02.07-.02.21-.04.34z" />
-              </svg>
-              Open Telegram Assistant
-            </a>
-
+          {/* Action Links */}
+          <div className="mt-8 flex flex-wrap items-center justify-center sm:justify-start gap-4">
             <a
               href="https://github.com/evanyap7/telegram-personal-assistant"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-5 py-3 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/80 hover:border-zinc-600 text-zinc-200 font-semibold text-sm flex items-center gap-2 transition-all hover:scale-[1.02]"
+              className="px-5 py-2.5 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-bold text-sm flex items-center gap-2 transition-all shadow-md hover:shadow-white/10"
             >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
                 <path
                   fillRule="evenodd"
                   clipRule="evenodd"
@@ -345,10 +333,18 @@ export default function Home() {
               </svg>
               View Source on GitHub
             </a>
+
+            <a
+              href="#showcase"
+              className="px-5 py-2.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/80 hover:border-zinc-600 text-zinc-300 hover:text-white font-medium text-sm flex items-center gap-2 transition-all"
+            >
+              <span>Explore Interactive Demo</span>
+              <span className="text-emerald-400">↓</span>
+            </a>
           </div>
 
           {/* Live Metrics Row */}
-          <div className="mt-14 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 max-w-4xl">
+          <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 max-w-4xl">
             {[
               { label: "Fintech Sync Latency", value: "< 3s", sub: "Apple Pay & DBS Webhooks" },
               { label: "Deterministic Extraction", value: "100%", sub: "Regex + LLM hybrid" },
@@ -370,50 +366,58 @@ export default function Home() {
         </section>
 
         {/* INTERACTIVE SHOWCASE SIMULATOR */}
-        <section id="showcase" className="my-16 sm:my-24">
-          <div className="text-center max-w-2xl mx-auto mb-10">
+        <section id="showcase" className="my-12 sm:my-20 scroll-mt-28">
+          <div className="text-center max-w-2xl mx-auto mb-8">
             <span className="text-xs font-mono font-semibold tracking-wider uppercase text-emerald-400 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
               Interactive Showcase
             </span>
             <h2 className="text-3xl sm:text-4xl font-extrabold text-white mt-3">
               See the Assistant in Action
             </h2>
-            <p className="text-sm sm:text-base text-zinc-400 mt-2">
-              Select an event to simulate live webhook ingestion, AI categorization, and interactive Telegram response cards.
+            <p className="text-sm text-zinc-400 mt-2">
+              Select an event below to inspect the serverless execution trace and generated Telegram interactive card.
             </p>
           </div>
 
-          {/* Tabs */}
-          <div className="flex flex-wrap items-center justify-center gap-2 mb-8">
-            {[
-              { id: "apple-pay", label: "💳 Apple Pay Tap", tag: "iOS 17+" },
-              { id: "paylah", label: "🟣 DBS PayLah!", tag: "Pub/Sub" },
-              { id: "voice", label: "🎙️ Voice Note", tag: "Opus Audio" },
-              { id: "vision", label: "📸 Receipt Vision", tag: "Gemini Vision" },
-              { id: "calendar", label: "📅 Dual Calendar", tag: "Smart Scheduling" },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${
-                  activeTab === tab.id
-                    ? "bg-zinc-100 text-zinc-950 shadow-lg shadow-white/10 scale-105"
-                    : "bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-800"
-                }`}
-              >
-                <span>{tab.label}</span>
-                <span
-                  className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    activeTab === tab.id ? "bg-zinc-300 text-zinc-900" : "bg-zinc-800 text-zinc-400"
-                  }`}
-                >
-                  {tab.tag}
-                </span>
-              </button>
-            ))}
+          {/* Stable Tab Group (Zero layout glitching) */}
+          <div className="flex justify-center mb-8">
+            <div className="p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800 flex flex-wrap items-center justify-center gap-1 shadow-inner">
+              {[
+                { id: "apple-pay", label: "💳 Apple Pay Tap", tag: "iOS" },
+                { id: "paylah", label: "🟣 DBS PayLah!", tag: "Pub/Sub" },
+                { id: "voice", label: "🎙️ Voice Note", tag: "Audio" },
+                { id: "vision", label: "📸 Receipt Vision", tag: "Vision" },
+                { id: "calendar", label: "📅 Dual Calendar", tag: "Agenda" },
+              ].map((tab) => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-colors duration-150 flex items-center gap-2 cursor-pointer border ${
+                      isActive
+                        ? "bg-zinc-800 border-zinc-700 text-white font-semibold shadow-sm"
+                        : "border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60"
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors ${
+                        isActive
+                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                          : "bg-zinc-800 text-zinc-500"
+                      }`}
+                    >
+                      {tab.tag}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Simulator Display Card */}
+          {/* Simulator Display Card with Steady Min-Heights */}
           <div className="glass-panel rounded-3xl p-6 sm:p-8 border border-white/10 shadow-2xl relative overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
               <div>
@@ -438,9 +442,9 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6 items-stretch">
               {/* Left Column: Serverless Log Pipeline */}
-              <div className="rounded-2xl bg-zinc-950/90 border border-zinc-800/80 p-5 font-mono text-xs flex flex-col justify-between shadow-inner">
+              <div className="rounded-2xl bg-zinc-950/90 border border-zinc-800/80 p-5 font-mono text-xs flex flex-col justify-between shadow-inner min-h-[300px]">
                 <div>
                   <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-900 text-zinc-500 text-[11px] uppercase tracking-wider">
                     <span>Serverless Execution Trace</span>
@@ -476,7 +480,7 @@ export default function Home() {
               </div>
 
               {/* Right Column: Telegram Mock Card */}
-              <div className="rounded-2xl bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-800 p-6 flex flex-col justify-between shadow-xl">
+              <div className="rounded-2xl bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-800 p-6 flex flex-col justify-between shadow-xl min-h-[300px]">
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
@@ -509,12 +513,12 @@ export default function Home() {
                 {/* Interactive Action Buttons */}
                 <div className="grid grid-cols-2 gap-2 pt-2">
                   {showcaseData[activeTab].previewCard.actions.map((act) => (
-                    <button
+                    <div
                       key={act}
-                      className="py-2 px-3 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700/60 transition-colors text-center hover:text-white"
+                      className="py-2 px-3 rounded-lg bg-zinc-800/80 text-zinc-300 text-xs font-medium border border-zinc-700/60 text-center select-none"
                     >
                       {act}
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
