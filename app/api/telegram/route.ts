@@ -2496,6 +2496,7 @@ export async function POST(request: Request) {
         { command: "finance", description: "Finance commands & summary" },
         { command: "finance_summary", description: "Monthly spending & breakdown" },
         { command: "finance_list", description: "Recent active transactions" },
+        { command: "paylah", description: "Sync DBS PayLah receipts from Gmail" },
         { command: "help", description: "Show help and example usage" },
       ]);
 
