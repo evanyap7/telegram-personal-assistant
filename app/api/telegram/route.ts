@@ -82,6 +82,7 @@ import {
   TodoItem,
 } from "@/lib/todos";
 import { createEmailDraft } from "@/lib/gmail";
+import { syncPayLahTransactions } from "@/lib/paylah-sync";
 import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-intent";
 import {
   answerTelegramCallback,
@@ -210,6 +211,7 @@ function helpText() {
     "• /todo today — View today's tasks",
     "• /finance summary — View monthly spending breakdown",
     "• /finance list — View last 10 transactions",
+    "• /paylah — Sync recent DBS PayLah! receipts from Gmail",
     "• /setcommands — Update Telegram command menu",
     "• /help — Show this help message",
     "",
@@ -2782,6 +2784,55 @@ export async function POST(request: Request) {
       );
 
       await markUpdateCompleted(updateId, "finance_list");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/paylah" ||
+      text === "/paylah sync" ||
+      text === "/sync paylah" ||
+      text === "/sync_paylah" ||
+      text.toLowerCase() === "sync paylah" ||
+      text.toLowerCase() === "sync my paylah"
+    ) {
+      await sendTelegramMessage(
+        chatId,
+        "🔍 Checking your Gmail for recent DBS PayLah! payments..."
+      );
+      try {
+        const syncResult = await syncPayLahTransactions();
+        if (syncResult.logged === 0) {
+          await sendTelegramMessage(
+            chatId,
+            `✅ Scan complete (${syncResult.scanned} recent DBS email${
+              syncResult.scanned === 1 ? "" : "s"
+            } checked).\n\nNo new PayLah payments found to log!`
+          );
+        } else {
+          await sendTelegramMessage(
+            chatId,
+            `🎉 Successfully synced ${syncResult.logged} new PayLah payment${
+              syncResult.logged === 1 ? "" : "s"
+            } to your Google Sheet!`
+          );
+        }
+        await markUpdateCompleted(updateId, "paylah_sync_success");
+      } catch (err) {
+        console.error("Manual PayLah sync error:", err);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("insufficient") || errMsg.includes("scope")) {
+          await sendTelegramMessage(
+            chatId,
+            "⚠️ Gmail read permission required.\n\nPlease run `npm run get-gmail-token` on your computer to grant read access so the assistant can detect incoming DBS emails."
+          );
+        } else {
+          await sendTelegramMessage(
+            chatId,
+            `⚠️ Could not sync PayLah: ${errMsg}`
+          );
+        }
+        await markUpdateCompleted(updateId, "paylah_sync_error");
+      }
       return Response.json({ ok: true });
     }
 

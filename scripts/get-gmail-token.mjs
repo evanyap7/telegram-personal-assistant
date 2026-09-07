@@ -44,7 +44,10 @@ const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: "offline",
   prompt: "consent",
-  scope: ["https://www.googleapis.com/auth/gmail.compose"],
+  scope: [
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.readonly",
+  ],
 });
 
 console.log("\n🔗 Open this URL in your browser to authorize Gmail API access for evanyap7@gmail.com:\n");

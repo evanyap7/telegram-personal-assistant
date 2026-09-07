@@ -588,6 +588,39 @@ export async function hasProcessedUpdate(updateId: number): Promise<boolean> {
   return existingIds.some((row) => row[0] === String(updateId));
 }
 
+export async function hasProcessedExternalId(
+  externalId: string
+): Promise<boolean> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${UPDATE_LOG_SHEET}!A2:A`,
+  });
+
+  const existingIds = response.data.values ?? [];
+  return existingIds.some((row) => row[0] === String(externalId));
+}
+
+export async function markExternalIdProcessed(
+  externalId: string,
+  details: string
+): Promise<void> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const now = new Date().toISOString();
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${UPDATE_LOG_SHEET}!A:F`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [[String(externalId), "completed", now, now, details, ""]],
+    },
+  });
+}
+
 export async function markUpdateStarted(updateId: number): Promise<void> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();

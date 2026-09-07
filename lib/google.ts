@@ -47,7 +47,10 @@ function getGmailAuth() {
       email: clientEmail,
       key: privateKey,
       subject: gmailUser,
-      scopes: ["https://www.googleapis.com/auth/gmail.compose"],
+      scopes: [
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.readonly",
+      ],
     });
   }
 
