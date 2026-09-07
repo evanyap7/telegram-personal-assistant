@@ -169,9 +169,11 @@ function quickCategorizeMerchant(merchant: string): Category | null {
 
 async function inferCategoryWithAI(
   merchant: string,
-  rawCategory?: string
+  rawCategory?: string,
+  item?: string
 ): Promise<Category> {
-  const quick = quickCategorizeMerchant(merchant);
+  const query = item ? `${item} ${merchant}` : merchant;
+  const quick = quickCategorizeMerchant(query);
   if (quick) return quick;
 
   if (rawCategory) {
@@ -186,8 +188,8 @@ async function inferCategoryWithAI(
       model: google("gemini-3.6-flash"),
       system: `You are a financial transaction categorizer.
 Available categories: Dining, Transport, Groceries, Shopping, Entertainment, Utilities, Healthcare, General.
-Given a merchant name and optional category from Apple Pay, output ONLY the single best category name from the list. Do not add punctuation or explanation.`,
-      prompt: `Merchant: "${merchant}"\nApple Category: "${rawCategory || "None"}"`,
+Given a merchant name, optional item purchased, and optional category from Apple Pay, output ONLY the single best category name from the list. Do not add punctuation or explanation.`,
+      prompt: `Merchant: "${merchant}"\nItem: "${item || "None"}"\nApple Category: "${rawCategory || "None"}"`,
     });
 
     const output = result.text.trim();
@@ -290,6 +292,15 @@ export async function POST(req: NextRequest) {
     "Apple Pay Purchase";
   const merchant = String(rawMerchant).trim() || "Apple Pay Purchase";
 
+  const rawItem =
+    body.item ??
+    body.itemName ??
+    body.item_name ??
+    body.product ??
+    body.note ??
+    body.notes;
+  const item = rawItem ? String(rawItem).trim() : undefined;
+
   const rawCurrency = body.currency ?? body.currencyCode ?? "SGD";
   const currency = String(rawCurrency).trim().toUpperCase() || "SGD";
 
@@ -297,11 +308,15 @@ export async function POST(req: NextRequest) {
   const rawCategory = body.category ? String(body.category).trim() : undefined;
   const rawDate = body.date ? String(body.date).trim() : undefined;
 
-  // Determine category
-  const category = await inferCategoryWithAI(merchant, rawCategory);
+  // Determine category with item context
+  const category = await inferCategoryWithAI(merchant, rawCategory, item);
 
-  // Build description
-  const description = card
+  // Build description (e.g. "Iced Latte @ Starbucks (Apple Pay - DBS Altitude)")
+  const description = item
+    ? card
+      ? `${item} @ ${merchant} (Apple Pay - ${card})`
+      : `${item} @ ${merchant} (Apple Pay)`
+    : card
     ? `${merchant} (Apple Pay - ${card})`
     : `${merchant} (Apple Pay)`;
 
@@ -326,11 +341,16 @@ export async function POST(req: NextRequest) {
       const messageText = [
         "💳 *Apple Pay Expense Logged!*",
         "",
+        item ? `• *Item:* ${item}` : null,
         `• *Amount:* ${currency} ${amount.toFixed(2)}`,
         `• *Merchant:* ${merchant}`,
         `• *Category:* ${category}`,
         card ? `• *Card:* ${card}` : null,
         `• *Recorded:* ${displayDate}`,
+        "",
+        `🆔 \`${result.transactionId}\``,
+        "",
+        "💬 _Tip: Swipe reply to this message anytime with what you bought (e.g. \"bought iced latte\") to update it!_",
       ]
         .filter(Boolean)
         .join("\n");
@@ -360,6 +380,7 @@ export async function POST(req: NextRequest) {
       amount,
       currency,
       merchant,
+      item,
       category,
       description,
     });

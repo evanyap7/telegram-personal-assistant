@@ -78,8 +78,32 @@ Tap **Add new field** for each of the following:
 | `card` | **Text** | Tap variable -> Select **Shortcut Input** -> choose **Card** (or Account) |
 | `category` | **Text** | Tap variable -> Select **Shortcut Input** -> choose **Category** |
 | `currency` | **Text** | Tap variable -> Select **Shortcut Input** -> choose **Currency Code** (or type `SGD`) |
+| `item` | **Text** *(Optional)* | See "How to Include What You Bought" below |
 
 > 💡 *Tip on Shortcut Input*: When you tap inside the value field, a suggestion bar appears above your keyboard. Tap **Shortcut Input**, then tap the blue variable pill to select the specific attribute (Amount, Merchant, Card, etc.).
+
+---
+
+### 🛍️ How to Include What You Bought (Item Name)
+
+Apple Pay itself only receives the store name (Merchant) and Amount from the card terminal — it does not receive line items from the cashier. You have **two easy options** to include what you bought:
+
+#### Option 1: Reply in Telegram (Easiest & Completely Silent)
+Leave the shortcut as is! Whenever you pay with Apple Pay, you'll receive the Telegram notification. Simply **swipe right / reply to that Telegram message** with what you bought:
+- *"bought iced matcha latte"*
+- *"it was chicken rice and coffee"*
+- *"item: gym protein shake"*
+
+Your assistant's AI will automatically update the description in Google Sheets and re-categorize the expense!
+
+#### Option 2: Ask for Input on your iPhone (Prompt right after tap)
+If you want your iPhone to pop up a prompt asking *"What did you buy?"* every time you tap Apple Pay:
+1. In your Shortcut, tap **Add Action** (or drag an action **above** the "Get Contents of URL" action).
+2. Search for **"Ask for Input"** and select it.
+3. Set prompt to: `What did you buy?` (Input type: `Text`).
+4. In the JSON table under "Get Contents of URL", add the field:
+   - Key: `item`
+   - Value: Select **Provided Input** (the result of the Ask for Input action).
 
 ---
 
