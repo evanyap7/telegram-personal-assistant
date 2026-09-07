@@ -91,6 +91,23 @@ Draft an email to alex@example.com about project update
 Write an email to boss@company.com saying I will be late tomorrow
 ```
 
+### Apple Pay & Apple Wallet Auto-Tracking
+
+- Auto-capture every Apple Pay tap in the background via iOS 17+ Shortcuts Personal Automation
+- Secure webhook (`/api/apple-wallet`) validates API secret and ingests merchant, amount, currency, and card
+- Hybrid categorization: instant merchant matching + Gemini 3.6 Flash fallback
+- Real-time Telegram notification cards with interactive inline buttons:
+  - `[✏️ Change Category]` to quickly re-classify across 8 spending categories
+  - `[🗑️ Undo / Delete]` to soft-delete accidental transactions immediately
+- Conversational reply support: swipe-reply to the Telegram alert with what you bought (e.g. *"bought iced latte"*) to auto-update description and re-categorize in Google Sheets
+
+### DBS PayLah! & PayNow Auto-Sync (Gmail API)
+
+- Automated email ingestion engine querying Gmail for DBS PayLah / PayNow transaction confirmation emails
+- AI receipt parsing via Google Gemini 3.6 Flash to extract amount, merchant, item name, and date
+- Telegram command support: trigger `/paylah` or say *"sync paylah"* to scan and import new receipts
+- Deduplication with `UpdateLog` in Google Sheets ensuring each Gmail message ID is processed exactly once
+- Real-time Telegram alerts with interactive category and undo buttons
 
 ### Voice Notes & Multimodal Processing
 
@@ -119,42 +136,34 @@ Write an email to boss@company.com saying I will be late tomorrow
 | Area | Technologies |
 | --- | --- |
 | Backend | Next.js Route Handlers, Node.js, TypeScript |
-| AI Intent Parsing | Vercel AI SDK, Perplexity Sonar API |
+| AI Intent Parsing | Vercel AI SDK, Gemini 3.6 Flash, Perplexity Sonar API |
 | Messaging | Telegram Bot API |
 | Finance Storage | Google Sheets API |
 | Calendar | Google Calendar API |
+| Email & Banking Ingestion | Gmail API, Apple Shortcuts Personal Automation |
 | Validation | Zod |
 | Deployment | Vercel |
 
 ## Architecture
 
 ```text
-Telegram User
-     |
-     v
-Telegram Bot API Webhook
-     |
-     v
-Next.js Route Handler: /api/telegram
-     |
-     +--> Verify Telegram webhook secret
-     +--> Verify authorized Telegram user ID
-     +--> Validate update payload with Zod
-     +--> Prevent duplicate processing with UpdateLog
-     |
-     +--> Parse natural-language intent with Perplexity Sonar
-     |
-     +--> Finance actions
-     |      |
-     |      +--> Google Sheets Transactions tab
-     |
-     +--> Calendar actions
-     |      |
-     |      +--> Google Calendar API
-     |
-     +--> Pending actions and confirmation state
-            |
-            +--> Google Sheets PendingActions tab
+       Apple Pay Tap                       DBS PayLah! Email                Telegram User
+             |                                    |                               |
+             v                                    v                               v
+iOS Shortcuts Automation                Gmail API Polling / Sync        Telegram Bot API Webhook
+             |                                    |                               |
+             v                                    v                               v
+Next.js: /api/apple-wallet             Next.js: /api/paylah-sync        Next.js: /api/telegram
+             |                                    |                               |
+             +--------------------+---------------+-------------------------------+
+                                  |
+                                  +--> Webhook secret & User allowlisting
+                                  +--> Zod validation & UpdateLog idempotency
+                                  +--> Gemini 3.6 Flash / Sonar AI parsing
+                                  |
+                                  +--> Google Sheets (Transactions & Todos)
+                                  +--> Google Calendar API (Personal & Work)
+                                  +--> Real-time Telegram interactive notifications
 ```
 
 ## Intent Parsing
@@ -406,13 +415,15 @@ GOOGLE_WORK_CALENDAR_ID=your_work_calendar_id
 GOOGLE_CLIENT_ID=your_google_oauth_client_id
 GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
 GOOGLE_REFRESH_TOKEN=your_google_oauth_refresh_token
+
+APPLE_WALLET_SECRET=your_apple_wallet_webhook_secret
 ```
 
 Never commit `.env.local`, OAuth credentials, refresh tokens, or bot tokens.
 
-### Gmail API Setup (Drafting Emails)
+### Gmail API Setup (Drafting Emails & DBS PayLah Sync)
 
-To enable email drafting with your Gmail account (`evanyap7@gmail.com`):
+To enable email drafting and DBS PayLah receipt syncing with your Gmail account (`evanyap7@gmail.com`):
 1. In Google Cloud Console, enable the **Gmail API**.
 2. Go to **Credentials** -> **Create Credentials** -> **OAuth client ID** (Web application).
 3. Add `http://localhost:3000/oauth2callback` to **Authorized redirect URIs**.
@@ -442,7 +453,8 @@ npm run dev
 | `GOOGLE_WORK_CALENDAR_ID` | Work Google Calendar destination |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `GOOGLE_REFRESH_TOKEN` | Google OAuth refresh token |
+| `GOOGLE_REFRESH_TOKEN` | Google OAuth refresh token (drafting emails & PayLah receipt syncing) |
+| `APPLE_WALLET_SECRET` | Secret token securing Apple Pay & PayLah webhook endpoints |
 
 ## Telegram Webhook Setup
 
@@ -532,6 +544,8 @@ delete gym tomorrow from personal
 
 ## Resume Highlights
 
-- Built and deployed a secure serverless Telegram personal assistant using Next.js, TypeScript, Vercel AI SDK, Perplexity Sonar, Telegram Bot API, Google Sheets API, Google Calendar API, Zod, and Vercel.
-- Engineered stateful, two-step confirmation flows for finance and calendar deletion using Telegram inline keyboards, Google Sheets-backed one-time tokens, ownership validation, expiry windows, idempotency controls, and callback acknowledgement.
-- Developed an auditable finance ledger with natural-language transaction capture, categorized multi-currency records, Singapore-local timestamps, search, and soft deletion; integrated Google Calendar creation and deletion with explicit approval safeguards.
+- **Architected a serverless Next.js assistant** on Vercel, orchestrating Gemini 3.6 Flash and Perplexity Sonar via Vercel AI SDK to parse text, Opus voice notes, and images into type-safe, Zod-validated intents.
+- **Engineered real-time fintech pipelines for Apple Pay & DBS PayLah**, integrating iOS 17 Shortcuts webhooks and Gmail API receipt parsing with LLM auto-categorization to log transactions in <3 seconds.
+- **Built an in-memory multimodal pipeline** with magic-byte validation and audio-buffer processing, transcribing voice memos and extracting up to 30 batch calendar events or receipt items per screenshot.
+- **Developed a Google Sheets & Calendar analytics engine** synchronizing across 2 calendars (Personal/Work) with time-window resolution, category spending breakdowns, and soft-delete audit trails.
+- **Enforced zero-trust security and idempotency** via single-use cryptographic tokens with 5-minute expiry, webhook secret authorization, user allowlisting, and stateful deduplication to prevent duplicate operations.
