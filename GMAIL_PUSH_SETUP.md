@@ -17,10 +17,13 @@ This is the standard, official way Gmail sends real-time webhooks directly to we
 2. Click **Enable** (if not already enabled).
 
 ### Step 3: Create a Pub/Sub Topic
-1. Go to **Pub/Sub** -> **Topics** -> click **Create Topic**.
-2. **Topic ID**: `gmail-notifications` (or any name you like).
-3. Leave default settings and click **Create**.
-4. Once created, copy the **Topic name** (it looks like `projects/YOUR_PROJECT_ID/topics/gmail-notifications`).
+1. Open the [Pub/Sub Topics Console](https://console.cloud.google.com/cloudpubsub/topic/list?project=perfect-stock-507203-h1) directly, or:
+   * Type **Pub/Sub** in the top Google Cloud search bar and click **Topics**.
+   * Or click the hamburger menu (☰ top left) -> scroll down to **Pub/Sub** -> **Topics**.
+2. Click **Create Topic** (at the top of the table).
+3. **Topic ID**: `gmail-notifications`
+4. Leave default settings and click **Create**.
+5. Once created, copy the **Topic name** (it will be: `projects/perfect-stock-507203-h1/topics/gmail-notifications`).
 
 ### Step 4: Grant Gmail Publish Permissions
 1. In the Topic details page, click the **Permissions** tab on the right side panel (or click **Add Principal**).
@@ -44,9 +47,9 @@ This is the standard, official way Gmail sends real-time webhooks directly to we
 6. Leave other settings at default and click **Create**.
 
 ### Step 6: Activate Watch Subscription
-Run this command in your project folder (replace with your full topic name from Step 3):
+Run this command in your project folder:
 ```bash
-npm run setup-gmail-watch projects/YOUR_PROJECT_ID/topics/gmail-notifications
+npm run setup-gmail-watch projects/perfect-stock-507203-h1/topics/gmail-notifications
 ```
 You will see:
 ```text
