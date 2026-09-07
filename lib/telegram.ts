@@ -78,6 +78,20 @@ export async function removeTelegramInlineKeyboard(
   });
 }
 
+export async function editTelegramMessage(
+  chatId: number,
+  messageId: number,
+  text: string,
+  replyMarkup?: InlineKeyboardMarkup
+): Promise<void> {
+  await callTelegram("editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    reply_markup: replyMarkup,
+  });
+}
+
 export type BotCommand = {
   command: string;
   description: string;

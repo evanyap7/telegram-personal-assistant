@@ -85,6 +85,7 @@ import { createEmailDraft } from "@/lib/gmail";
 import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-intent";
 import {
   answerTelegramCallback,
+  editTelegramMessage,
   removeTelegramInlineKeyboard,
   sendTelegramMessage,
   setTelegramBotCommands,
@@ -1691,7 +1692,233 @@ async function handleCallback(input: {
     return;
   }
 
+  if (action === "wallet_undo") {
+    const transactionId = parts[1];
+    if (!transactionId) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+    await handleWalletUndoCallback({ ...input, transactionId });
+    return;
+  }
+
+  if (action === "wallet_cat") {
+    const transactionId = parts[1];
+    if (!transactionId) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+    await handleWalletCategoryPickerCallback({ ...input, transactionId });
+    return;
+  }
+
+  if (action === "wallet_setcat") {
+    const transactionId = parts[1];
+    const category = parts[2];
+    if (!transactionId || !category) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+    await handleWalletSetCategoryCallback({ ...input, transactionId, category });
+    return;
+  }
+
+  if (action === "wallet_cancel") {
+    const transactionId = parts[1];
+    if (!transactionId) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+    await handleWalletCancelCallback({ ...input, transactionId });
+    return;
+  }
+
   await answerTelegramCallback(input.callbackId, "This action is invalid.");
+}
+
+async function handleWalletUndoCallback(input: {
+  callbackId: string;
+  transactionId: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  const transaction = await softDeleteTransaction(input.transactionId);
+  if (!transaction) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "Transaction not found or already deleted."
+    ).catch(() => {});
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId).catch(() => {});
+    await markUpdateCompleted(input.updateId, "wallet_undo_not_found");
+    return;
+  }
+
+  await answerTelegramCallback(input.callbackId, "Expense removed!").catch(() => {});
+  await editTelegramMessage(
+    input.chatId,
+    input.messageId,
+    `🗑️ *Apple Pay Expense Deleted*\n\n` +
+      `• *Amount:* ${transaction.currency} ${transaction.amount}\n` +
+      `• *Description:* ${transaction.description}\n` +
+      `• *Category:* ${transaction.category}\n` +
+      `• *Status:* Removed from tracker.`
+  ).catch(() => {});
+  await markUpdateCompleted(input.updateId, "wallet_undo_success");
+}
+
+async function handleWalletCategoryPickerCallback(input: {
+  callbackId: string;
+  transactionId: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  const transaction = await getTransactionById(input.transactionId);
+  if (!transaction || transaction.status !== "active") {
+    await answerTelegramCallback(
+      input.callbackId,
+      "Transaction not found or already deleted."
+    ).catch(() => {});
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId).catch(() => {});
+    await markUpdateCompleted(input.updateId, "wallet_cat_not_found");
+    return;
+  }
+
+  await answerTelegramCallback(input.callbackId).catch(() => {});
+
+  const categoryGroups = [
+    ["Dining", "Transport"],
+    ["Groceries", "Shopping"],
+    ["Entertainment", "Utilities"],
+    ["Healthcare", "General"],
+  ];
+
+  const inlineKeyboard = categoryGroups.map((group) =>
+    group.map((cat) => ({
+      text: cat === transaction.category ? `✓ ${cat}` : cat,
+      callback_data: `wallet_setcat:${transaction.transactionId}:${cat}`,
+    }))
+  );
+
+  inlineKeyboard.push([
+    {
+      text: "✖ Cancel",
+      callback_data: `wallet_cancel:${transaction.transactionId}`,
+    },
+  ]);
+
+  await editTelegramMessage(
+    input.chatId,
+    input.messageId,
+    `💳 *Apple Pay Expense: Select Category*\n\n` +
+      `• *Amount:* ${transaction.currency} ${transaction.amount}\n` +
+      `• *Description:* ${transaction.description}\n` +
+      `• *Current Category:* ${transaction.category}\n\n` +
+      `Tap a category below to update:`,
+    { inline_keyboard: inlineKeyboard }
+  ).catch(() => {});
+
+  await markUpdateCompleted(input.updateId, "wallet_cat_picker_shown");
+}
+
+async function handleWalletSetCategoryCallback(input: {
+  callbackId: string;
+  transactionId: string;
+  category: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  const updated = await updateTransaction(input.transactionId, {
+    category: input.category,
+  });
+
+  if (!updated) {
+    await answerTelegramCallback(
+      input.callbackId,
+      "Failed to update or transaction deleted."
+    ).catch(() => {});
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId).catch(() => {});
+    await markUpdateCompleted(input.updateId, "wallet_setcat_failed");
+    return;
+  }
+
+  await answerTelegramCallback(
+    input.callbackId,
+    `Category updated to ${input.category}!`
+  ).catch(() => {});
+
+  const messageText = [
+    "💳 *Apple Pay Expense Logged!*",
+    "",
+    `• *Amount:* ${updated.currency} ${updated.amount}`,
+    `• *Description:* ${updated.description}`,
+    `• *Category:* ${updated.category} ✅`,
+    `• *Recorded:* ${updated.timestamp}`,
+  ].join("\n");
+
+  await editTelegramMessage(input.chatId, input.messageId, messageText, {
+    inline_keyboard: [
+      [
+        {
+          text: "✏️ Change Category",
+          callback_data: `wallet_cat:${updated.transactionId}`,
+        },
+        {
+          text: "🗑️ Undo / Delete",
+          callback_data: `wallet_undo:${updated.transactionId}`,
+        },
+      ],
+    ],
+  }).catch(() => {});
+
+  await markUpdateCompleted(input.updateId, "wallet_setcat_success");
+}
+
+async function handleWalletCancelCallback(input: {
+  callbackId: string;
+  transactionId: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  const transaction = await getTransactionById(input.transactionId);
+  await answerTelegramCallback(input.callbackId, "Cancelled.").catch(() => {});
+
+  if (transaction && transaction.status === "active") {
+    const messageText = [
+      "💳 *Apple Pay Expense Logged!*",
+      "",
+      `• *Amount:* ${transaction.currency} ${transaction.amount}`,
+      `• *Description:* ${transaction.description}`,
+      `• *Category:* ${transaction.category}`,
+      `• *Recorded:* ${transaction.timestamp}`,
+    ].join("\n");
+
+    await editTelegramMessage(input.chatId, input.messageId, messageText, {
+      inline_keyboard: [
+        [
+          {
+            text: "✏️ Change Category",
+            callback_data: `wallet_cat:${transaction.transactionId}`,
+          },
+          {
+            text: "🗑️ Undo / Delete",
+            callback_data: `wallet_undo:${transaction.transactionId}`,
+          },
+        ],
+      ],
+    }).catch(() => {});
+  } else {
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId).catch(() => {});
+  }
+
+  await markUpdateCompleted(input.updateId, "wallet_cancel");
 }
 
 async function processAssistantImage(input: {
