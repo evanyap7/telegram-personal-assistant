@@ -27,6 +27,7 @@ import {
   markUpdateCompleted,
   markUpdateFailed,
   markUpdateStarted,
+  parseSwipeReplyTransactionUpdate,
   searchActiveTransactions,
   softDeleteTransaction,
   updateTransaction,
@@ -2245,6 +2246,7 @@ export async function POST(request: Request) {
   }
 
   let updateId: number | null = null;
+  let currentChatId: number | null = null;
 
   try {
     const update = telegramUpdateSchema.parse(await request.json());
@@ -2303,6 +2305,7 @@ export async function POST(request: Request) {
     }
 
     const chatId = message.chat.id;
+    currentChatId = chatId;
 
     if (message.photo?.length) {
       const instruction = message.caption?.trim() ?? "";
@@ -2475,6 +2478,52 @@ export async function POST(request: Request) {
           }).catch(() => {});
 
           return Response.json({ ok: true });
+        }
+      }
+
+      // Fast-path: Swipe reply to a transaction card to rename item, change category, or adjust amount
+      const repliedTxnMatch = message.reply_to_message?.text?.match(/txn_[a-zA-Z0-9_-]+/);
+      if (repliedTxnMatch) {
+        const repliedTxn = await getTransactionById(repliedTxnMatch[0]);
+        if (repliedTxn) {
+          const swipeUpdate = parseSwipeReplyTransactionUpdate(text, repliedTxn);
+          if (swipeUpdate) {
+            const updated = await updateTransaction(repliedTxn.transactionId, swipeUpdate);
+            if (updated) {
+              const itemDisplay =
+                swipeUpdate.description?.split(" @ ")[0] ||
+                swipeUpdate.description ||
+                updated.description;
+
+              await sendTelegramMessage(
+                chatId,
+                [
+                  "✅ *Transaction updated!*",
+                  "",
+                  swipeUpdate.description ? `• *Item:* ${itemDisplay}` : null,
+                  `• *Amount:* ${Number(updated.amount).toFixed(2)} ${updated.currency}`,
+                  `• *Category:* ${updated.category}`,
+                  `• *Description:* ${updated.description}`,
+                  `• *Date & Time:* ${updated.timestamp} (SGT)`,
+                  "",
+                  `🆔 \`${updated.transactionId}\``,
+                ]
+                  .filter(Boolean)
+                  .join("\n")
+              );
+
+              logChatMessage({
+                messageId: message.message_id,
+                userId: message.from.id,
+                role: "user",
+                text,
+                actionType: "finance_modify_swipe_reply",
+              }).catch(() => {});
+
+              await markUpdateCompleted(updateId, "finance_modify_swipe_reply_success");
+              return Response.json({ ok: true });
+            }
+          }
         }
       }
 
@@ -3182,6 +3231,24 @@ export async function POST(request: Request) {
         return Response.json({ ok: true });
       }
 
+      if (
+        intent.updates.description &&
+        transaction.description &&
+        (transaction.description.includes("(DBS PayLah)") ||
+          transaction.description.includes("(Apple Pay)")) &&
+        !intent.updates.description.includes("(DBS PayLah)") &&
+        !intent.updates.description.includes("(Apple Pay)")
+      ) {
+        const currentDesc = transaction.description;
+        const item = intent.updates.description.trim();
+        if (currentDesc.includes(" @ ")) {
+          const parts = currentDesc.split(" @ ");
+          intent.updates.description = `${item} @ ${parts.slice(1).join(" @ ")}`;
+        } else {
+          intent.updates.description = `${item} @ ${currentDesc}`;
+        }
+      }
+
       const updated = await updateTransaction(
         transaction.transactionId,
         intent.updates
@@ -3588,6 +3655,17 @@ export async function POST(request: Request) {
           updateId,
           error: errorText(loggingError),
         });
+      }
+    }
+
+    if (currentChatId) {
+      try {
+        await sendTelegramMessage(
+          currentChatId,
+          "⚠️ Sorry, I ran into an issue processing that. Please try again."
+        );
+      } catch {
+        // ignore telegram error
       }
     }
 

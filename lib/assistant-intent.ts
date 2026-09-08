@@ -407,8 +407,8 @@ Contextual Reference Rules:
 - If the user replied to a finance transaction message OR asks to delete/modify a transaction that was just created:
   - If the user asks to delete it (e.g. "delete this", "delete that", "cancel it", "delete", "remove this transaction", "undo"):
     Return finance_delete_search with transactionId set to the ID from the replied message or the most recent finance transaction! DO NOT return unknown.
-  - If the user asks to modify it (e.g. "change amount to $10", "make it $12", "it was $12 not $6", "change category to Dining", "rename to lunch with friends", "change description to ...", "it was income", "it was yesterday"):
-    Return finance_modify with transactionId from the replied message or the recent finance transaction, and include the updated values in "updates"! DO NOT return unknown.
+  - If the user asks to modify or rename it, or states what they bought/ate/had (e.g. "i had supper", "supper", "chicken rice", "for dinner", "it was lunch", "change amount to $10", "make it $12", "it was $12 not $6", "change category to Dining", "rename to lunch with friends", "change description to ...", "it was income", "it was yesterday"):
+    Return finance_modify with transactionId from the replied message or the recent finance transaction, and include the updated values in "updates"! DO NOT return finance_add or unknown.
 - If the user's message refers to previous conversation topics, dates, or entities (e.g. "what about tomorrow?", "make it 5pm instead", "show that list again", "reschedule it"):
   Use the Recent conversation turns in the context to determine the appropriate intent and parameter values.
 
@@ -493,7 +493,31 @@ Security rules:
   });
 
   try {
-    const parsed = intentSchema.parse(extractJson(result.text));
+    const rawJson = extractJson(result.text) as Record<string, unknown>;
+
+    // Safety fallback: If model returned finance_add with 0 or missing amount, but we have a transaction context, map to finance_modify!
+    if (
+      rawJson &&
+      rawJson.action === "finance_add" &&
+      (!rawJson.amount || Number(rawJson.amount) <= 0) &&
+      context?.recentTransaction?.transactionId
+    ) {
+      rawJson.action = "finance_modify";
+      rawJson.transactionId = context.recentTransaction.transactionId;
+      rawJson.updates = {
+        description:
+          typeof rawJson.description === "string"
+            ? rawJson.description
+            : userMessage,
+        category:
+          typeof rawJson.category === "string" ? rawJson.category : undefined,
+      };
+      delete rawJson.amount;
+      delete rawJson.currency;
+      delete rawJson.type;
+    }
+
+    const parsed = intentSchema.parse(rawJson);
     if (parsed.action === "finance_add") {
       if (parsed.explicitDate && !messageMentionsDate(userMessage)) {
         delete parsed.explicitDate;

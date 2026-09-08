@@ -698,3 +698,116 @@ export async function markUpdateFailed(
     errorMessage.slice(0, 500),
   ]);
 }
+
+export function parseSwipeReplyTransactionUpdate(
+  text: string,
+  targetTxn: FinanceTransaction
+): { description?: string; category?: string; amount?: number } | null {
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+
+  // If it's a command, question, or deletion, do not treat as inline rename
+  if (
+    lower.startsWith("/") ||
+    lower.startsWith("what") ||
+    lower.startsWith("how") ||
+    lower.startsWith("why") ||
+    lower.startsWith("when") ||
+    lower.startsWith("where") ||
+    lower === "delete" ||
+    lower === "undo" ||
+    lower === "cancel" ||
+    lower.startsWith("delete ") ||
+    lower.startsWith("remove ")
+  ) {
+    return null;
+  }
+
+  // 1. Explicit Category Change: e.g. "category: dining", "change category to dining"
+  const catMatch = trimmed.match(/(?:change\s+category\s+to|category:?|make\s+it)\s+([a-zA-Z\s]+)/i);
+  if (catMatch && !catMatch[1].toLowerCase().includes("dollar") && !catMatch[1].toLowerCase().includes("sgd")) {
+    const rawCat = catMatch[1].trim();
+    return { category: rawCat };
+  }
+
+  // 2. Explicit Amount Change: e.g. "$12", "$12.50", "amount: $12"
+  const pureAmt = trimmed.match(/^\$?([0-9]+(?:\.[0-9]{2})?)$/);
+  if (pureAmt) {
+    return { amount: parseFloat(pureAmt[1]) };
+  }
+
+  // 3. Item Rename: e.g. "i had supper", "supper", "chicken rice", "for dinner", "it was lunch", "bought bubble tea"
+  const item = trimmed
+    .replace(/^(?:i\s+had|it\s+was|item\s+is|item:|rename\s+to|change\s+to|change\s+item\s+to|change\s+description\s+to|bought|got|ate|for)\s+/i, "")
+    .trim();
+
+  if (!item) return null;
+
+  // Infer category if item implies it
+  let category: string | undefined = undefined;
+  const itemLower = item.toLowerCase();
+  if (
+    itemLower.includes("supper") ||
+    itemLower.includes("lunch") ||
+    itemLower.includes("dinner") ||
+    itemLower.includes("breakfast") ||
+    itemLower.includes("food") ||
+    itemLower.includes("meal") ||
+    itemLower.includes("rice") ||
+    itemLower.includes("noodle") ||
+    itemLower.includes("coffee") ||
+    itemLower.includes("cafe") ||
+    itemLower.includes("toast") ||
+    itemLower.includes("drink") ||
+    itemLower.includes("tea") ||
+    itemLower.includes("snack") ||
+    itemLower.includes("mcdonald") ||
+    itemLower.includes("burger") ||
+    itemLower.includes("pizza") ||
+    itemLower.includes("sushi")
+  ) {
+    category = "Dining";
+  } else if (
+    itemLower.includes("grab") ||
+    itemLower.includes("gojek") ||
+    itemLower.includes("taxi") ||
+    itemLower.includes("cab") ||
+    itemLower.includes("mrt") ||
+    itemLower.includes("bus") ||
+    itemLower.includes("petrol") ||
+    itemLower.includes("fuel") ||
+    itemLower.includes("parking")
+  ) {
+    category = "Transport";
+  } else if (
+    itemLower.includes("groceries") ||
+    itemLower.includes("supermarket") ||
+    itemLower.includes("mart") ||
+    itemLower.includes("fairprice") ||
+    itemLower.includes("cold storage") ||
+    itemLower.includes("sheng siong")
+  ) {
+    category = "Groceries";
+  }
+
+  // Construct updated description retaining merchant and payment context if present
+  const currentDesc = targetTxn.description || "";
+  let newDesc = item;
+  if (
+    (currentDesc.includes("(DBS PayLah)") || currentDesc.includes("(Apple Pay)")) &&
+    !item.includes("(DBS PayLah)") &&
+    !item.includes("(Apple Pay)")
+  ) {
+    if (currentDesc.includes(" @ ")) {
+      const parts = currentDesc.split(" @ ");
+      newDesc = `${item} @ ${parts.slice(1).join(" @ ")}`;
+    } else {
+      newDesc = `${item} @ ${currentDesc}`;
+    }
+  }
+
+  return {
+    description: newDesc,
+    category,
+  };
+}
