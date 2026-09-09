@@ -348,8 +348,6 @@ export async function POST(req: NextRequest) {
         card ? `• *Card:* ${card}` : null,
         `• *Recorded:* ${displayDate}`,
         "",
-        `🆔 \`${result.transactionId}\``,
-        "",
         "💬 _Tip: Swipe reply to this message anytime with what you bought (e.g. \"bought iced latte\") to update it!_",
       ]
         .filter(Boolean)

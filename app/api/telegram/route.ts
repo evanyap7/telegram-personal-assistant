@@ -359,14 +359,13 @@ function formatFinanceTransaction(input: {
   currency: string;
   category: string;
   description: string;
-  transactionId: string;
+  transactionId?: string;
   timestamp?: string;
 }): string {
   return [
     `${input.type || "unknown"}: ${input.amount || "?"} ${input.currency}`,
     `Category: ${input.category || "Uncategorized"}`,
     `Description: ${input.description || "No description"}`,
-    `ID: ${input.transactionId}`,
     input.timestamp ? `Recorded: ${input.timestamp}` : "",
   ]
     .filter(Boolean)
@@ -397,10 +396,71 @@ function formatCalendarEvent(input: {
     `Calendar: ${input.calendarName}`,
     `Title: ${input.title}`,
     ...timeLines,
-    input.eventId ? `Event ID: ${input.eventId}` : "",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+async function resolveRepliedTransaction(
+  repliedMessage?: {
+    text?: string;
+    reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> };
+  } | null
+): Promise<FinanceTransaction | null> {
+  if (!repliedMessage) return null;
+
+  const text = repliedMessage.text || "";
+
+  // 1. Direct txn_ match in text (if present)
+  const textTxnMatch = text.match(/txn_[a-zA-Z0-9_-]+/);
+  if (textTxnMatch) {
+    const txn = await getTransactionById(textTxnMatch[0]);
+    if (txn) return txn;
+  }
+
+  // 2. Check inline keyboard callback data (Apple Pay & DBS PayLah cards contain transactionId in callback_data)
+  if (repliedMessage.reply_markup?.inline_keyboard) {
+    for (const row of repliedMessage.reply_markup.inline_keyboard) {
+      for (const btn of row) {
+        const btnMatch = btn.callback_data?.match(/txn_[a-zA-Z0-9_-]+/);
+        if (btnMatch) {
+          const txn = await getTransactionById(btnMatch[0]);
+          if (txn) return txn;
+        }
+      }
+    }
+  }
+
+  // 3. Match from Description / Item / Merchant and Amount in text
+  const descMatch = text.match(/(?:Description|Merchant|Item):\s*\*?([^\n*]+)/i);
+  const amtMatch = text.match(/Amount:\s*\*?(?:SGD\s*)?([0-9]+(?:\.[0-9]{2})?)/i);
+
+  if (descMatch) {
+    const query = descMatch[1].trim().split("@")[0].trim();
+    const matches = await searchActiveTransactions(query);
+    if (matches.length > 0) {
+      if (amtMatch) {
+        const amt = parseFloat(amtMatch[1]);
+        const exact = matches.find(
+          (m) => Math.abs(parseFloat(m.amount) - amt) < 0.01
+        );
+        if (exact) return exact;
+      }
+      return matches[0];
+    }
+  }
+
+  // 4. If the message text indicates a transaction confirmation or update, fallback to latest transaction
+  if (
+    text.includes("Transaction added") ||
+    text.includes("Expense Synced") ||
+    text.includes("Expense Logged") ||
+    text.includes("Transaction updated")
+  ) {
+    return await getLatestTransaction();
+  }
+
+  return null;
 }
 
 function formatSingaporeScheduleItem(item: ScheduleEventItem): string {
@@ -565,7 +625,6 @@ async function handleCalendarCreateCallback(input: {
             end: pendingAction.payload.end,
           }
       ),
-      `Event ID: ${event.id}`,
       event.htmlLink ? `Link: ${event.htmlLink}` : "",
     ]
       .filter(Boolean)
@@ -935,7 +994,6 @@ async function handleFinanceAddCallback(input: {
     input.chatId,
     [
       "Transaction added.",
-      `ID: ${transaction.transactionId}`,
       `Type: ${payload.type}`,
       `Amount: ${payload.amount.toFixed(2)} ${payload.currency}`,
       `Category: ${payload.category}`,
@@ -1274,7 +1332,6 @@ async function handleEmailDraftCallback(input: {
         "",
         `To: ${draft.to}`,
         `Subject: ${draft.subject}`,
-        `Draft ID: ${draft.draftId}`,
         "",
         `🔗 Open Gmail Drafts: ${draft.gmailUrl}`,
       ].join("\n")
@@ -2482,9 +2539,8 @@ export async function POST(request: Request) {
       }
 
       // Fast-path: Swipe reply to a transaction card to rename item, change category, or adjust amount
-      const repliedTxnMatch = message.reply_to_message?.text?.match(/txn_[a-zA-Z0-9_-]+/);
-      if (repliedTxnMatch) {
-        const repliedTxn = await getTransactionById(repliedTxnMatch[0]);
+      if (message.reply_to_message) {
+        const repliedTxn = await resolveRepliedTransaction(message.reply_to_message);
         if (repliedTxn) {
           const swipeUpdate = parseSwipeReplyTransactionUpdate(text, repliedTxn);
           if (swipeUpdate) {
@@ -2505,8 +2561,6 @@ export async function POST(request: Request) {
                   `• *Category:* ${updated.category}`,
                   `• *Description:* ${updated.description}`,
                   `• *Date & Time:* ${updated.timestamp} (SGT)`,
-                  "",
-                  `🆔 \`${updated.transactionId}\``,
                 ]
                   .filter(Boolean)
                   .join("\n")
@@ -2800,7 +2854,6 @@ export async function POST(request: Request) {
         chatId,
         [
           "Transaction added.",
-          `ID: ${transaction.transactionId}`,
           `Type: ${input.type}`,
           `Amount: ${input.amount.toFixed(2)} ${input.currency.toUpperCase()}`,
           `Category: ${input.category}`,
@@ -2895,8 +2948,9 @@ export async function POST(request: Request) {
     );
 
     const latestTxn = await getLatestTransaction();
-    const repliedTxnMatch = message.reply_to_message?.text?.match(/txn_[a-zA-Z0-9_-]+/);
-    const repliedTxn = repliedTxnMatch ? await getTransactionById(repliedTxnMatch[0]) : null;
+    const repliedTxn = message.reply_to_message
+      ? await resolveRepliedTransaction(message.reply_to_message)
+      : null;
     const targetTransaction = repliedTxn || latestTxn;
 
     const conversationContext: ConversationContext = {
@@ -2949,7 +3003,6 @@ export async function POST(request: Request) {
         chatId,
         [
           "Transaction added.",
-          `ID: ${transaction.transactionId}`,
           `Type: ${intent.type}`,
           `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
           `Category: ${intent.category}`,
@@ -3268,7 +3321,6 @@ export async function POST(request: Request) {
         [
           "✅ Transaction updated!",
           "",
-          `ID: ${updated.transactionId}`,
           `Type: ${updated.type}`,
           `Amount: ${Number(updated.amount).toFixed(2)} ${updated.currency}`,
           `Category: ${updated.category}`,

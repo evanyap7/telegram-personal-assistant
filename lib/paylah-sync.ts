@@ -376,8 +376,6 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
             `• *Category:* ${category}`,
             `• *Recorded:* ${displayDate}`,
             "",
-            `🆔 \`${result.transactionId}\``,
-            "",
             "💬 _Tip: Swipe reply to this message anytime to rename the item or modify details!_",
           ]
             .filter(Boolean)
