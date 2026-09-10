@@ -79,3 +79,51 @@ export function getGmailClient() {
     auth: getGmailAuth(),
   });
 }
+
+/**
+ * Generic retry with exponential backoff and jitter for transient API failures.
+ */
+export async function withExponentialBackoff<T>(
+  operation: () => Promise<T>,
+  options?: {
+    maxRetries?: number;
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+  }
+): Promise<T> {
+  const maxRetries = options?.maxRetries ?? 3;
+  const initialDelayMs = options?.initialDelayMs ?? 500;
+  const maxDelayMs = options?.maxDelayMs ?? 4000;
+
+  let delay = initialDelayMs;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      const status = error?.status || error?.code || error?.response?.status;
+      const msg = String(error?.message || "");
+
+      // Transient errors: 429 Quota/Rate limit, 500, 502, 503, 504, or network disconnects
+      const isTransient =
+        status === 429 ||
+        status === 500 ||
+        status === 502 ||
+        status === 503 ||
+        status === 504 ||
+        /rate limit|quota|resource_exhausted|backend error|econnreset|etimedout/i.test(msg);
+
+      if (!isTransient || attempt === maxRetries) {
+        throw error;
+      }
+
+      // Add random jitter
+      const jitter = Math.random() * 200;
+      const sleepTime = Math.min(delay + jitter, maxDelayMs);
+      await new Promise((resolve) => setTimeout(resolve, sleepTime));
+      delay *= 2;
+    }
+  }
+
+  throw new Error("Exponential backoff failed unexpectedly.");
+}

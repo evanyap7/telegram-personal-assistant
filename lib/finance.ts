@@ -1,4 +1,5 @@
-import { getSheetsClient } from "./google";
+import { getSheetsClient, withExponentialBackoff } from "./google";
+import { maskSensitiveFinancialData } from "./security";
 
 const TRANSACTIONS_SHEET = "Transactions";
 const UPDATE_LOG_SHEET = "UpdateLog";
@@ -150,26 +151,29 @@ export async function addTransaction(input: TransactionInput): Promise<{
   const transactionId = createTransactionId();
   const dateObj = resolveTransactionDateObj(input);
   const timestamp = formatSingaporeTimestamp(dateObj);
+  const sanitizedDescription = maskSensitiveFinancialData(input.description);
 
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A:I`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [
-        [
-          transactionId,
-          timestamp,
-          input.type,
-          input.amount,
-          input.currency.toUpperCase(),
-          input.category,
-          input.description,
-          "active",
-          "",
+  await withExponentialBackoff(async () => {
+    return sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${TRANSACTIONS_SHEET}!A:I`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [
+          [
+            transactionId,
+            timestamp,
+            input.type,
+            input.amount,
+            input.currency.toUpperCase(),
+            input.category,
+            sanitizedDescription,
+            "active",
+            "",
+          ],
         ],
-      ],
-    },
+      },
+    });
   });
 
   return {

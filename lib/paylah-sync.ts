@@ -8,6 +8,7 @@ import {
 import { sendTelegramMessage } from "./telegram";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
+import { maskSensitiveFinancialData, SECURITY_SYSTEM_GUARDRAIL } from "./security";
 
 export type EmailTransactionParsedResult = {
   isTransaction: boolean;
@@ -522,7 +523,9 @@ Return ONLY one valid JSON object in this format:
   "referenceNumber": "reference number or booking code if mentioned"
 }
 
-If this email is merely a marketing promo, meal recommendation, login alert, OTP, or password reset, set "isTransaction": false.`,
+If this email is merely a marketing promo, meal recommendation, login alert, OTP, or password reset, set "isTransaction": false.
+
+${SECURITY_SYSTEM_GUARDRAIL}`,
       prompt: `Email Subject: "${subject}"\nEmail Body/Snippet:\n"""\n${cleanBody.slice(
         0,
         2500
