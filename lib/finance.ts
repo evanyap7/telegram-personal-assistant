@@ -793,11 +793,10 @@ export function parseSwipeReplyTransactionUpdate(
   // Construct updated description retaining merchant and payment context if present
   const currentDesc = targetTxn.description || "";
   let newDesc = item;
-  if (
-    (currentDesc.includes("(DBS PayLah)") || currentDesc.includes("(Apple Pay)")) &&
-    !item.includes("(DBS PayLah)") &&
-    !item.includes("(Apple Pay)")
-  ) {
+  const paymentTagMatch = currentDesc.match(
+    /\((DBS PayLah|Apple Pay|GrabFood|GrabPay|Grab|GrabMart|DBS PayNow|DBS GIRO|DBS Card)\)/i
+  );
+  if (paymentTagMatch && !item.toLowerCase().includes(paymentTagMatch[1].toLowerCase())) {
     if (currentDesc.includes(" @ ")) {
       const parts = currentDesc.split(" @ ");
       newDesc = `${item} @ ${parts.slice(1).join(" @ ")}`;

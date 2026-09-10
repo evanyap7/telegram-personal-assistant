@@ -212,7 +212,7 @@ function helpText() {
     "• /todo today — View today's tasks",
     "• /finance summary — View monthly spending breakdown",
     "• /finance list — View last 10 transactions",
-    "• /paylah — Sync recent DBS PayLah! receipts from Gmail",
+    "• /sync (or /grab, /dbs, /paylah) — Sync recent DBS & Grab receipts from Gmail",
     "• /setcommands — Update Telegram command menu",
     "• /help — Show this help message",
     "",
@@ -2599,6 +2599,9 @@ export async function POST(request: Request) {
         { command: "finance", description: "Finance commands & summary" },
         { command: "finance_summary", description: "Monthly spending & breakdown" },
         { command: "finance_list", description: "Recent active transactions" },
+        { command: "sync", description: "Sync recent DBS & Grab transactions" },
+        { command: "grab", description: "Sync Grab receipts from Gmail" },
+        { command: "dbs", description: "Sync DBS/POSB transactions from Gmail" },
         { command: "paylah", description: "Sync DBS PayLah receipts from Gmail" },
         { command: "help", description: "Show help and example usage" },
       ]);
@@ -2890,48 +2893,58 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    const lowerText = text.toLowerCase().trim();
     if (
       text === "/paylah" ||
       text === "/paylah sync" ||
+      text === "/dbs" ||
+      text === "/grab" ||
+      text === "/sync" ||
+      text === "/sync_emails" ||
       text === "/sync paylah" ||
       text === "/sync_paylah" ||
-      text.toLowerCase() === "sync paylah" ||
-      text.toLowerCase() === "sync my paylah"
+      lowerText === "sync paylah" ||
+      lowerText === "sync my paylah" ||
+      lowerText === "sync grab" ||
+      lowerText === "sync dbs" ||
+      lowerText === "sync transactions" ||
+      lowerText === "sync email" ||
+      lowerText === "sync emails"
     ) {
       await sendTelegramMessage(
         chatId,
-        "🔍 Checking your Gmail for recent DBS PayLah! payments..."
+        "🔍 Checking your Gmail for recent DBS and Grab transactions..."
       );
       try {
         const syncResult = await syncPayLahTransactions();
         if (syncResult.logged === 0) {
           await sendTelegramMessage(
             chatId,
-            `✅ Scan complete (${syncResult.scanned} recent DBS email${
+            `✅ Scan complete (${syncResult.scanned} recent banking & receipt email${
               syncResult.scanned === 1 ? "" : "s"
-            } checked).\n\nNo new PayLah payments found to log!`
+            } checked).\n\nNo new DBS or Grab transactions found to log!`
           );
         } else {
           await sendTelegramMessage(
             chatId,
-            `🎉 Successfully synced ${syncResult.logged} new PayLah payment${
+            `🎉 Successfully synced ${syncResult.logged} new transaction${
               syncResult.logged === 1 ? "" : "s"
             } to your Google Sheet!`
           );
         }
         await markUpdateCompleted(updateId, "paylah_sync_success");
       } catch (err) {
-        console.error("Manual PayLah sync error:", err);
+        console.error("Manual transaction sync error:", err);
         const errMsg = err instanceof Error ? err.message : String(err);
         if (errMsg.includes("insufficient") || errMsg.includes("scope")) {
           await sendTelegramMessage(
             chatId,
-            "⚠️ Gmail read permission required.\n\nPlease run `npm run get-gmail-token` on your computer to grant read access so the assistant can detect incoming DBS emails."
+            "⚠️ Gmail read permission required.\n\nPlease run `npm run get-gmail-token` on your computer to grant read access so the assistant can detect incoming DBS and Grab emails."
           );
         } else {
           await sendTelegramMessage(
             chatId,
-            `⚠️ Could not sync PayLah: ${errMsg}`
+            `⚠️ Could not sync transactions: ${errMsg}`
           );
         }
         await markUpdateCompleted(updateId, "paylah_sync_error");
