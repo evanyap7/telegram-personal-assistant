@@ -89,9 +89,11 @@ import {
   answerTelegramCallback,
   editTelegramMessage,
   removeTelegramInlineKeyboard,
+  sendTelegramChatAction,
   sendTelegramMessage,
   setTelegramBotCommands,
 } from "@/lib/telegram";
+import { safeCompare } from "@/lib/security";
 
 
 const telegramUpdateSchema = z.object({
@@ -431,8 +433,8 @@ async function resolveRepliedTransaction(
     }
   }
 
-  // 3. Match from Description / Item / Merchant and Amount in text
-  const descMatch = text.match(/(?:Description|Merchant|Item):\s*\*?([^\n*]+)/i);
+  // 3. Match from Description / Item / Merchant / Source and Amount in text
+  const descMatch = text.match(/(?:Description|Merchant|Item|Source):\s*\*?([^\n*]+)/i);
   const amtMatch = text.match(/Amount:\s*\*?(?:SGD\s*)?([0-9]+(?:\.[0-9]{2})?)/i);
 
   if (descMatch) {
@@ -455,7 +457,10 @@ async function resolveRepliedTransaction(
     text.includes("Transaction added") ||
     text.includes("Expense Synced") ||
     text.includes("Expense Logged") ||
-    text.includes("Transaction updated")
+    text.includes("Transaction updated") ||
+    text.includes("Funds Received") ||
+    text.includes("GIRO Deduction Logged") ||
+    text.includes("Ride Logged")
   ) {
     return await getLatestTransaction();
   }
@@ -2297,7 +2302,7 @@ export async function POST(request: Request) {
     "x-telegram-bot-api-secret-token"
   );
 
-  if (secretHeader !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+  if (!safeCompare(secretHeader, process.env.TELEGRAM_WEBHOOK_SECRET)) {
     log("telegram.webhook.unauthorized");
     return new Response("Unauthorized", { status: 401 });
   }
@@ -2363,6 +2368,9 @@ export async function POST(request: Request) {
 
     const chatId = message.chat.id;
     currentChatId = chatId;
+
+    // Send typing action immediately so the user gets instant visual feedback
+    sendTelegramChatAction(chatId, "typing").catch(() => {});
 
     if (message.photo?.length) {
       const instruction = message.caption?.trim() ?? "";
@@ -3735,8 +3743,8 @@ export async function POST(request: Request) {
     }
 
     return Response.json(
-      { ok: false, error: "Webhook processing failed." },
-      { status: 500 }
+      { ok: false, error: "Webhook processing failed.", handled: true },
+      { status: 200 }
     );
   }
 }
