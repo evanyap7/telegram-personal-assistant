@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addTransaction, formatSingaporeTimestamp } from "@/lib/finance";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { safeCompare, maskSensitiveFinancialData } from "@/lib/security";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
 
@@ -210,21 +211,21 @@ function verifyAuth(req: NextRequest): boolean {
     return false;
   }
 
-  const queryKey =
-    req.nextUrl.searchParams.get("key") ||
-    req.nextUrl.searchParams.get("secret") ||
-    req.nextUrl.searchParams.get("token");
-
-  if (queryKey && queryKey === expectedSecret) {
-    return true;
-  }
-
   const headerKey =
     req.headers.get("x-api-key") ||
     req.headers.get("x-wallet-secret") ||
     req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
 
-  if (headerKey && headerKey === expectedSecret) {
+  if (safeCompare(headerKey, expectedSecret)) {
+    return true;
+  }
+
+  const queryKey =
+    req.nextUrl.searchParams.get("key") ||
+    req.nextUrl.searchParams.get("secret") ||
+    req.nextUrl.searchParams.get("token");
+
+  if (safeCompare(queryKey, expectedSecret)) {
     return true;
   }
 

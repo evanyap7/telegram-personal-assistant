@@ -1,23 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { syncPayLahTransactions } from "@/lib/paylah-sync";
+import { safeCompare } from "@/lib/security";
 
 function verifyAuth(req: NextRequest): boolean {
   const secret = process.env.GMAIL_WEBHOOK_SECRET || process.env.APPLE_WALLET_SECRET;
   const cronSecret = process.env.CRON_SECRET;
 
   const authHeader = req.headers.get("authorization");
-  if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
+  if (cronSecret && safeCompare(authHeader, `Bearer ${cronSecret}`)) {
     return true;
   }
-  if (secret && authHeader === `Bearer ${secret}`) {
-    return true;
-  }
-
-  const queryKey =
-    req.nextUrl.searchParams.get("key") ||
-    req.nextUrl.searchParams.get("secret");
-
-  if (secret && queryKey === secret) {
+  if (secret && safeCompare(authHeader, `Bearer ${secret}`)) {
     return true;
   }
 
@@ -25,7 +18,15 @@ function verifyAuth(req: NextRequest): boolean {
     req.headers.get("x-api-key") ||
     req.headers.get("x-webhook-secret");
 
-  if (secret && headerKey === secret) {
+  if (secret && safeCompare(headerKey, secret)) {
+    return true;
+  }
+
+  const queryKey =
+    req.nextUrl.searchParams.get("key") ||
+    req.nextUrl.searchParams.get("secret");
+
+  if (secret && safeCompare(queryKey, secret)) {
     return true;
   }
 
