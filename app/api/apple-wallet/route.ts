@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { addTransaction, formatSingaporeTimestamp } from "@/lib/finance";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { safeCompare, maskSensitiveFinancialData } from "@/lib/security";
+import { parseSingaporeDate } from "@/lib/date-parser";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
 
@@ -186,11 +187,12 @@ async function inferCategoryWithAI(
 
   try {
     const result = await generateText({
-      model: google("gemini-3.6-flash"),
+      model: google("gemini-flash-lite-latest"),
       system: `You are a financial transaction categorizer.
 Available categories: Dining, Transport, Groceries, Shopping, Entertainment, Utilities, Healthcare, General.
 Given a merchant name, optional item purchased, and optional category from Apple Pay, output ONLY the single best category name from the list. Do not add punctuation or explanation.`,
       prompt: `Merchant: "${merchant}"\nItem: "${item || "None"}"\nApple Category: "${rawCategory || "None"}"`,
+      maxOutputTokens: 20,
     });
 
     const output = result.text.trim();
@@ -204,13 +206,19 @@ Given a merchant name, optional item purchased, and optional category from Apple
   }
 }
 
-function verifyAuth(req: NextRequest): boolean {
+function verifyAuth(req: NextRequest, bodySecret?: string): boolean {
   const expectedSecret = process.env.APPLE_WALLET_SECRET;
   if (!expectedSecret) {
     console.error("APPLE_WALLET_SECRET environment variable is not configured.");
     return false;
   }
 
+  // 1. Check body secret if passed by Shortcut
+  if (bodySecret && safeCompare(bodySecret, expectedSecret)) {
+    return true;
+  }
+
+  // 2. Check headers
   const headerKey =
     req.headers.get("x-api-key") ||
     req.headers.get("x-wallet-secret") ||
@@ -220,6 +228,7 @@ function verifyAuth(req: NextRequest): boolean {
     return true;
   }
 
+  // 3. Check query parameters
   const queryKey =
     req.nextUrl.searchParams.get("key") ||
     req.nextUrl.searchParams.get("secret") ||
@@ -246,7 +255,22 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!verifyAuth(req)) {
+  let body: Record<string, unknown> = {};
+  try {
+    const textBody = await req.text();
+    if (textBody && textBody.trim()) {
+      body = JSON.parse(textBody);
+    }
+  } catch {
+    // If not JSON, leave body as empty object
+  }
+
+  const bodySecret =
+    body.secret ? String(body.secret) :
+    body.key ? String(body.key) :
+    body.token ? String(body.token) : undefined;
+
+  if (!verifyAuth(req, bodySecret)) {
     return NextResponse.json(
       {
         error: "Unauthorized",
@@ -257,19 +281,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: Record<string, unknown> = {};
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON", message: "Request body must be valid JSON." },
-      { status: 400 }
-    );
-  }
-
-  // Parse fields passed from iOS Shortcuts
-  // Shortcuts could use: amount, merchant / payee / name, card / account, category, currency, date
-  const rawAmount = body.amount ?? body.value ?? body.price;
+  // Parse fields passed from iOS Shortcuts flexibly
+  const rawAmount =
+    body.amount ??
+    body.value ??
+    body.price ??
+    body.total ??
+    body["Transaction Amount"] ??
+    body["transaction_amount"] ??
+    body["TransactionAmount"];
   const amount = normalizeAmount(rawAmount);
 
   if (!amount) {
@@ -289,6 +309,9 @@ export async function POST(req: NextRequest) {
     body.payee ??
     body.vendor ??
     body.name ??
+    body.store ??
+    body["Merchant"] ??
+    body["Payee"] ??
     body.description ??
     "Apple Pay Purchase";
   const merchant = String(rawMerchant).trim() || "Apple Pay Purchase";
@@ -300,19 +323,42 @@ export async function POST(req: NextRequest) {
     body.product ??
     body.note ??
     body.notes;
-  const item = rawItem ? String(rawItem).trim() : undefined;
+  const itemCandidate = rawItem ? String(rawItem).trim() : undefined;
+  const item = itemCandidate && itemCandidate !== merchant ? itemCandidate : undefined;
 
-  const rawCurrency = body.currency ?? body.currencyCode ?? "SGD";
+  const rawCurrency =
+    body.currency ??
+    body.currencyCode ??
+    body["Currency"] ??
+    "SGD";
   const currency = String(rawCurrency).trim().toUpperCase() || "SGD";
 
-  const card = body.card ? String(body.card).trim() : undefined;
-  const rawCategory = body.category ? String(body.category).trim() : undefined;
-  const rawDate = body.date ? String(body.date).trim() : undefined;
+  const rawCard =
+    body.card ??
+    body.card_name ??
+    body["Card"] ??
+    body.paymentMethod ??
+    body.account;
+  const card = rawCard ? String(rawCard).trim() : undefined;
 
-  // Determine category with item context
-  const category = await inferCategoryWithAI(merchant, rawCategory, item);
+  const rawCategory =
+    body.category ??
+    body["Category"];
+  const categoryStr = rawCategory ? String(rawCategory).trim() : undefined;
 
-  // Build description (e.g. "Iced Latte @ Starbucks (Apple Pay - DBS Altitude)")
+  const rawDate =
+    body.date ??
+    body["Date"] ??
+    body.timestamp ??
+    body.time;
+
+  // Safe date resolution (never throws RangeError)
+  const dateObj = parseSingaporeDate(rawDate ? String(rawDate) : undefined);
+
+  // Determine category with merchant & item context
+  const category = await inferCategoryWithAI(merchant, categoryStr, item);
+
+  // Build description without hallucination
   const description = item
     ? card
       ? `${item} @ ${merchant} (Apple Pay - ${card})`
@@ -329,15 +375,13 @@ export async function POST(req: NextRequest) {
       currency,
       category,
       description,
-      transactionTimestamp: rawDate ? new Date(rawDate) : new Date(),
+      transactionTimestamp: dateObj,
     });
 
     // 2. Notify User via Telegram
     const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
     if (allowedUserId) {
-      const displayDate = formatSingaporeTimestamp(
-        rawDate ? new Date(rawDate) : new Date()
-      );
+      const displayDate = formatSingaporeTimestamp(dateObj);
 
       const messageText = [
         "💳 *Apple Pay Expense Logged!*",

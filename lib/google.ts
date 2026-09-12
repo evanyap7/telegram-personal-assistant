@@ -1,12 +1,20 @@
 import { google } from "googleapis";
 
+function cleanPrivateKey(rawKey?: string): string | undefined {
+  if (!rawKey) return undefined;
+  let key = rawKey.trim();
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1);
+  }
+  return key.replace(/\\n/g, "\n").trim();
+}
+
 function getAuth() {
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(
-    /\\n/g,
-    "\n"
-  );
+  const privateKey = cleanPrivateKey(process.env.GOOGLE_PRIVATE_KEY);
 
   if (!clientEmail || !privateKey) {
     throw new Error(

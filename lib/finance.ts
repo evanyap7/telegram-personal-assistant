@@ -1,5 +1,6 @@
 import { getSheetsClient, withExponentialBackoff } from "./google";
 import { maskSensitiveFinancialData } from "./security";
+import { parseSingaporeDate } from "./date-parser";
 
 const TRANSACTIONS_SHEET = "Transactions";
 const UPDATE_LOG_SHEET = "UpdateLog";
@@ -51,7 +52,8 @@ function createTransactionId(): string {
   return `txn_${crypto.randomUUID()}`;
 }
 
-export function formatSingaporeTimestamp(date: Date = new Date()): string {
+export function formatSingaporeTimestamp(date?: Date | string | number | null): string {
+  const safeDate = parseSingaporeDate(date);
   const parts = new Intl.DateTimeFormat("en-SG", {
     timeZone: "Asia/Singapore",
     day: "2-digit",
@@ -60,7 +62,7 @@ export function formatSingaporeTimestamp(date: Date = new Date()): string {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
-  }).formatToParts(date);
+  }).formatToParts(safeDate);
 
   const getPart = (type: Intl.DateTimeFormatPartTypes): string =>
     parts.find((part) => part.type === type)?.value ?? "";
@@ -85,9 +87,7 @@ export function getSingaporeDateString(date: Date = new Date()): string {
 }
 
 export function resolveTransactionDateObj(input: TransactionInput): Date {
-  const baseDate = input.transactionTimestamp
-    ? new Date(input.transactionTimestamp)
-    : new Date();
+  const baseDate = parseSingaporeDate(input.transactionTimestamp);
 
   const customDate = input.explicitDate || input.transactionDate;
   if (!customDate) {
@@ -99,21 +99,28 @@ export function resolveTransactionDateObj(input: TransactionInput): Date {
     return baseDate;
   }
 
-  const parts = new Intl.DateTimeFormat("en-SG", {
-    timeZone: "Asia/Singapore",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(baseDate);
+  // Parse the customDate cleanly using parseSingaporeDate
+  const parsedCustom = parseSingaporeDate(customDate);
+  if (!Number.isNaN(parsedCustom.getTime())) {
+    // Retain the time-of-day from baseDate
+    const parts = new Intl.DateTimeFormat("en-SG", {
+      timeZone: "Asia/Singapore",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(baseDate);
 
-  const hh = parts.find((p) => p.type === "hour")?.value ?? "12";
-  const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
-  const ss = parts.find((p) => p.type === "second")?.value ?? "00";
+    const hh = parts.find((p) => p.type === "hour")?.value ?? "12";
+    const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
+    const ss = parts.find((p) => p.type === "second")?.value ?? "00";
 
-  const parsed = new Date(`${customDate}T${hh}:${mm}:${ss}+08:00`);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed;
+    const sgDateStr = getSingaporeDateString(parsedCustom);
+    const withTime = new Date(`${sgDateStr}T${hh}:${mm}:${ss}+08:00`);
+    if (!Number.isNaN(withTime.getTime())) {
+      return withTime;
+    }
+    return parsedCustom;
   }
 
   return baseDate;
