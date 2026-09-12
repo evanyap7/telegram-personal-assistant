@@ -183,8 +183,8 @@ export async function parseAssistantIntent(
   userMessage: string,
   context?: ConversationContext
 ): Promise<AssistantIntent> {
-  if (!process.env.PERPLEXITY_API_KEY) {
-    throw new Error("PERPLEXITY_API_KEY is missing.");
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY && !process.env.PERPLEXITY_API_KEY) {
+    throw new Error("AI API keys are missing (GOOGLE_GENERATIVE_AI_API_KEY or PERPLEXITY_API_KEY).");
   }
 
   const now = context?.messageTime ? new Date(context.messageTime) : new Date();
@@ -422,6 +422,10 @@ Finance rules:
 - If the user did NOT mention any date in their current message (e.g. "spent $6 on lunch", "i spent $6 on a test"), OMIT explicitDate completely.
 - If amount is missing for a finance add, return unknown.
 - When modifying transactions (finance_modify), only include the specific fields that the user asked to change in "updates".
+- CRITICAL ANTI-HALLUCINATION RULES FOR FINANCE:
+  * NEVER invent, guess, or assume dishes, food items, drinks, products, or merchant names.
+  * If the user's input is generic (e.g. "spent $10", "paid $15", "expense $20", "test $5"), the description MUST be "Expense" (or "Income" for income), and the category should default to "Other" or "General". Do NOT assume "Chicken Rice", "Coffee", "McDonald's", or any specific merchant/food.
+  * Only use specific descriptions or items if explicitly mentioned in the user's message (e.g. "spent $5 on iced latte" -> description: "iced latte", category: "Dining").
 
 Calendar creation rules:
 - Only use personal or work. Default to personal if omitted.
@@ -493,7 +497,7 @@ Security rules:
   let responseText = "";
   try {
     const result = await generateText({
-      model: perplexity("sonar"),
+      model: google("gemini-flash-lite-latest"),
       system: systemPrompt,
       prompt: userMessage,
       maxOutputTokens: 800,
@@ -502,7 +506,7 @@ Security rules:
     responseText = result.text;
   } catch (primaryErr) {
     console.warn(
-      "Primary model perplexity(sonar) encountered an issue, falling back to gemini-3.6-flash:",
+      "Primary model gemini-flash-lite-latest encountered an issue, falling back to gemini-3.6-flash:",
       primaryErr
     );
     try {
@@ -515,15 +519,36 @@ Security rules:
       });
       responseText = fallbackResult.text;
     } catch (fallbackErr) {
-      console.error(
-        "Both primary and fallback AI models failed in determineAssistantIntent:",
-        fallbackErr
-      );
-      return {
-        action: "unknown",
-        message:
-          "I'm temporarily having trouble connecting to the AI service. Please try again in a moment.",
-      };
+      if (process.env.PERPLEXITY_API_KEY) {
+        console.warn(
+          "gemini-3.6-flash failed, falling back to perplexity(sonar):",
+          fallbackErr
+        );
+        try {
+          const perplexityResult = await generateText({
+            model: perplexity("sonar"),
+            system: systemPrompt,
+            prompt: userMessage,
+            maxOutputTokens: 800,
+            temperature: 0,
+          });
+          responseText = perplexityResult.text;
+        } catch (pxErr) {
+          console.error("All AI models failed in determineAssistantIntent:", pxErr);
+          return {
+            action: "unknown",
+            message:
+              "I'm temporarily having trouble connecting to the AI service. Please try again in a moment.",
+          };
+        }
+      } else {
+        console.error("All Gemini AI models failed in determineAssistantIntent:", fallbackErr);
+        return {
+          action: "unknown",
+          message:
+            "I'm temporarily having trouble connecting to the AI service. Please try again in a moment.",
+        };
+      }
     }
   }
 
@@ -566,7 +591,7 @@ Security rules:
     return parsed;
   } catch (error) {
     throw new Error(
-      `Perplexity returned invalid intent JSON: ${
+      `AI returned invalid intent JSON: ${
         error instanceof Error ? error.message : "Unknown parsing error"
       }`
     );
