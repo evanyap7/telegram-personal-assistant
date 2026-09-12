@@ -2962,16 +2962,17 @@ export async function POST(request: Request) {
 
     const messageDateObj = message.date ? new Date(message.date * 1000) : new Date();
 
-    const recentChatHistory = await getRecentChatHistory(message.from.id, 8);
-
-    const userCalendarContext = await getLatestUserCalendarContext(
-      message.from.id
-    );
-
-    const latestTxn = await getLatestTransaction();
-    const repliedTxn = message.reply_to_message
-      ? await resolveRepliedTransaction(message.reply_to_message)
-      : null;
+    // These four lookups are independent reads, so run them concurrently
+    // instead of paying for four sequential Sheets API round trips.
+    const [recentChatHistory, userCalendarContext, latestTxn, repliedTxn] =
+      await Promise.all([
+        getRecentChatHistory(message.from.id, 8),
+        getLatestUserCalendarContext(message.from.id),
+        getLatestTransaction(),
+        message.reply_to_message
+          ? resolveRepliedTransaction(message.reply_to_message)
+          : Promise.resolve(null),
+      ]);
     const targetTransaction = repliedTxn || latestTxn;
 
     const conversationContext: ConversationContext = {
