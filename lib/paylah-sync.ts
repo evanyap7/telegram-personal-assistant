@@ -9,6 +9,7 @@ import { sendTelegramMessage } from "./telegram";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
 import { maskSensitiveFinancialData, SECURITY_SYSTEM_GUARDRAIL } from "./security";
+import { parseSingaporeDate } from "./date-parser";
 
 export type EmailTransactionParsedResult = {
   isTransaction: boolean;
@@ -461,15 +462,30 @@ async function inferCategory(merchant: string, item?: string): Promise<Category>
   }
 
   try {
-    const result = await generateText({
-      model: google("gemini-3.6-flash"),
-      system: `You are a financial transaction categorizer.
+    const systemPrompt = `You are a financial transaction categorizer.
 Available categories: Dining, Transport, Groceries, Shopping, Entertainment, Utilities, Healthcare, Income, General.
-Output ONLY the category name.`,
-      prompt: `Merchant: "${merchant}"\nItem: "${item || "None"}"`,
-    });
+Output ONLY the category name.`;
+    const prompt = `Merchant: "${merchant}"\nItem: "${item || "None"}"`;
+
+    let text = "";
+    try {
+      const result = await generateText({
+        model: google("gemini-flash-lite-latest"),
+        system: systemPrompt,
+        prompt,
+      });
+      text = result.text;
+    } catch {
+      const result = await generateText({
+        model: google("gemini-3.6-flash"),
+        system: systemPrompt,
+        prompt,
+      });
+      text = result.text;
+    }
+
     const matched = VALID_CATEGORIES.find(
-      (c) => c.toLowerCase() === result.text.trim().toLowerCase()
+      (c) => c.toLowerCase() === text.trim().toLowerCase()
     );
     return matched || "General";
   } catch {
@@ -502,37 +518,64 @@ async function parseEmailTransaction(
     };
   }
 
-  // 2. Fallback to Gemini AI if regex did not match
+  // 2. Fallback to Gemini AI if regex did not match (Universal Receipt Parser)
   try {
-    const result = await generateText({
-      model: google("gemini-3.6-flash"),
-      system: `You are an expert Singapore transaction receipt parser for DBS, POSB, and Grab emails (GrabFood, Grab rides, GrabPay, PayLah, PayNow, GIRO deductions, and Card alerts).
-Analyze the email subject and body to determine if this is a completed payment, purchase, deduction, or incoming fund transfer.
+    const systemPrompt = `You are an expert Singapore transaction receipt and invoice parser.
+You parse email receipts, tax invoices, order confirmations, and payment alerts from ANY merchant or platform (e.g. DBS, POSB, Grab, Shopee, Lazada, Amazon, Apple, Foodpanda, Deliveroo, Netflix, Spotify, utilities, telcos, airlines, Stripe, PayPal).
+
+Analyze the email subject and body to determine if this is a completed payment, purchase, deduction, order confirmation with charge, or incoming fund transfer.
+
+CRITICAL ANTI-HALLUCINATION RULES:
+- NEVER invent, assume, or hallucinate food items, dish names, products, or subscriptions if they are NOT explicitly printed in the email snippet.
+- If specific item names are not explicitly mentioned in the text, set "item": null and use the merchant name verbatim.
+- Never guess what was purchased. If only an amount and merchant are provided, "item" MUST be null.
+- Do not invent or guess merchants. Use the exact business/sender name from the email.
 
 Return ONLY one valid JSON object in this format:
 {
   "isTransaction": true or false,
   "type": "expense" or "income",
   "amount": positive number,
-  "currency": "SGD",
-  "merchant": "store, recipient, or sender name (e.g. East Point Mall, Wingstop, Kopitiam, Grab, Alex Tan)",
-  "item": "specific item if mentioned (e.g. Chicken Rice, Mix & Match), otherwise null",
+  "currency": "SGD" or 3-letter currency code (default "SGD"),
+  "merchant": "store, platform, recipient, or sender name (e.g. Apple, Shopee, Amazon, Wingstop, Grab, SP Services)",
+  "item": "specific item if explicitly mentioned in text, otherwise null",
   "category": "Dining" | "Transport" | "Groceries" | "Shopping" | "Entertainment" | "Utilities" | "Healthcare" | "Income" | "General",
-  "paymentMethod": "GrabFood" | "Grab Transport" | "GrabPay" | "Grab" | "DBS PayLah!" | "DBS PayNow" | "DBS GIRO" | "DBS Card",
+  "paymentMethod": "payment channel or merchant name (e.g. Apple Pay, GrabFood, Grab, ShopeePay, DBS Card, DBS PayLah!, Credit Card, Invoice)",
   "date": "YYYY-MM-DD or date/time string if mentioned",
   "referenceNumber": "reference number or booking code if mentioned"
 }
 
-If this email is merely a marketing promo, meal recommendation, login alert, OTP, or password reset, set "isTransaction": false.
+If this email is merely a marketing promo, meal recommendation, cart reminder, login alert, OTP, or password reset, set "isTransaction": false.
 
-${SECURITY_SYSTEM_GUARDRAIL}`,
-      prompt: `Email Subject: "${subject}"\nEmail Body/Snippet:\n"""\n${cleanBody.slice(
-        0,
-        2500
-      )}\n"""`,
-    });
+${SECURITY_SYSTEM_GUARDRAIL}`;
 
-    const cleaned = result.text
+    const prompt = `Email Subject: "${subject}"\nEmail Body/Snippet:\n"""\n${cleanBody.slice(
+      0,
+      3000
+    )}\n"""`;
+
+    let responseText = "";
+    try {
+      const result = await generateText({
+        model: google("gemini-flash-lite-latest"),
+        system: systemPrompt,
+        prompt,
+      });
+      responseText = result.text;
+    } catch (liteErr) {
+      console.warn(
+        "gemini-flash-lite-latest failed in parseEmailTransaction, falling back to gemini-3.6-flash:",
+        liteErr
+      );
+      const result = await generateText({
+        model: google("gemini-3.6-flash"),
+        system: systemPrompt,
+        prompt,
+      });
+      responseText = result.text;
+    }
+
+    const cleaned = responseText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
       .replace(/\s*```$/i, "")
@@ -546,22 +589,47 @@ ${SECURITY_SYSTEM_GUARDRAIL}`,
 }
 
 function resolveTransactionDate(rawDate?: string): Date {
-  if (!rawDate) return new Date();
+  return parseSingaporeDate(rawDate);
+}
 
-  // Grab format: "10 Sep 26 16:32 +0800" or native parseable
-  const direct = new Date(rawDate);
-  if (!Number.isNaN(direct.getTime())) {
-    return direct;
+function getNotificationHeader(
+  merchant: string,
+  paymentMethod: string,
+  type: string
+): string {
+  if (type === "income") return "💰 *Funds Received!*";
+  const m = `${merchant} ${paymentMethod}`.toLowerCase();
+  if (m.includes("apple")) return "🍎 *Apple Receipt Logged!*";
+  if (m.includes("grabfood")) return "🟢 *GrabFood Expense Logged!*";
+  if (
+    m.includes("grab transport") ||
+    m.includes("grab ride") ||
+    m.includes("justgrab") ||
+    m.includes("grabcar")
+  ) {
+    return "🟢 *Grab Ride Logged!*";
   }
-
-  // Handle format like "08 Sep 2026 21:05" or "07 Sep 15:13"
-  const currentYear = new Date().getFullYear();
-  const parsed = new Date(`${rawDate} ${currentYear} +08:00`);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed;
+  if (m.includes("grabpay")) return "🟢 *GrabPay Expense Logged!*";
+  if (m.includes("grab")) return "🟢 *Grab Expense Logged!*";
+  if (m.includes("shopee")) return "🟠 *Shopee Order Logged!*";
+  if (m.includes("lazada")) return "🔵 *Lazada Order Logged!*";
+  if (m.includes("amazon")) return "📦 *Amazon Order Logged!*";
+  if (m.includes("foodpanda") || m.includes("deliveroo")) {
+    return "🍔 *Food Delivery Logged!*";
   }
-
-  return new Date();
+  if (m.includes("giro")) return "🏛️ *GIRO Deduction Logged!*";
+  if (m.includes("paylah")) return "🟣 *DBS PayLah! Expense Synced!*";
+  if (m.includes("dbs") || m.includes("posb")) return "🟣 *DBS Expense Logged!*";
+  if (
+    m.includes("singtel") ||
+    m.includes("starhub") ||
+    m.includes("m1") ||
+    m.includes("sp services") ||
+    m.includes("utilities")
+  ) {
+    return "⚡ *Utility / Bill Logged!*";
+  }
+  return "🧾 *Receipt Logged!*";
 }
 
 export type SyncPayLahOptions = {
@@ -589,10 +657,10 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
   if (options?.messageIds && options.messageIds.length > 0) {
     targetIds = options.messageIds;
   } else {
-    // Search both DBS/POSB alerts and Grab receipts within newerThan (default: 1d)
+    // Search universal receipts, invoices, orders, and bank alerts within newerThan (default: 1d)
     const newerThan = options?.newerThan || "1d";
     const maxResults = options?.maxResults || 10;
-    const query = `(from:(dbs.com OR dbs.com.sg OR posb.com.sg OR grab.com)) (Alert OR Alerts OR Transaction OR Transfer OR deduction OR PayLah OR PayNow OR received OR "E-Receipt" OR "Receipt" OR "payment to" OR "GrabPay" OR "GrabUnlimited") newer_than:${newerThan}`;
+    const query = `(subject:(receipt OR "tax invoice" OR "e-receipt" OR "order confirmation" OR "payment received" OR "payment confirmed" OR "your order" OR "bill statement" OR "transaction alert" OR "giro deduction") OR from:(dbs.com OR dbs.com.sg OR posb.com.sg OR grab.com OR shopee.sg OR lazada.sg OR amazon.sg OR apple.com OR foodpanda.sg OR deliveroo.com.sg OR stripe.com OR paypal.com)) newer_than:${newerThan}`;
 
     const listRes = await gmail.users.messages.list({
       userId: "me",
@@ -609,7 +677,133 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
     return { scanned: 0, logged: 0, items: [] };
   }
 
-  let loggedCount = 0;
+  // Process messages in parallel for sub-second synchronization latency
+  const results = await Promise.allSettled(
+    targetIds.map(async (messageId) => {
+      const externalId = `gmail_${messageId}`;
+      const alreadyProcessed = await hasProcessedExternalId(externalId);
+      if (alreadyProcessed) {
+        return null;
+      }
+
+      try {
+        const msgRes = await gmail.users.messages.get({
+          userId: "me",
+          id: messageId,
+          format: "full",
+        });
+
+        const headers = msgRes.data.payload?.headers || [];
+        const subjectHeader =
+          headers.find((h) => h.name?.toLowerCase() === "subject")?.value || "";
+        const cleanBody = extractCleanMessageText(msgRes.data.payload);
+
+        const parsed = await parseEmailTransaction(subjectHeader, cleanBody);
+
+        if (parsed.isTransaction && parsed.amount && parsed.amount > 0) {
+          const amount = Math.round(parsed.amount * 100) / 100;
+          const merchant = parsed.merchant?.trim() || "Merchant";
+          const currency = (parsed.currency || "SGD").toUpperCase();
+          const rawCategory = parsed.category || "General";
+          const category =
+            VALID_CATEGORIES.find(
+              (c) => c.toLowerCase() === rawCategory.toLowerCase()
+            ) || "General";
+          const type = parsed.type === "income" ? "income" : "expense";
+          const paymentMethod = parsed.paymentMethod || "Receipt";
+
+          const description =
+            type === "income"
+              ? `${merchant} (${paymentMethod})`
+              : parsed.item
+              ? `${parsed.item} @ ${merchant} (${paymentMethod})`
+              : `${merchant} (${paymentMethod})`;
+
+          const dateObj = resolveTransactionDate(parsed.date);
+
+          // Add to Google Sheets
+          const result = await addTransaction({
+            type,
+            amount,
+            currency,
+            category,
+            description,
+            transactionTimestamp: dateObj,
+          });
+
+          // Mark as completed in UpdateLog
+          await markExternalIdProcessed(
+            externalId,
+            `${paymentMethod} ${type}: ${currency} ${amount} at ${merchant} (Txn: ${result.transactionId})`
+          );
+
+          // Send Telegram notification (clean format, no technical IDs shown)
+          const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
+          if (allowedUserId) {
+            const displayDate = formatSingaporeTimestamp(dateObj);
+            const cardHeader = getNotificationHeader(merchant, paymentMethod, type);
+
+            const messageText = [
+              cardHeader,
+              "",
+              parsed.item ? `• *Item:* ${parsed.item}` : null,
+              `• *Amount:* ${type === "income" ? "+" : ""}${currency} ${amount.toFixed(2)}`,
+              type === "income" ? `• *Source:* ${merchant}` : `• *Merchant:* ${merchant}`,
+              `• *Method:* ${paymentMethod}`,
+              `• *Category:* ${category}`,
+              `• *Recorded:* ${displayDate}`,
+              "",
+              "💬 _Tip: Swipe reply to this message anytime to rename the item or modify details!_",
+            ]
+              .filter(Boolean)
+              .join("\n");
+
+            await sendTelegramMessage(allowedUserId, messageText, {
+              inline_keyboard: [
+                [
+                  {
+                    text: "✏️ Change Category",
+                    callback_data: `wallet_cat:${result.transactionId}`,
+                  },
+                  {
+                    text: "🗑️ Undo / Delete",
+                    callback_data: `wallet_undo:${result.transactionId}`,
+                  },
+                ],
+              ],
+            }).catch((err) => {
+              console.error("Failed to send Telegram notification for transaction:", err);
+            });
+          }
+
+          return {
+            transactionId: result.transactionId,
+            amount,
+            merchant,
+            category,
+            type,
+            paymentMethod,
+          };
+        } else {
+          // Only mark non-transaction if not a generic alert
+          const isAlert =
+            subjectHeader.toLowerCase().includes("transaction alert") ||
+            subjectHeader.toLowerCase().includes("receipt");
+          if (!isAlert) {
+            await markExternalIdProcessed(
+              externalId,
+              `Non-transaction email: ${subjectHeader.slice(0, 50)}`
+            );
+          }
+          return null;
+        }
+      } catch (msgErr) {
+        console.error(`Failed to process Gmail message ${messageId}:`, msgErr);
+        return null;
+      }
+    })
+  );
+
   const loggedItems: Array<{
     transactionId: string;
     amount: number;
@@ -619,152 +813,15 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
     paymentMethod: string;
   }> = [];
 
-  for (const messageId of targetIds) {
-    const externalId = `gmail_${messageId}`;
-    const alreadyProcessed = await hasProcessedExternalId(externalId);
-    if (alreadyProcessed) {
-      continue;
-    }
-
-    try {
-      const msgRes = await gmail.users.messages.get({
-        userId: "me",
-        id: messageId,
-        format: "full",
-      });
-
-      const headers = msgRes.data.payload?.headers || [];
-      const subjectHeader =
-        headers.find((h) => h.name?.toLowerCase() === "subject")?.value || "";
-      const cleanBody = extractCleanMessageText(msgRes.data.payload);
-
-      const parsed = await parseEmailTransaction(subjectHeader, cleanBody);
-
-      if (parsed.isTransaction && parsed.amount && parsed.amount > 0) {
-        const amount = Math.round(parsed.amount * 100) / 100;
-        const merchant = parsed.merchant?.trim() || "Merchant";
-        const currency = (parsed.currency || "SGD").toUpperCase();
-        const rawCategory = parsed.category || "General";
-        const category =
-          VALID_CATEGORIES.find(
-            (c) => c.toLowerCase() === rawCategory.toLowerCase()
-          ) || "General";
-        const type = parsed.type === "income" ? "income" : "expense";
-        const paymentMethod = parsed.paymentMethod || "Receipt";
-
-        const description =
-          type === "income"
-            ? `${merchant} (${paymentMethod})`
-            : parsed.item
-            ? `${parsed.item} @ ${merchant} (${paymentMethod})`
-            : `${merchant} (${paymentMethod})`;
-
-        const dateObj = resolveTransactionDate(parsed.date);
-
-        // Add to Google Sheets
-        const result = await addTransaction({
-          type,
-          amount,
-          currency,
-          category,
-          description,
-          transactionTimestamp: dateObj,
-        });
-
-        // Mark as completed in UpdateLog
-        await markExternalIdProcessed(
-          externalId,
-          `${paymentMethod} ${type}: ${currency} ${amount} at ${merchant} (Txn: ${result.transactionId})`
-        );
-
-        loggedCount++;
-        loggedItems.push({
-          transactionId: result.transactionId,
-          amount,
-          merchant,
-          category,
-          type,
-          paymentMethod,
-        });
-
-        // Send Telegram notification
-        const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
-        if (allowedUserId) {
-          const displayDate = formatSingaporeTimestamp(dateObj);
-
-          // Select dynamic emoji and title
-          let cardHeader = "🟣 *DBS Expense Logged!*";
-          if (paymentMethod.toLowerCase().includes("grabfood")) {
-            cardHeader = "🟢 *GrabFood Expense Logged!*";
-          } else if (
-            paymentMethod.toLowerCase().includes("grab transport") ||
-            paymentMethod.toLowerCase().includes("grab ride")
-          ) {
-            cardHeader = "🟢 *Grab Ride Logged!*";
-          } else if (paymentMethod.toLowerCase().includes("grabpay")) {
-            cardHeader = "🟢 *GrabPay Expense Logged!*";
-          } else if (paymentMethod.toLowerCase().includes("grab")) {
-            cardHeader = "🟢 *Grab Expense Logged!*";
-          } else if (type === "income") {
-            cardHeader = "💰 *DBS Funds Received!*";
-          } else if (paymentMethod.toLowerCase().includes("giro")) {
-            cardHeader = "🏛️ *DBS GIRO Deduction Logged!*";
-          } else if (paymentMethod.toLowerCase().includes("paylah")) {
-            cardHeader = "🟣 *DBS PayLah! Expense Synced!*";
-          }
-
-          const messageText = [
-            cardHeader,
-            "",
-            parsed.item ? `• *Item:* ${parsed.item}` : null,
-            `• *Amount:* ${type === "income" ? "+" : ""}${currency} ${amount.toFixed(2)}`,
-            type === "income" ? `• *Source:* ${merchant}` : `• *Merchant:* ${merchant}`,
-            `• *Method:* ${paymentMethod}`,
-            `• *Category:* ${category}`,
-            `• *Recorded:* ${displayDate}`,
-            "",
-            "💬 _Tip: Swipe reply to this message anytime to rename the item or modify details!_",
-          ]
-            .filter(Boolean)
-            .join("\n");
-
-          await sendTelegramMessage(allowedUserId, messageText, {
-            inline_keyboard: [
-              [
-                {
-                  text: "✏️ Change Category",
-                  callback_data: `wallet_cat:${result.transactionId}`,
-                },
-                {
-                  text: "🗑️ Undo / Delete",
-                  callback_data: `wallet_undo:${result.transactionId}`,
-                },
-              ],
-            ],
-          }).catch((err) => {
-            console.error("Failed to send Telegram notification for transaction:", err);
-          });
-        }
-      } else {
-        // Only mark non-transaction if not a generic alert
-        const isAlert =
-          subjectHeader.toLowerCase().includes("transaction alert") ||
-          subjectHeader.toLowerCase().includes("receipt");
-        if (!isAlert) {
-          await markExternalIdProcessed(
-            externalId,
-            `Non-transaction email: ${subjectHeader.slice(0, 50)}`
-          );
-        }
-      }
-    } catch (msgErr) {
-      console.error(`Failed to process Gmail message ${messageId}:`, msgErr);
+  for (const res of results) {
+    if (res.status === "fulfilled" && res.value) {
+      loggedItems.push(res.value);
     }
   }
 
   return {
     scanned: targetIds.length,
-    logged: loggedCount,
+    logged: loggedItems.length,
     items: loggedItems,
   };
 }
