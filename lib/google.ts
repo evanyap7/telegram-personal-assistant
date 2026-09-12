@@ -12,7 +12,21 @@ function cleanPrivateKey(rawKey?: string): string | undefined {
   return key.replace(/\\n/g, "\n").trim();
 }
 
+// Cached across invocations within the same warm serverless instance so we
+// reuse the JWT/OAuth2 client's internally-cached access token instead of
+// exchanging a fresh one with Google's OAuth server on every single call.
+let cachedAuth: InstanceType<typeof google.auth.JWT> | null = null;
+let cachedGmailAuth:
+  | InstanceType<typeof google.auth.JWT>
+  | InstanceType<typeof google.auth.OAuth2>
+  | null = null;
+let cachedCalendarClient: ReturnType<typeof google.calendar> | null = null;
+let cachedSheetsClient: ReturnType<typeof google.sheets> | null = null;
+let cachedGmailClient: ReturnType<typeof google.gmail> | null = null;
+
 function getAuth() {
+  if (cachedAuth) return cachedAuth;
+
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = cleanPrivateKey(process.env.GOOGLE_PRIVATE_KEY);
 
@@ -22,7 +36,7 @@ function getAuth() {
     );
   }
 
-  return new google.auth.JWT({
+  cachedAuth = new google.auth.JWT({
     email: clientEmail,
     key: privateKey,
     scopes: [
@@ -30,9 +44,13 @@ function getAuth() {
       "https://www.googleapis.com/auth/spreadsheets",
     ],
   });
+
+  return cachedAuth;
 }
 
 function getGmailAuth() {
+  if (cachedGmailAuth) return cachedGmailAuth;
+
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
@@ -43,7 +61,8 @@ function getGmailAuth() {
       clientSecret
     );
     oauth2Client.setCredentials({ refresh_token: refreshToken });
-    return oauth2Client;
+    cachedGmailAuth = oauth2Client;
+    return cachedGmailAuth;
   }
 
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -51,7 +70,7 @@ function getGmailAuth() {
   const gmailUser = process.env.GOOGLE_GMAIL_USER;
 
   if (clientEmail && privateKey && gmailUser) {
-    return new google.auth.JWT({
+    cachedGmailAuth = new google.auth.JWT({
       email: clientEmail,
       key: privateKey,
       subject: gmailUser,
@@ -60,6 +79,7 @@ function getGmailAuth() {
         "https://www.googleapis.com/auth/gmail.readonly",
       ],
     });
+    return cachedGmailAuth;
   }
 
   throw new Error(
@@ -68,24 +88,33 @@ function getGmailAuth() {
 }
 
 export function getCalendarClient() {
-  return google.calendar({
-    version: "v3",
-    auth: getAuth(),
-  });
+  if (!cachedCalendarClient) {
+    cachedCalendarClient = google.calendar({
+      version: "v3",
+      auth: getAuth(),
+    });
+  }
+  return cachedCalendarClient;
 }
 
 export function getSheetsClient() {
-  return google.sheets({
-    version: "v4",
-    auth: getAuth(),
-  });
+  if (!cachedSheetsClient) {
+    cachedSheetsClient = google.sheets({
+      version: "v4",
+      auth: getAuth(),
+    });
+  }
+  return cachedSheetsClient;
 }
 
 export function getGmailClient() {
-  return google.gmail({
-    version: "v1",
-    auth: getGmailAuth(),
-  });
+  if (!cachedGmailClient) {
+    cachedGmailClient = google.gmail({
+      version: "v1",
+      auth: getGmailAuth(),
+    });
+  }
+  return cachedGmailClient;
 }
 
 /**
