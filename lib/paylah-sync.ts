@@ -1,6 +1,7 @@
 import { getGmailClient } from "./google";
 import {
   addTransaction,
+  findRecentDuplicateTransaction,
   formatSingaporeTimestamp,
   hasProcessedExternalId,
   markExternalIdProcessed,
@@ -547,6 +548,8 @@ Return ONLY one valid JSON object in this format:
 
 If this email is merely a marketing promo, meal recommendation, cart reminder, login alert, OTP, or password reset, set "isTransaction": false.
 
+If this email is a shipping, dispatch, tracking, or delivery-status update (e.g. "your order has been shipped", "out for delivery", "your parcel has arrived", "your order has been delivered", "track your package"), set "isTransaction": false — these emails recap an order that was already charged when it was placed and do NOT represent a new payment, even if they restate the merchant name or order total.
+
 ${SECURITY_SYSTEM_GUARDRAIL}`;
 
     const prompt = `Email Subject: "${subject}"\nEmail Body/Snippet:\n"""\n${cleanBody.slice(
@@ -720,6 +723,45 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
               : `${merchant} (${paymentMethod})`;
 
           const dateObj = resolveTransactionDate(parsed.date);
+
+          // Safety net: skip logging if an active transaction with the same
+          // type/amount/merchant was already recorded recently (e.g. a
+          // shipping/delivery email that slipped past the classifier above
+          // for an order whose payment receipt was already logged).
+          const duplicate = await findRecentDuplicateTransaction(
+            merchant,
+            amount,
+            type
+          );
+
+          if (duplicate) {
+            await markExternalIdProcessed(
+              externalId,
+              `Skipped duplicate: ${paymentMethod} ${type} ${currency} ${amount} at ${merchant} (matches ${duplicate.transactionId} logged ${duplicate.timestamp})`
+            );
+
+            const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
+            if (allowedUserId) {
+              const skipMessage = [
+                "🔁 *Skipped Duplicate Transaction*",
+                "",
+                `• *Merchant:* ${merchant}`,
+                `• *Amount:* ${currency} ${amount.toFixed(2)}`,
+                `• *Already logged:* ${duplicate.timestamp}`,
+                "",
+                "_This looked like the same purchase already recorded (e.g. an order-confirmation email followed by a delivery email). No new transaction was added._",
+              ].join("\n");
+
+              await sendTelegramMessage(allowedUserId, skipMessage).catch((err) => {
+                console.error(
+                  "Failed to send Telegram duplicate-skip notification:",
+                  err
+                );
+              });
+            }
+
+            return null;
+          }
 
           // Add to Google Sheets
           const result = await addTransaction({

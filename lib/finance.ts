@@ -247,6 +247,47 @@ export async function listRecentTransactions(): Promise<FinanceTransaction[]> {
     .filter((transaction) => transaction.status.toLowerCase() === "active");
 }
 
+/**
+ * Looks for an already-logged active transaction that likely represents the
+ * same real-world purchase as the one about to be logged (same type, same
+ * amount, same merchant, within a recency window). Used to guard against
+ * duplicate logging when a single purchase generates multiple emails
+ * (e.g. a Shopee "order confirmed" receipt followed days later by a
+ * "your order has been delivered" email that restates the order total).
+ */
+export async function findRecentDuplicateTransaction(
+  merchant: string,
+  amount: number,
+  type: "income" | "expense",
+  withinDays = 14
+): Promise<FinanceTransaction | null> {
+  const normalizedMerchant = merchant.trim().toLowerCase();
+  if (!normalizedMerchant) return null;
+
+  const transactions = await listRecentTransactions();
+  const now = Date.now();
+  const windowMs = withinDays * 24 * 60 * 60 * 1000;
+
+  for (let i = transactions.length - 1; i >= 0; i--) {
+    const txn = transactions[i];
+    if (txn.type !== type) continue;
+
+    const txnAmount = parseFloat(txn.amount);
+    if (Number.isNaN(txnAmount) || Math.abs(txnAmount - amount) > 0.005) continue;
+
+    if (!txn.description.toLowerCase().includes(normalizedMerchant)) continue;
+
+    const txnDate = parseSingaporeTimestamp(txn.timestamp);
+    if (!txnDate) continue;
+
+    if (Math.abs(now - txnDate.getTime()) <= windowMs) {
+      return txn;
+    }
+  }
+
+  return null;
+}
+
 export async function searchActiveTransactions(
   query: string
 ): Promise<FinanceTransaction[]> {
