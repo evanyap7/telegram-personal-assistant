@@ -494,34 +494,14 @@ Output ONLY the category name.`;
   }
 }
 
-async function parseEmailTransaction(
-  subject: string,
-  cleanBody: string
-): Promise<EmailTransactionParsedResult> {
-  // 1. Try deterministic regex first (instant & reliable)
-  const regexResult = parseEmailTransactionRegex(subject, cleanBody);
-  if (regexResult && regexResult.isTransaction && regexResult.amount) {
-    const category =
-      regexResult.category ||
-      (await inferCategory(regexResult.merchant || "", regexResult.item));
-
-    return {
-      isTransaction: true,
-      type: regexResult.type || "expense",
-      amount: regexResult.amount,
-      currency: regexResult.currency || "SGD",
-      merchant: regexResult.merchant || "Merchant",
-      item: regexResult.item,
-      category,
-      date: regexResult.date,
-      referenceNumber: regexResult.referenceNumber,
-      paymentMethod: regexResult.paymentMethod || "DBS / Grab",
-    };
-  }
-
-  // 2. Fallback to Gemini AI if regex did not match (Universal Receipt Parser)
-  try {
-    const systemPrompt = `You are an expert Singapore transaction receipt and invoice parser.
+/**
+ * Builds the exact system prompt used by the AI receipt-parsing fallback.
+ * Extracted into its own function (pure refactor, no behavior change) so
+ * benchmarking / eval scripts can reuse the real production prompt instead
+ * of duplicating it. See scripts/bench/parallel-vs-sequential.ts.
+ */
+export function buildEmailParsingSystemPrompt(): string {
+  return `You are an expert Singapore transaction receipt and invoice parser.
 You parse email receipts, tax invoices, order confirmations, and payment alerts from ANY merchant or platform (e.g. DBS, POSB, Grab, Shopee, Lazada, Amazon, Apple, Foodpanda, Deliveroo, Netflix, Spotify, utilities, telcos, airlines, Stripe, PayPal).
 
 Analyze the email subject and body to determine if this is a completed payment, purchase, deduction, order confirmation with charge, or incoming fund transfer.
@@ -551,6 +531,36 @@ If this email is merely a marketing promo, meal recommendation, cart reminder, l
 If this email is a shipping, dispatch, tracking, or delivery-status update (e.g. "your order has been shipped", "out for delivery", "your parcel has arrived", "your order has been delivered", "track your package"), set "isTransaction": false — these emails recap an order that was already charged when it was placed and do NOT represent a new payment, even if they restate the merchant name or order total.
 
 ${SECURITY_SYSTEM_GUARDRAIL}`;
+}
+
+async function parseEmailTransaction(
+  subject: string,
+  cleanBody: string
+): Promise<EmailTransactionParsedResult> {
+  // 1. Try deterministic regex first (instant & reliable)
+  const regexResult = parseEmailTransactionRegex(subject, cleanBody);
+  if (regexResult && regexResult.isTransaction && regexResult.amount) {
+    const category =
+      regexResult.category ||
+      (await inferCategory(regexResult.merchant || "", regexResult.item));
+
+    return {
+      isTransaction: true,
+      type: regexResult.type || "expense",
+      amount: regexResult.amount,
+      currency: regexResult.currency || "SGD",
+      merchant: regexResult.merchant || "Merchant",
+      item: regexResult.item,
+      category,
+      date: regexResult.date,
+      referenceNumber: regexResult.referenceNumber,
+      paymentMethod: regexResult.paymentMethod || "DBS / Grab",
+    };
+  }
+
+  // 2. Fallback to Gemini AI if regex did not match (Universal Receipt Parser)
+  try {
+    const systemPrompt = buildEmailParsingSystemPrompt();
 
     const prompt = `Email Subject: "${subject}"\nEmail Body/Snippet:\n"""\n${cleanBody.slice(
       0,
