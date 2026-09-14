@@ -40,6 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# ide
+.claude/
+
 # GCP service account keys
 perfect-stock-*.json
 service-account*.json
