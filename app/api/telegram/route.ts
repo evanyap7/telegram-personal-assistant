@@ -15,6 +15,12 @@ import {
   searchUpcomingCalendarEvents,
 } from "@/lib/calendar";
 import {
+  formatScheduleAgendaView,
+  formatSchedulePureTableView,
+  formatSingaporeScheduleItem,
+  ScheduleTimeframe,
+} from "@/lib/calendar-format";
+import {
   addTransaction,
   addTransactionsBatch,
   FinanceSummary,
@@ -466,38 +472,6 @@ async function resolveRepliedTransaction(
   }
 
   return null;
-}
-
-function formatSingaporeScheduleItem(item: ScheduleEventItem): string {
-  const calBadge = item.calendarName === "work" ? "💼 Work" : "🏠 Personal";
-  if (item.isAllDay) {
-    const dateFormatted = formatCalendarDate(item.start);
-    return `• ${item.title}\n  📅 ${dateFormatted} (All day) [${calBadge}]`;
-  }
-  const startDate = new Date(item.start);
-  const endDate = new Date(item.end);
-  const dateStr = new Intl.DateTimeFormat("en-SG", {
-    timeZone: "Asia/Singapore",
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-  }).format(startDate);
-
-  const startTimeStr = new Intl.DateTimeFormat("en-SG", {
-    timeZone: "Asia/Singapore",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(startDate);
-
-  const endTimeStr = new Intl.DateTimeFormat("en-SG", {
-    timeZone: "Asia/Singapore",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(endDate);
-
-  return `• ${item.title}\n  🕒 ${dateStr}, ${startTimeStr} – ${endTimeStr} [${calBadge}]`;
 }
 
 function formatFinanceSummary(summary: FinanceSummary): string {
@@ -1798,7 +1772,115 @@ async function handleCallback(input: {
     return;
   }
 
+  if (action === "cal_mode") {
+    const rawTarget = parts[1] || "table";
+    const timeframe = (parts[2] || "week") as ScheduleTimeframe;
+    const calendarName = (parts[3] || "all") as "personal" | "work" | "all";
+
+    await handleCalendarModeCallback({
+      ...input,
+      rawTarget,
+      timeframe,
+      calendarName,
+    });
+    return;
+  }
+
   await answerTelegramCallback(input.callbackId, "This action is invalid.");
+}
+
+async function handleCalendarModeCallback(input: {
+  callbackId: string;
+  callbackData: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+  startedAt: number;
+  rawTarget: string;
+  timeframe: ScheduleTimeframe;
+  calendarName: "personal" | "work" | "all";
+}) {
+  const { callbackId, chatId, messageId, rawTarget, timeframe, calendarName } = input;
+
+  const isTable = rawTarget === "table" || rawTarget === "refresh_table";
+  const isRefresh = rawTarget.startsWith("refresh");
+
+  await answerTelegramCallback(
+    callbackId,
+    isRefresh
+      ? "🔄 Schedule refreshed"
+      : isTable
+      ? "📊 Switched to Table View"
+      : "📋 Switched to Agenda View"
+  ).catch(() => {});
+
+  const now = new Date();
+  let timeMin: string;
+  let timeMax: string | undefined;
+  let titleHeader: string;
+
+  const sgTodayStr = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+
+  if (timeframe === "today") {
+    timeMin = `${sgTodayStr}T00:00:00+08:00`;
+    timeMax = `${sgTodayStr}T23:59:59+08:00`;
+    titleHeader = `Today’s Schedule (${formatCalendarDate(sgTodayStr)})`;
+  } else if (timeframe === "tomorrow") {
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const sgTomorrowStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(tomorrow);
+    timeMin = `${sgTomorrowStr}T00:00:00+08:00`;
+    timeMax = `${sgTomorrowStr}T23:59:59+08:00`;
+    titleHeader = `Tomorrow’s Schedule (${formatCalendarDate(sgTomorrowStr)})`;
+  } else if (timeframe === "week") {
+    const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    timeMin = now.toISOString();
+    timeMax = weekEnd.toISOString();
+    titleHeader = "Schedule for Next 7 Days";
+  } else {
+    timeMin = now.toISOString();
+    titleHeader = "Upcoming Calendar Events";
+  }
+
+  const events = await getUpcomingSchedule({
+    calendarName,
+    timeMin,
+    timeMax,
+    maxResults: timeframe === "week" ? 40 : 25,
+  });
+
+  const formatted = isTable
+    ? formatSchedulePureTableView(events, {
+        timeframe,
+        title: titleHeader,
+        calendarName,
+      })
+    : formatScheduleAgendaView(events, {
+        timeframe,
+        title: titleHeader,
+        calendarName,
+      });
+
+  await editTelegramMessage(
+    chatId,
+    messageId,
+    formatted.text,
+    formatted.replyMarkup
+  ).catch((err) => {
+    log("telegram.cal_mode.edit_failed", { error: errorText(err) });
+  });
+
+  await markUpdateCompleted(input.updateId, `cal_mode_${rawTarget}`);
 }
 
 async function handleWalletUndoCallback(input: {
@@ -2637,7 +2719,7 @@ export async function POST(request: Request) {
       const events = await getUpcomingSchedule({
         timeMin,
         timeMax,
-        maxResults: 20,
+        maxResults: 25,
       });
 
       if (events.length === 0) {
@@ -2646,10 +2728,15 @@ export async function POST(request: Request) {
           `📅 No events scheduled for today (${formatCalendarDate(sgTodayStr)}). Enjoy your day!`
         );
       } else {
-        const formatted = events.map(formatSingaporeScheduleItem).join("\n\n");
+        const formatted = formatScheduleAgendaView(events, {
+          timeframe: "today",
+          title: `Today’s Schedule (${formatCalendarDate(sgTodayStr)})`,
+          calendarName: "all",
+        });
         await sendTelegramMessage(
           chatId,
-          [`📅 Today’s Schedule (${formatCalendarDate(sgTodayStr)}):`, "", formatted].join("\n")
+          formatted.text,
+          formatted.replyMarkup
         );
       }
 
@@ -2664,7 +2751,7 @@ export async function POST(request: Request) {
       const events = await getUpcomingSchedule({
         timeMin: now.toISOString(),
         timeMax: nextWeek.toISOString(),
-        maxResults: 25,
+        maxResults: 40,
       });
 
       if (events.length === 0) {
@@ -2673,10 +2760,15 @@ export async function POST(request: Request) {
           "📅 No upcoming calendar events found for the next 7 days."
         );
       } else {
-        const formatted = events.map(formatSingaporeScheduleItem).join("\n\n");
+        const formatted = formatScheduleAgendaView(events, {
+          timeframe: "week",
+          title: "Upcoming Schedule (Next 7 Days)",
+          calendarName: "all",
+        });
         await sendTelegramMessage(
           chatId,
-          ["📅 Upcoming Schedule (Next 7 days):", "", formatted].join("\n")
+          formatted.text,
+          formatted.replyMarkup
         );
       }
 
@@ -3079,7 +3171,7 @@ export async function POST(request: Request) {
         calendarName: intent.calendarName,
         timeMin,
         timeMax,
-        maxResults: 15,
+        maxResults: intent.timeframe === "week" ? 40 : 25,
       });
 
       if (events.length === 0) {
@@ -3094,10 +3186,23 @@ export async function POST(request: Request) {
           }.`
         );
       } else {
-        const formatted = events.map(formatSingaporeScheduleItem).join("\n\n");
+        const wantsTable = /table|tabular|grid/i.test(text ?? "");
+        const formatted = wantsTable
+          ? formatSchedulePureTableView(events, {
+              timeframe: intent.timeframe,
+              title: titleHeader,
+              calendarName: intent.calendarName,
+            })
+          : formatScheduleAgendaView(events, {
+              timeframe: intent.timeframe,
+              title: titleHeader,
+              calendarName: intent.calendarName,
+            });
+
         await sendTelegramMessage(
           chatId,
-          [`📅 ${titleHeader}:`, "", formatted].join("\n")
+          formatted.text,
+          formatted.replyMarkup
         );
       }
 
