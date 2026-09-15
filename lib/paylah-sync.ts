@@ -670,9 +670,9 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
   if (options?.messageIds && options.messageIds.length > 0) {
     targetIds = options.messageIds;
   } else {
-    // Search universal receipts, invoices, orders, and bank alerts within newerThan (default: 1d)
-    const newerThan = options?.newerThan || "1d";
-    const maxResults = options?.maxResults || 10;
+    // Search universal receipts, invoices, orders, and bank alerts within newerThan (default: 7d)
+    const newerThan = options?.newerThan || "7d";
+    const maxResults = options?.maxResults || 25;
     const query = `(subject:(receipt OR "tax invoice" OR "e-receipt" OR "order confirmation" OR "payment received" OR "payment confirmed" OR "your order" OR "bill statement" OR "transaction alert" OR "giro deduction") OR from:(dbs.com OR dbs.com.sg OR posb.com.sg OR grab.com OR shopee.sg OR lazada.sg OR amazon.sg OR apple.com OR foodpanda.sg OR deliveroo.com.sg OR stripe.com OR paypal.com)) newer_than:${newerThan}`;
 
     const listRes = await gmail.users.messages.list({
@@ -738,11 +738,17 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
           // type/amount/merchant was already recorded recently (e.g. a
           // shipping/delivery email that slipped past the classifier above
           // for an order whose payment receipt was already logged).
-          const duplicate = await findRecentDuplicateTransaction(
-            merchant,
-            amount,
-            type
-          );
+          // Bank alerts (DBS PayLah, PayNow, GIRO, DBS Card) are discrete monetary
+          // debits and should never be suppressed by order-lifecycle deduplication.
+          const isBankAlert =
+            paymentMethod.toLowerCase().includes("paylah") ||
+            paymentMethod.toLowerCase().includes("paynow") ||
+            paymentMethod.toLowerCase().includes("giro") ||
+            paymentMethod.toLowerCase().includes("card");
+
+          const duplicate = isBankAlert
+            ? null
+            : await findRecentDuplicateTransaction(merchant, amount, type);
 
           if (duplicate) {
             await markExternalIdProcessed(
