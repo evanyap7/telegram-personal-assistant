@@ -126,6 +126,133 @@ export function resolveTransactionDateObj(input: TransactionInput): Date {
   return baseDate;
 }
 
+const SHORT_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+];
+
+export function getMonthSheetName(date?: Date | string | number | null): string {
+  const safeDate = parseSingaporeDate(date);
+  const parts = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    month: "numeric",
+    year: "numeric",
+  }).formatToParts(safeDate);
+
+  const monthNum = parseInt(parts.find((p) => p.type === "month")?.value ?? "1", 10);
+  const year = parts.find((p) => p.type === "year")?.value ?? "2026";
+  const month = SHORT_MONTHS[monthNum - 1] ?? "Sep";
+  return `${month} ${year}`;
+}
+
+export function isTransactionSheetTitle(title: string): boolean {
+  if (!title) return false;
+  const trimmed = title.trim();
+  if (trimmed === "Transactions" || trimmed.startsWith("Transactions - ")) return true;
+  return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}$/i.test(trimmed);
+}
+
+export function parseMonthYearFromTitle(title: string): Date {
+  const match = title.match(/([A-Za-z]+)\s+(\d{4})/);
+  if (match) {
+    const [, monthStr, yearStr] = match;
+    const key = monthStr.toLowerCase().slice(0, 3);
+    const months: Record<string, number> = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+    };
+    const m = months[key] ?? 0;
+    const y = parseInt(yearStr, 10) || 2026;
+    return new Date(Date.UTC(y, m, 1));
+  }
+  return new Date(0);
+}
+
+let knownSheetNamesCache: Set<string> | null = null;
+let lastSheetCacheFetch = 0;
+const CACHE_TTL_MS = 30 * 1000;
+
+export function invalidateSheetCache(): void {
+  knownSheetNamesCache = null;
+  lastSheetCacheFetch = 0;
+}
+
+export async function getAllSheetTitles(forceRefresh = false): Promise<string[]> {
+  const now = Date.now();
+  if (!forceRefresh && knownSheetNamesCache && now - lastSheetCacheFetch < CACHE_TTL_MS) {
+    return Array.from(knownSheetNamesCache);
+  }
+
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const meta = await withExponentialBackoff(() =>
+    sheets.spreadsheets.get({ spreadsheetId })
+  );
+
+  const titles = (meta.data.sheets ?? [])
+    .map((s) => s.properties?.title?.trim() ?? "")
+    .filter(Boolean);
+
+  knownSheetNamesCache = new Set(titles);
+  lastSheetCacheFetch = now;
+  return titles;
+}
+
+export async function getAllTransactionSheetNames(): Promise<string[]> {
+  const allTitles = await getAllSheetTitles();
+  const txnTitles = allTitles.filter(isTransactionSheetTitle);
+
+  return txnTitles.sort((a, b) => {
+    const da = parseMonthYearFromTitle(a);
+    const db = parseMonthYearFromTitle(b);
+    return db.getTime() - da.getTime();
+  });
+}
+
+export async function resolveMonthSheetName(
+  date?: Date | string | number | null
+): Promise<string> {
+  const preferred = getMonthSheetName(date);
+  const titles = await getAllSheetTitles();
+
+  if (titles.includes(preferred)) {
+    return preferred;
+  }
+
+  if (preferred.startsWith("Sep ")) {
+    const septVariant = preferred.replace("Sep ", "Sept ");
+    if (titles.includes(septVariant)) {
+      return septVariant;
+    }
+  }
+
+  const safeDate = parseSingaporeDate(date);
+  const fullMonth = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    month: "long",
+    year: "numeric",
+  }).format(safeDate);
+
+  if (titles.includes(fullMonth)) {
+    return fullMonth;
+  }
+
+  const prefixVariant = `Transactions - ${preferred}`;
+  if (titles.includes(prefixVariant)) {
+    return prefixVariant;
+  }
+
+  if (
+    titles.includes("Transactions") &&
+    !titles.some((t) => isTransactionSheetTitle(t) && t !== "Transactions")
+  ) {
+    return "Transactions";
+  }
+
+  return preferred;
+}
+
 function normaliseCell(value: string | undefined): string {
   return value?.trim() ?? "";
 }
