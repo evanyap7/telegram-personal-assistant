@@ -2,8 +2,7 @@ import { getSheetsClient, withExponentialBackoff } from "./google";
 import { maskSensitiveFinancialData } from "./security";
 import { parseSingaporeDate } from "./date-parser";
 
-const TRANSACTIONS_SHEET = "Transactions";
-const UPDATE_LOG_SHEET = "UpdateLog";
+export const UPDATE_LOG_SHEET = "UpdateLog";
 
 export type TransactionInput = {
   type: "income" | "expense";
@@ -522,30 +521,67 @@ export async function addTransactionsBatch(
   return results;
 }
 
-export async function listRecentTransactions(): Promise<FinanceTransaction[]> {
+export async function listTransactionsFromSheet(
+  sheetName: string
+): Promise<FinanceTransaction[]> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A2:I`,
-  });
+  try {
+    const response = await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${sheetName}!A2:I`,
+      })
+    );
 
-  const rows = response.data.values ?? [];
-
-  return rows
-    .map((row, index) => rowToTransaction(row, index + 2))
-    .filter((transaction) => transaction.status.toLowerCase() === "active");
+    const rows = response.data.values ?? [];
+    return rows
+      .map((row, index) => rowToTransaction(row, index + 2, sheetName))
+      .filter((transaction) => transaction.status.toLowerCase() === "active");
+  } catch {
+    return [];
+  }
 }
 
-/**
- * Looks for an already-logged active transaction that likely represents the
- * same real-world purchase as the one about to be logged (same type, same
- * amount, same merchant, within a recency window). Used to guard against
- * duplicate logging when a single purchase generates multiple emails
- * (e.g. a Shopee "order confirmed" receipt followed days later by a
- * "your order has been delivered" email that restates the order total).
- */
+export async function listRecentTransactions(
+  limit = 20,
+  targetSheet?: string
+): Promise<FinanceTransaction[]> {
+  if (targetSheet) {
+    const txns = await listTransactionsFromSheet(targetSheet);
+    return txns.slice(-limit);
+  }
+
+  const transactionSheets = await getAllTransactionSheetNames();
+  if (transactionSheets.length === 0) {
+    return [];
+  }
+
+  const collectedBatches: FinanceTransaction[][] = [];
+  let remaining = limit;
+
+  // transactionSheets is sorted newest month first
+  for (const sheet of transactionSheets) {
+    const sheetTxns = await listTransactionsFromSheet(sheet);
+    if (sheetTxns.length === 0) continue;
+
+    if (sheetTxns.length <= remaining) {
+      collectedBatches.unshift(sheetTxns);
+      remaining -= sheetTxns.length;
+    } else {
+      collectedBatches.unshift(sheetTxns.slice(-remaining));
+      remaining = 0;
+    }
+
+    if (remaining <= 0) {
+      break;
+    }
+  }
+
+  return collectedBatches.flat();
+}
+
 export async function findRecentDuplicateTransaction(
   merchant: string,
   amount: number,
@@ -555,7 +591,7 @@ export async function findRecentDuplicateTransaction(
   const normalizedMerchant = merchant.trim().toLowerCase();
   if (!normalizedMerchant) return null;
 
-  const transactions = await listRecentTransactions();
+  const transactions = await listRecentTransactions(50);
   const now = Date.now();
   const windowMs = withinDays * 24 * 60 * 60 * 1000;
 
@@ -583,10 +619,10 @@ export async function searchActiveTransactions(
   query: string
 ): Promise<FinanceTransaction[]> {
   const normalizedQuery = query.trim().toLowerCase();
-  const transactions = await listRecentTransactions();
+  const transactions = await listRecentTransactions(50);
 
   if (!normalizedQuery) {
-    return transactions.slice(-10).reverse();
+    return transactions.slice(0, 10);
   }
 
   return transactions
@@ -604,8 +640,7 @@ export async function searchActiveTransactions(
 
       return searchableText.includes(normalizedQuery);
     })
-    .slice(-10)
-    .reverse();
+    .slice(0, 10);
 }
 
 export type CategorySpending = {
@@ -768,44 +803,72 @@ export async function getFinanceSummary(
   };
 }
 
+export async function findTransactionLocation(
+  transactionId: string
+): Promise<{
+  transaction: FinanceTransaction;
+  sheetName: string;
+  rowNumber: number;
+} | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const transactionSheets = await getAllTransactionSheetNames();
+
+  for (const sheetName of transactionSheets) {
+    try {
+      const response = await withExponentialBackoff(() =>
+        sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${sheetName}!A2:I`,
+        })
+      );
+
+      const rows = response.data.values ?? [];
+      const rowIndex = rows.findIndex((row) => {
+        const rowTransactionId = normaliseCell(row[0]);
+        const rowStatus = normaliseCell(row[7]) || "active";
+        return (
+          rowTransactionId === transactionId &&
+          rowStatus.toLowerCase() === "active"
+        );
+      });
+
+      if (rowIndex !== -1) {
+        const rowNumber = rowIndex + 2;
+        const transaction = rowToTransaction(rows[rowIndex], rowNumber, sheetName);
+        return { transaction, sheetName, rowNumber };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 export async function softDeleteTransaction(
   transactionId: string
 ): Promise<FinanceTransaction | null> {
-  const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A2:I`,
-  });
-
-  const rows = response.data.values ?? [];
-  const rowIndex = rows.findIndex((row) => {
-    const rowTransactionId = normaliseCell(row[0]);
-    const rowStatus = normaliseCell(row[7]) || "active";
-
-    return (
-      rowTransactionId === transactionId &&
-      rowStatus.toLowerCase() === "active"
-    );
-  });
-
-  if (rowIndex === -1) {
+  const loc = await findTransactionLocation(transactionId);
+  if (!loc) {
     return null;
   }
 
-  const rowNumber = rowIndex + 2;
-  const transaction = rowToTransaction(rows[rowIndex], rowNumber);
+  const { transaction, sheetName, rowNumber } = loc;
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
   const deletedAt = new Date().toISOString();
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!H${rowNumber}:I${rowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [["deleted", deletedAt]],
-    },
-  });
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!H${rowNumber}:I${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [["deleted", deletedAt]],
+      },
+    })
+  );
 
   return {
     ...transaction,
@@ -817,65 +880,28 @@ export async function softDeleteTransaction(
 export async function getTransactionById(
   transactionId: string
 ): Promise<FinanceTransaction | null> {
-  const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A2:I`,
-  });
-
-  const rows = response.data.values ?? [];
-  const rowIndex = rows.findIndex((row) => {
-    const rowTransactionId = normaliseCell(row[0]);
-    const rowStatus = normaliseCell(row[7]) || "active";
-    return (
-      rowTransactionId === transactionId &&
-      rowStatus.toLowerCase() === "active"
-    );
-  });
-
-  if (rowIndex === -1) {
-    return null;
-  }
-
-  return rowToTransaction(rows[rowIndex], rowIndex + 2);
+  const loc = await findTransactionLocation(transactionId);
+  return loc ? loc.transaction : null;
 }
 
 export async function getLatestTransaction(): Promise<FinanceTransaction | null> {
-  const recent = await listRecentTransactions();
+  const recent = await listRecentTransactions(1);
   if (recent.length === 0) return null;
-  return recent[recent.length - 1];
+  return recent[0];
 }
 
 export async function updateTransaction(
   transactionId: string,
   updates: TransactionUpdateInput
 ): Promise<FinanceTransaction | null> {
-  const sheets = getSheetsClient();
-  const spreadsheetId = getSpreadsheetId();
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A2:I`,
-  });
-
-  const rows = response.data.values ?? [];
-  const rowIndex = rows.findIndex((row) => {
-    const rowTransactionId = normaliseCell(row[0]);
-    const rowStatus = normaliseCell(row[7]) || "active";
-    return (
-      rowTransactionId === transactionId &&
-      rowStatus.toLowerCase() === "active"
-    );
-  });
-
-  if (rowIndex === -1) {
+  const loc = await findTransactionLocation(transactionId);
+  if (!loc) {
     return null;
   }
 
-  const rowNumber = rowIndex + 2;
-  const current = rowToTransaction(rows[rowIndex], rowNumber);
+  const { transaction: current, sheetName, rowNumber } = loc;
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
 
   let newTimestamp = current.timestamp;
   if (updates.explicitDate) {
@@ -896,23 +922,25 @@ export async function updateTransaction(
     description: updates.description ?? current.description,
   };
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!B${rowNumber}:G${rowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [
-        [
-          updated.timestamp,
-          updated.type,
-          updated.amount,
-          updated.currency,
-          updated.category,
-          updated.description,
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!B${rowNumber}:G${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [
+          [
+            updated.timestamp,
+            updated.type,
+            updated.amount,
+            updated.currency,
+            updated.category,
+            updated.description,
+          ],
         ],
-      ],
-    },
-  });
+      },
+    })
+  );
 
   return updated;
 }
