@@ -253,6 +253,151 @@ export async function resolveMonthSheetName(
   return preferred;
 }
 
+export async function ensureMonthlyTransactionsSheet(
+  sheetName: string
+): Promise<void> {
+  const titles = await getAllSheetTitles();
+  if (titles.includes(sheetName)) {
+    return;
+  }
+
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  // Create sheet with frozen row 1, 1000 rows, 26 columns
+  const addSheetRes = await withExponentialBackoff(() =>
+    sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            addSheet: {
+              properties: {
+                title: sheetName,
+                index: 0,
+                gridProperties: {
+                  rowCount: 1000,
+                  columnCount: 26,
+                  frozenRowCount: 1,
+                },
+              },
+            },
+          },
+        ],
+      },
+    })
+  );
+
+  const newSheetId = addSheetRes.data.replies?.[0]?.addSheet?.properties?.sheetId;
+
+  // Populate Row 1 headers & Row 2 Total Expenditure formula
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A1:J2`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [
+          [
+            "Transaction ID",
+            "Timestamp",
+            "Type",
+            "Amount",
+            "Currency",
+            "Category",
+            "Description",
+            "Status",
+            "Deleted At",
+            "Total Expenditure",
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            '=SUMIF(C2:C, "expense", D2:D) - SUMIF(C2:C, "income", D2:D)',
+          ],
+        ],
+      },
+    })
+  );
+
+  // Apply styling: Bold headers, red large formula cell, custom column widths
+  if (newSheetId !== undefined && newSheetId !== null) {
+    const colWidths = [278, 169, 57, 57, 66, 65, 150, 100, 100, 133];
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            // Bold row 1
+            {
+              repeatCell: {
+                range: {
+                  sheetId: newSheetId,
+                  startRowIndex: 0,
+                  endRowIndex: 1,
+                  startColumnIndex: 0,
+                  endColumnIndex: 10,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: { bold: true },
+                  },
+                },
+                fields: "userEnteredFormat.textFormat.bold",
+              },
+            },
+            // J2 style: red color, font size 32
+            {
+              repeatCell: {
+                range: {
+                  sheetId: newSheetId,
+                  startRowIndex: 1,
+                  endRowIndex: 2,
+                  startColumnIndex: 9,
+                  endColumnIndex: 10,
+                },
+                cell: {
+                  userEnteredFormat: {
+                    textFormat: {
+                      fontSize: 32,
+                      foregroundColor: { red: 1, green: 0, blue: 0 },
+                    },
+                  },
+                },
+                fields: "userEnteredFormat.textFormat(fontSize,foregroundColor)",
+              },
+            },
+            // Column widths
+            ...colWidths.map((pixelSize, idx) => ({
+              updateDimensionProperties: {
+                range: {
+                  sheetId: newSheetId,
+                  dimension: "COLUMNS",
+                  startIndex: idx,
+                  endIndex: idx + 1,
+                },
+                properties: { pixelSize },
+                fields: "pixelSize",
+              },
+            })),
+          ],
+        },
+      })
+    );
+  }
+
+  if (knownSheetNamesCache) {
+    knownSheetNamesCache.add(sheetName);
+  }
+}
+
 function normaliseCell(value: string | undefined): string {
   return value?.trim() ?? "";
 }
