@@ -27,6 +27,7 @@ export type TransactionUpdateInput = {
 
 export type FinanceTransaction = {
   rowNumber: number;
+  sheetName?: string;
   transactionId: string;
   timestamp: string;
   type: string;
@@ -404,10 +405,12 @@ function normaliseCell(value: string | undefined): string {
 
 function rowToTransaction(
   row: string[],
-  rowNumber: number
+  rowNumber: number,
+  sheetName?: string
 ): FinanceTransaction {
   return {
     rowNumber,
+    sheetName,
     transactionId: normaliseCell(row[0]),
     timestamp: normaliseCell(row[1]),
     type: normaliseCell(row[2]),
@@ -423,6 +426,7 @@ function rowToTransaction(
 export async function addTransaction(input: TransactionInput): Promise<{
   transactionId: string;
   timestamp: string;
+  sheetName: string;
 }> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -432,10 +436,13 @@ export async function addTransaction(input: TransactionInput): Promise<{
   const timestamp = formatSingaporeTimestamp(dateObj);
   const sanitizedDescription = maskSensitiveFinancialData(input.description);
 
+  const targetSheet = await resolveMonthSheetName(dateObj);
+  await ensureMonthlyTransactionsSheet(targetSheet);
+
   await withExponentialBackoff(async () => {
     return sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${TRANSACTIONS_SHEET}!A:I`,
+      range: `${targetSheet}!A:I`,
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [
@@ -458,27 +465,30 @@ export async function addTransaction(input: TransactionInput): Promise<{
   return {
     transactionId,
     timestamp,
+    sheetName: targetSheet,
   };
 }
 
 export async function addTransactionsBatch(
   items: TransactionInput[]
-): Promise<Array<{ transactionId: string; timestamp: string }>> {
+): Promise<Array<{ transactionId: string; timestamp: string; sheetName: string }>> {
   if (items.length === 0) return [];
 
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  const results: Array<{ transactionId: string; timestamp: string }> = [];
-  const rows: (string | number)[][] = [];
+  const results: Array<{ transactionId: string; timestamp: string; sheetName: string }> = [];
+  const groups = new Map<string, (string | number)[][]>();
 
   for (const input of items) {
     const transactionId = createTransactionId();
     const dateObj = resolveTransactionDateObj(input);
     const timestamp = formatSingaporeTimestamp(dateObj);
+    const targetSheet = await resolveMonthSheetName(dateObj);
 
-    results.push({ transactionId, timestamp });
-    rows.push([
+    results.push({ transactionId, timestamp, sheetName: targetSheet });
+
+    const row = [
       transactionId,
       timestamp,
       input.type,
@@ -488,17 +498,26 @@ export async function addTransactionsBatch(
       input.description,
       "active",
       "",
-    ]);
+    ];
+
+    const group = groups.get(targetSheet) ?? [];
+    group.push(row);
+    groups.set(targetSheet, group);
   }
 
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${TRANSACTIONS_SHEET}!A:I`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: rows,
-    },
-  });
+  for (const [sheetName, rows] of groups.entries()) {
+    await ensureMonthlyTransactionsSheet(sheetName);
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `${sheetName}!A:I`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: rows,
+        },
+      })
+    );
+  }
 
   return results;
 }
