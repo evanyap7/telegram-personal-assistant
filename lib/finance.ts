@@ -651,6 +651,7 @@ export type CategorySpending = {
 
 export type FinanceSummary = {
   period: "today" | "week" | "month" | "all";
+  targetMonth?: string;
   totalIncome: number;
   totalExpense: number;
   netSavings: number;
@@ -720,9 +721,46 @@ function parseSingaporeTimestamp(str: string): Date | null {
 export async function getFinanceSummary(
   period: "today" | "week" | "month" | "all" = "month"
 ): Promise<FinanceSummary> {
-  const transactions = await listRecentTransactions();
-
   const now = new Date();
+  const currentMonthSheet = await resolveMonthSheetName(now);
+  let transactions: FinanceTransaction[] = [];
+  let targetMonthName: string | undefined = undefined;
+
+  if (period === "month") {
+    targetMonthName = currentMonthSheet;
+    transactions = await listTransactionsFromSheet(currentMonthSheet);
+  } else if (period === "today") {
+    targetMonthName = currentMonthSheet;
+    transactions = await listTransactionsFromSheet(currentMonthSheet);
+  } else if (period === "week") {
+    targetMonthName = currentMonthSheet;
+    transactions = await listTransactionsFromSheet(currentMonthSheet);
+
+    const dayOfMonth = parseInt(
+      new Intl.DateTimeFormat("en-SG", {
+        timeZone: "Asia/Singapore",
+        day: "numeric",
+      }).format(now),
+      10
+    );
+
+    if (dayOfMonth <= 7) {
+      const prevMonthDate = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+      const prevMonthSheet = await resolveMonthSheetName(prevMonthDate);
+      if (prevMonthSheet !== currentMonthSheet) {
+        const prevTxns = await listTransactionsFromSheet(prevMonthSheet);
+        transactions = [...transactions, ...prevTxns];
+      }
+    }
+  } else {
+    // "all"
+    const allSheets = await getAllTransactionSheetNames();
+    for (const sheet of allSheets) {
+      const sheetTxns = await listTransactionsFromSheet(sheet);
+      transactions.push(...sheetTxns);
+    }
+  }
+
   const sgToday = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Singapore",
     year: "numeric",
@@ -794,6 +832,7 @@ export async function getFinanceSummary(
 
   return {
     period,
+    targetMonth: targetMonthName,
     totalIncome,
     totalExpense,
     netSavings: totalIncome - totalExpense,

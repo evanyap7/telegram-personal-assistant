@@ -478,7 +478,7 @@ function formatFinanceSummary(summary: FinanceSummary): string {
   const periodTitles: Record<string, string> = {
     today: "Today",
     week: "Past 7 Days",
-    month: "This Month",
+    month: summary.targetMonth ? `This Month (${summary.targetMonth})` : "This Month",
     all: "All Time",
   };
   const title = periodTitles[summary.period] ?? summary.period;
