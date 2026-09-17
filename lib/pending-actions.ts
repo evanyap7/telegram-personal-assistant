@@ -94,6 +94,7 @@ export type TodoSelectionPayload = {
 
 export type PendingImagePayload = {
   fileId: string;
+  fileIds?: string[];
   mediaType?: string;
   sentAt: string;
 };
@@ -445,10 +446,47 @@ export async function savePendingImageAction(input: {
   userId: number;
   payload: PendingImagePayload;
 }): Promise<string> {
+  const newFileIds = input.payload.fileIds?.length
+    ? input.payload.fileIds
+    : [input.payload.fileId];
+
+  const latest = await getLatestPendingImage(input.userId);
+  if (latest) {
+    const existingFileIds = latest.payload.fileIds?.length
+      ? latest.payload.fileIds
+      : [latest.payload.fileId];
+
+    const combinedFileIds = Array.from(
+      new Set([...existingFileIds, ...newFileIds])
+    );
+
+    const updatedPayload: PendingImagePayload = {
+      fileId: combinedFileIds[0],
+      fileIds: combinedFileIds,
+      mediaType: input.payload.mediaType ?? latest.payload.mediaType,
+      sentAt: new Date().toISOString(),
+    };
+
+    const sheets = getSheetsClient();
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: getSpreadsheetId(),
+      range: `${SHEET_NAME}!D${latest.rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[JSON.stringify(updatedPayload)]],
+      },
+    });
+
+    return latest.token;
+  }
+
   return savePendingAction({
     userId: input.userId,
     actionType: "pending_image",
-    payload: input.payload,
+    payload: {
+      ...input.payload,
+      fileIds: newFileIds,
+    },
   });
 }
 

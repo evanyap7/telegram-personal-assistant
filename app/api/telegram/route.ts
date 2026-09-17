@@ -116,10 +116,12 @@ const telegramUpdateSchema = z.object({
       }),
       text: z.string().optional(),
       caption: z.string().optional(),
+      media_group_id: z.string().optional(),
       reply_to_message: z
         .object({
           message_id: z.number(),
           date: z.number().optional(),
+          media_group_id: z.string().optional(),
           text: z.string().optional(),
           photo: z
             .array(
@@ -2068,34 +2070,81 @@ async function handleWalletCancelCallback(input: {
   await markUpdateCompleted(input.updateId, "wallet_cancel");
 }
 
-async function processAssistantImage(input: {
+type MediaGroupBatch = {
+  mediaGroupId: string;
   chatId: number;
   userId: number;
-  fileId: string;
+  messageIds: number[];
+  fileIds: string[];
+  instruction: string;
+  updateIds: number[];
+  lastReceivedAt: number;
+  donePromise: Promise<boolean>;
+  resolveDone: (handled: boolean) => void;
+};
+
+const mediaGroupBatches = new Map<string, MediaGroupBatch>();
+const recentlyCompletedMediaGroups = new Map<string, number>();
+
+function cleanupCompletedMediaGroups() {
+  const now = Date.now();
+  for (const [id, completedAt] of recentlyCompletedMediaGroups.entries()) {
+    if (now - completedAt > 10 * 60 * 1000) {
+      recentlyCompletedMediaGroups.delete(id);
+    }
+  }
+}
+
+async function processAssistantImages(input: {
+  chatId: number;
+  userId: number;
+  fileIds: string[];
   instruction: string;
   updateId: number;
 }): Promise<boolean> {
-  const { chatId, userId, fileId, instruction, updateId } = input;
-  await sendTelegramMessage(chatId, "Reading your image...");
+  const { chatId, userId, fileIds, instruction, updateId } = input;
+  const imageCount = fileIds.length;
+  await sendTelegramMessage(
+    chatId,
+    imageCount > 1
+      ? `Reading your ${imageCount} images...`
+      : "Reading your image..."
+  );
 
-  const downloadedImage = await downloadTelegramPhoto(fileId);
+  let downloadedImages: Array<{ data: Uint8Array; mediaType: string }>;
+  try {
+    downloadedImages = await Promise.all(
+      fileIds.map((fileId) => downloadTelegramPhoto(fileId))
+    );
+  } catch (downloadErr) {
+    log("telegram.image_download_failed", {
+      updateId,
+      error: String(downloadErr),
+    });
+    await sendTelegramMessage(
+      chatId,
+      "I had trouble downloading one or more of the images from Telegram. Please try sending them again."
+    );
+    await markUpdateCompleted(updateId, "image_download_error");
+    return true;
+  }
 
   const imageIntent = await parseImageAssistantIntent({
     instruction,
-    image: downloadedImage.data,
-    mediaType: downloadedImage.mediaType,
+    images: downloadedImages,
   });
 
   log("telegram.image_intent.parsed", {
     updateId,
     action: imageIntent.action,
-    imageBytes: downloadedImage.data.byteLength,
+    imageCount: downloadedImages.length,
+    totalBytes: downloadedImages.reduce((acc, img) => acc + img.data.byteLength, 0),
   });
 
   if (imageIntent.action === "unknown") {
     await sendTelegramMessage(
       chatId,
-      `${imageIntent.message}\n\nPlease send a clearer image or add more detail in your request.`
+      `${imageIntent.message}\n\nPlease send clearer image(s) or add more detail in your request.`
     );
 
     await markUpdateCompleted(updateId, "image_unknown");
@@ -2119,7 +2168,9 @@ async function processAssistantImage(input: {
     await sendTelegramMessage(
       chatId,
       [
-        "I found this transaction in the image. Log it?",
+        imageCount > 1
+          ? "I found this transaction across the images. Log it?"
+          : "I found this transaction in the image. Log it?",
         "",
         `Type: ${imageIntent.type}`,
         `Amount: ${imageIntent.amount.toFixed(2)} ${imageIntent.currency}`,
@@ -2152,7 +2203,9 @@ async function processAssistantImage(input: {
     if (!imageIntent.transactions.length) {
       await sendTelegramMessage(
         chatId,
-        "I could not find any clear transactions in that image."
+        imageCount > 1
+          ? "I could not find any clear transactions across those images."
+          : "I could not find any clear transactions in that image."
       );
 
       await markUpdateCompleted(updateId, "image_finance_empty");
@@ -2177,7 +2230,9 @@ async function processAssistantImage(input: {
       await sendTelegramMessage(
         chatId,
         [
-          "I found this transaction in the image. Log it?",
+          imageCount > 1
+            ? "I found this transaction across the images. Log it?"
+            : "I found this transaction in the image. Log it?",
           "",
           `Type: ${single.type}`,
           `Amount: ${single.amount.toFixed(2)} ${single.currency}`,
@@ -2226,7 +2281,7 @@ async function processAssistantImage(input: {
     await sendTelegramMessage(
       chatId,
       [
-        `I found ${imageIntent.transactions.length} transactions in the image (Total: ${total.toFixed(2)} ${curr}):`,
+        `I found ${imageIntent.transactions.length} transactions across the image${imageCount > 1 ? "s" : ""} (Total: ${total.toFixed(2)} ${curr}):`,
         "",
         previews.join("\n"),
         "",
@@ -2257,7 +2312,9 @@ async function processAssistantImage(input: {
     if (!imageIntent.events.length) {
       await sendTelegramMessage(
         chatId,
-        "I could not find any clear calendar events in that image."
+        imageCount > 1
+          ? "I could not find any clear calendar events across those images."
+          : "I could not find any clear calendar events in that image."
       );
 
       await markUpdateCompleted(updateId, "image_calendar_empty");
@@ -2291,7 +2348,9 @@ async function processAssistantImage(input: {
       await sendTelegramMessage(
         chatId,
         [
-          "I found this event in the image. Create it?",
+          imageCount > 1
+            ? "I found this event across the images. Create it?"
+            : "I found this event in the image. Create it?",
           "",
           event.allDay
             ? [
@@ -2455,14 +2514,183 @@ export async function POST(request: Request) {
     sendTelegramChatAction(chatId, "typing").catch(() => {});
 
     if (message.photo?.length) {
-      const instruction = message.caption?.trim() ?? "";
       const largestPhoto = message.photo[message.photo.length - 1];
+      const photoCaption = message.caption?.trim() ?? "";
+      const mediaGroupId = message.media_group_id;
 
+      if (mediaGroupId) {
+        cleanupCompletedMediaGroups();
+
+        if (recentlyCompletedMediaGroups.has(mediaGroupId)) {
+          log("telegram.media_group.duplicate_skipped", {
+            mediaGroupId,
+            updateId,
+          });
+          await markUpdateCompleted(updateId, "media_group_late_duplicate");
+          return Response.json({ ok: true });
+        }
+
+        let batch = mediaGroupBatches.get(mediaGroupId);
+        const isNewGroup = !batch;
+
+        if (!batch) {
+          let resolveDone!: (handled: boolean) => void;
+          const donePromise = new Promise<boolean>((resolve) => {
+            resolveDone = resolve;
+          });
+
+          batch = {
+            mediaGroupId,
+            chatId,
+            userId: message.from.id,
+            messageIds: [message.message_id],
+            fileIds: [largestPhoto.file_id],
+            instruction: photoCaption,
+            updateIds: [updateId],
+            lastReceivedAt: Date.now(),
+            donePromise,
+            resolveDone,
+          };
+          mediaGroupBatches.set(mediaGroupId, batch);
+        } else {
+          if (!batch.fileIds.includes(largestPhoto.file_id)) {
+            batch.fileIds.push(largestPhoto.file_id);
+          }
+          if (!batch.messageIds.includes(message.message_id)) {
+            batch.messageIds.push(message.message_id);
+          }
+          if (!batch.updateIds.includes(updateId)) {
+            batch.updateIds.push(updateId);
+          }
+          if (!batch.instruction && photoCaption) {
+            batch.instruction = photoCaption;
+          }
+          batch.lastReceivedAt = Date.now();
+        }
+
+        if (!isNewGroup) {
+          log("telegram.media_group.follower_waiting", {
+            mediaGroupId,
+            updateId,
+          });
+
+          try {
+            await batch.donePromise;
+          } catch (err) {
+            log("telegram.media_group.follower_error", {
+              mediaGroupId,
+              updateId,
+              error: String(err),
+            });
+          }
+
+          await markUpdateCompleted(updateId, "media_group_follower");
+          return Response.json({ ok: true });
+        }
+
+        // Leader: wait for sister updates in this album to arrive
+        const MAX_WAIT_MS = 2500;
+        const QUIET_PERIOD_MS = 600;
+        const waitStart = Date.now();
+
+        while (Date.now() - waitStart < MAX_WAIT_MS) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          if (Date.now() - batch.lastReceivedAt >= QUIET_PERIOD_MS) {
+            break;
+          }
+        }
+
+        log("telegram.media_group.leader_ready", {
+          mediaGroupId,
+          fileCount: batch.fileIds.length,
+          hasInstruction: Boolean(batch.instruction),
+          updateIds: batch.updateIds,
+        });
+
+        let handled = false;
+        try {
+          if (!batch.instruction) {
+            await savePendingImageAction({
+              userId: message.from.id,
+              payload: {
+                fileId: batch.fileIds[0],
+                fileIds: batch.fileIds,
+                sentAt: new Date().toISOString(),
+              },
+            });
+
+            const imageCount = batch.fileIds.length;
+            const promptText = [
+              imageCount > 1
+                ? `I received your ${imageCount} images! 📸`
+                : "I received your image! 📸",
+              "",
+              "What would you like me to do with them?",
+              "• “Log these as an expense”",
+              "• “Add these dates to my personal calendar”",
+              "• “Add these dates to my work calendar”",
+            ].join("\n");
+
+            await sendTelegramMessage(chatId, promptText);
+
+            logChatMessage({
+              messageId: message.message_id,
+              userId: message.from.id,
+              role: "user",
+              text: `[${imageCount} image${imageCount > 1 ? "s" : ""} uploaded]`,
+              photoFileId: batch.fileIds.join(","),
+              actionType: "media_group_upload",
+            }).catch(() => {});
+
+            logChatMessage({
+              userId: message.from.id,
+              role: "assistant",
+              text: promptText,
+              actionType: "pending_image_instruction",
+            }).catch(() => {});
+
+            handled = true;
+          } else {
+            handled = await processAssistantImages({
+              chatId,
+              userId: message.from.id,
+              fileIds: batch.fileIds,
+              instruction: batch.instruction,
+              updateId,
+            });
+
+            if (handled) {
+              logChatMessage({
+                messageId: message.message_id,
+                userId: message.from.id,
+                role: "user",
+                text: batch.instruction,
+                photoFileId: batch.fileIds.join(","),
+                actionType: "media_group_with_caption",
+              }).catch(() => {});
+            }
+          }
+        } finally {
+          recentlyCompletedMediaGroups.set(mediaGroupId, Date.now());
+          await markUpdateCompleted(
+            updateId,
+            handled ? "media_group_handled" : "media_group_unhandled"
+          );
+          batch.resolveDone(handled);
+          mediaGroupBatches.delete(mediaGroupId);
+        }
+
+        return Response.json({ ok: true });
+      }
+
+      // Single photo (no media_group_id)
+      const instruction = photoCaption;
       if (!instruction) {
         await savePendingImageAction({
           userId: message.from.id,
           payload: {
             fileId: largestPhoto.file_id,
+            fileIds: [largestPhoto.file_id],
             sentAt: new Date().toISOString(),
           },
         });
@@ -2499,10 +2727,10 @@ export async function POST(request: Request) {
         return Response.json({ ok: true });
       }
 
-      const handled = await processAssistantImage({
+      const handled = await processAssistantImages({
         chatId,
         userId: message.from.id,
-        fileId: largestPhoto.file_id,
+        fileIds: [largestPhoto.file_id],
         instruction,
         updateId,
       });
@@ -2580,12 +2808,12 @@ export async function POST(request: Request) {
     });
 
     if (!text.startsWith("/")) {
-      let followUpImageFileId: string | undefined;
+      let followUpImageFileIds: string[] | undefined;
       let pendingImageToken: string | undefined;
 
       if (message.reply_to_message?.photo?.length) {
         const replyPhotos = message.reply_to_message.photo;
-        followUpImageFileId = replyPhotos[replyPhotos.length - 1].file_id;
+        followUpImageFileIds = [replyPhotos[replyPhotos.length - 1].file_id];
       } else {
         const pendingImage = await getLatestPendingImage(message.from.id);
         if (pendingImage) {
@@ -2596,21 +2824,23 @@ export async function POST(request: Request) {
               text
             );
           if (isImageReply || isInstruction) {
-            followUpImageFileId = pendingImage.payload.fileId;
+            followUpImageFileIds = pendingImage.payload.fileIds?.length
+              ? pendingImage.payload.fileIds
+              : [pendingImage.payload.fileId];
             pendingImageToken = pendingImage.token;
           }
         }
       }
 
-      if (followUpImageFileId) {
+      if (followUpImageFileIds && followUpImageFileIds.length > 0) {
         if (pendingImageToken) {
           await consumePendingImage(pendingImageToken);
         }
 
-        const handled = await processAssistantImage({
+        const handled = await processAssistantImages({
           chatId,
           userId: message.from.id,
-          fileId: followUpImageFileId,
+          fileIds: followUpImageFileIds,
           instruction: text,
           updateId,
         });
