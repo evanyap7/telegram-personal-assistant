@@ -110,6 +110,13 @@ const intentSchema = z.union([
     date: z.string().date().optional(),
   }),
   z.object({
+    action: z.literal("calendar_rename"),
+    calendarName: z.enum(["personal", "work"]).default("personal"),
+    title: z.string().min(1).max(100),
+    newTitle: z.string().min(1).max(100),
+    eventId: z.string().optional(),
+  }),
+  z.object({
     action: z.literal("unknown"),
     message: z.string().min(1).max(300),
   }),
@@ -378,8 +385,9 @@ Supported actions:
 10. todo_delete_search
 11. email_draft
 12. calendar_move
-13. finance_modify
-14. unknown
+13. calendar_rename
+14. finance_modify
+15. unknown
 
 Finance entry:
 {
@@ -502,6 +510,15 @@ Calendar move or switch:
   "end": "YYYY-MM-DDTHH:mm:ss+08:00"
 }
 
+Calendar rename (title only, same calendar — does NOT move or change timing):
+{
+  "action": "calendar_rename",
+  "calendarName": "personal" or "work",
+  "title": "the event's current title",
+  "newTitle": "the new title the user wants",
+  "eventId": "event id if known"
+}
+
 Unknown:
 {
   "action": "unknown",
@@ -519,6 +536,8 @@ Contextual Reference Rules:
 - If the user replied to an event creation message OR asks to change an event that was just created:
   - If the user asks to move it or change its calendar (e.g. "sorry can u add this to my work calendar instead", "move this to my work calendar", "switch to work calendar", "change this to work"):
     Return calendar_move with fromCalendar, toCalendar, title, and any known event details from the context or replied message.
+  - If the user asks ONLY to change the title/name (e.g. "change the title to ...", "rename it to ...", "call it ..."), and does NOT ask to change the calendar or timing:
+    Return calendar_rename with calendarName (the event's current calendar), title (its current title), newTitle (the requested title), and eventId if known from context. Do NOT use calendar_move for a title-only change — it does not touch timing.
   - If the user asks to delete it (e.g. "delete that event", "cancel it", "undo"):
     Return calendar_delete_search with the event's title and calendar.
 - If the user replied to a finance transaction message OR asks to delete/modify a transaction that was just created:
