@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addTransaction, formatSingaporeTimestamp } from "@/lib/finance";
 import { sendTelegramMessage } from "@/lib/telegram";
-import { safeCompare, maskSensitiveFinancialData } from "@/lib/security";
+import { safeCompare } from "@/lib/security";
 import { parseSingaporeDate } from "@/lib/date-parser";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
