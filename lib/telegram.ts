@@ -57,7 +57,7 @@ async function callTelegram(
   method: string,
   body: Record<string, unknown>,
   attempt = 0
-): Promise<any> {
+): Promise<unknown> {
   const token = getTelegramToken();
 
   const response = await fetch(
@@ -92,7 +92,8 @@ async function callTelegram(
       body.parse_mode &&
       /can't parse entities|entity|format/i.test(responseText)
     ) {
-      const { parse_mode, ...bodyWithoutParseMode } = body;
+      const bodyWithoutParseMode = { ...body };
+      delete bodyWithoutParseMode.parse_mode;
       return callTelegram(method, bodyWithoutParseMode, attempt + 1);
     }
 

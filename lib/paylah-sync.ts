@@ -9,7 +9,7 @@ import {
 import { sendTelegramMessage } from "./telegram";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
-import { maskSensitiveFinancialData, SECURITY_SYSTEM_GUARDRAIL } from "./security";
+import { SECURITY_SYSTEM_GUARDRAIL } from "./security";
 import { parseSingaporeDate } from "./date-parser";
 
 export type EmailTransactionParsedResult = {
@@ -42,10 +42,15 @@ const VALID_CATEGORIES = [
 
 type Category = (typeof VALID_CATEGORIES)[number];
 
-function extractCleanMessageText(payload: any): string {
+interface MessagePayloadPart {
+  body?: { data?: string | null } | null;
+  parts?: MessagePayloadPart[] | null;
+}
+
+function extractCleanMessageText(payload: MessagePayloadPart | null | undefined): string {
   if (!payload) return "";
 
-  function collectText(part: any): string {
+  function collectText(part: MessagePayloadPart): string {
     let result = "";
     if (part.body?.data) {
       result += Buffer.from(part.body.data, "base64url").toString("utf-8") + "\n";
@@ -326,7 +331,7 @@ function parseEmailTransactionRegex(
     const merchantMatch = text.match(
       /To:\s*(.+?)(?:\s+(?:To view|Please call|Yours faithfully|Date & Time|From:)|$)/i
     );
-    let merchant = merchantMatch
+    const merchant = merchantMatch
       ? merchantMatch[1].trim().replace(/[\s,]+$/, "")
       : undefined;
 

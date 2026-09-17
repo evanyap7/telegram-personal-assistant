@@ -43,9 +43,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    let body: any = null;
+    let body: { message?: { data?: string } } | null = null;
     try {
-      body = await req.json();
+      body = (await req.json()) as { message?: { data?: string } };
     } catch {
       // Empty or non-JSON body is acceptable for direct webhook pings
       body = null;

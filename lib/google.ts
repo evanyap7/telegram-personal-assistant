@@ -137,9 +137,20 @@ export async function withExponentialBackoff<T>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await operation();
-    } catch (error: any) {
-      const status = error?.status || error?.code || error?.response?.status;
-      const msg = String(error?.message || "");
+    } catch (error: unknown) {
+      const errObj = error as {
+        status?: number;
+        code?: number | string;
+        response?: { status?: number };
+        message?: string;
+      } | null;
+      const status =
+        typeof errObj?.status === "number"
+          ? errObj.status
+          : typeof errObj?.code === "number"
+          ? errObj.code
+          : errObj?.response?.status;
+      const msg = String(errObj?.message || "");
 
       // Transient errors: 429 Quota/Rate limit, 500, 502, 503, 504, or network disconnects
       const isTransient =

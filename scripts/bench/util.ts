@@ -129,7 +129,17 @@ export function estimateCostUsd(
  * Normalizes token usage across ai-sdk versions/providers, which have used
  * both {promptTokens, completionTokens} and {inputTokens, outputTokens}.
  */
-export function normalizeUsage(usage: any): {
+export function normalizeUsage(
+  usage:
+    | {
+        inputTokens?: number;
+        outputTokens?: number;
+        promptTokens?: number;
+        completionTokens?: number;
+      }
+    | null
+    | undefined
+): {
   inputTokens: number;
   outputTokens: number;
 } {

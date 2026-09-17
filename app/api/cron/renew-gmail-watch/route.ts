@@ -48,9 +48,9 @@ export async function GET(req: NextRequest) {
       expiration: res.data.expiration,
       expiresAt,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Failed to renew Gmail push notification watch:", error);
-    const errMsg = error?.message || String(error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     if (
       errMsg.includes("invalid_grant") ||
       errMsg.includes("expired") ||

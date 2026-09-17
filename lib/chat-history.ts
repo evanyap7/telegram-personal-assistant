@@ -1,4 +1,5 @@
 import { getSheetsClient } from "./google";
+import { formatSingaporeTimestamp } from "./finance";
 
 const CHAT_HISTORY_SHEET = "ChatHistory";
 
@@ -28,30 +29,6 @@ function getSpreadsheetId(): string {
   }
 
   return spreadsheetId;
-}
-
-function formatSingaporeTimestamp(date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-SG", {
-    timeZone: "Asia/Singapore",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).formatToParts(date);
-
-  const getPart = (type: Intl.DateTimeFormatPartTypes): string =>
-    parts.find((part) => part.type === type)?.value ?? "";
-
-  const day = getPart("day");
-  const month = getPart("month");
-  const year = getPart("year");
-  const hour = getPart("hour");
-  const minute = getPart("minute");
-  const dayPeriod = getPart("dayPeriod").toUpperCase();
-
-  return `${day} ${month} ${year} @ ${hour}:${minute} ${dayPeriod}`;
 }
 
 let sheetEnsured = false;

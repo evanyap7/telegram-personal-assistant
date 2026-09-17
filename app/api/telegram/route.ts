@@ -11,13 +11,11 @@ import {
   deleteCalendarEvent,
   getUpcomingSchedule,
   moveCalendarEvent,
-  ScheduleEventItem,
   searchUpcomingCalendarEvents,
 } from "@/lib/calendar";
 import {
   formatScheduleAgendaView,
   formatSchedulePureTableView,
-  formatSingaporeScheduleItem,
   ScheduleTimeframe,
 } from "@/lib/calendar-format";
 import {
@@ -3178,7 +3176,7 @@ export async function POST(request: Request) {
         description,
       });
 
-      const transaction = await addTransaction({
+      await addTransaction({
         ...input,
         transactionTimestamp: message.date ? new Date(message.date * 1000) : new Date(),
       });

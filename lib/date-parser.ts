@@ -17,7 +17,7 @@ export function parseSingaporeDate(input?: string | Date | number | null): Date 
     return Number.isNaN(d.getTime()) ? new Date() : d;
   }
 
-  let text = String(input).trim();
+  const text = String(input).trim();
   if (!text) return new Date();
 
   // 1. Handle ISO strings directly: "2026-09-12T14:30:00+08:00" or "2026-09-12"
@@ -33,7 +33,7 @@ export function parseSingaporeDate(input?: string | Date | number | null): Date 
 
   // 2. Clean iOS Shortcuts format:
   // e.g. "12 Sep 2026 at 14:30", "12 Sep 2026 at 2:30 PM", "Sep 12, 2026 at 14:30"
-  let cleaned = text
+  const cleaned = text
     .replace(/\s+at\s+/gi, " ")
     .replace(/,/g, " ")
     .replace(/\(SGT\)|\(GMT\+8\)|\(UTC\+8\)/gi, "+08:00")

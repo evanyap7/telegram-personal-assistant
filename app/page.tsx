@@ -3,7 +3,6 @@
 import { useState } from "react";
 import {
   IconContactless,
-  IconNfcWaves,
   IconBolt,
   IconPubSub,
   IconMicrophone,
@@ -22,9 +21,7 @@ import {
   IconCheck,
   IconExternalLink,
   IconSparkles,
-  IconActivity,
   IconDatabase,
-  IconLayers,
   IconCodeBracket,
 } from "@/components/icons";
 
