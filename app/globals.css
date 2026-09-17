@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  --background: #07080b;
-  --foreground: #f3f4f6;
+  --background: #fdf6e9;
+  --foreground: #0a0a0a;
+  --nb-border: #0a0a0a;
+  --nb-yellow: #ffd21f;
+  --nb-blue: #4d7cff;
+  --nb-violet: #9b6bff;
+  --nb-green: #3ecf6e;
+  --nb-cyan: #2bd4c7;
+  --nb-coral: #ff5c5c;
 }
 
 @theme inline {
@@ -18,8 +25,11 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
-  selection-background-color: #10b981;
-  selection-color: #000000;
+}
+
+::selection {
+  background-color: #0a0a0a;
+  color: #ffd21f;
 }
 
 .font-display {
@@ -34,51 +44,44 @@ body {
   font-family: var(--font-mono), monospace;
 }
 
-/* Custom glowing mesh backgrounds */
-.bg-mesh-glow {
-  background: 
-    radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.12) 0%, transparent 60%),
-    radial-gradient(circle at 15% 25%, rgba(99, 102, 241, 0.10) 0%, transparent 50%),
-    radial-gradient(circle at 85% 35%, rgba(168, 85, 247, 0.08) 0%, transparent 50%);
+/* Flat dotted texture — no blur, no gradients */
+.bg-tech-grid {
+  background-size: 22px 22px;
+  background-image: radial-gradient(rgba(10, 10, 10, 0.14) 1.5px, transparent 1.5px);
 }
 
-.glass-panel {
-  background: rgba(18, 18, 22, 0.65);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+/* Core neubrutalist surface: solid fill, thick black border, hard offset shadow */
+.nb-panel {
+  background: #fffdf7;
+  border: 3px solid var(--nb-border);
+  box-shadow: 8px 8px 0 var(--nb-border);
 }
 
-.glass-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+.nb-card {
+  background: #fffdf7;
+  border: 3px solid var(--nb-border);
+  box-shadow: 6px 6px 0 var(--nb-border);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.18);
-  transform: translateY(-2px);
-  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7), 0 0 30px -10px rgba(16, 185, 129, 0.15);
+.nb-card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 var(--nb-border);
 }
 
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-6px); }
+/* Pressable control: shrinks shadow toward the surface on press */
+.nb-press {
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 
-.animate-float {
-  animation: float 4s ease-in-out infinite;
+.nb-press:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--nb-border);
 }
 
-@keyframes pulseGlow {
-  0%, 100% { opacity: 0.35; transform: scale(1); }
-  50% { opacity: 0.65; transform: scale(1.04); }
-}
-
-.animate-glow {
-  animation: pulseGlow 4s ease-in-out infinite;
+.nb-press:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0 var(--nb-border);
 }
 
 @keyframes wave {
@@ -92,21 +95,11 @@ body {
 .wave-bar-4 { animation: wave 1.2s ease-in-out infinite 0.2s; }
 .wave-bar-5 { animation: wave 1.2s ease-in-out infinite 0.4s; }
 
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
 }
 
-.animate-shimmer {
-  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0) 100%);
-  background-size: 200% 100%;
-  animation: shimmer 3s infinite;
-}
-
-/* Technical grid canvas overlay */
-.bg-tech-grid {
-  background-size: 40px 40px;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+.animate-marquee {
+  animation: marquee 22s linear infinite;
 }

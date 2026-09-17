@@ -30,6 +30,14 @@ import {
 
 type ShowcaseKey = "apple-pay" | "paylah" | "voice" | "vision" | "calendar";
 
+const ACCENT: Record<ShowcaseKey, { bg: string; border: string; text: string; badge: string }> = {
+  "apple-pay": { bg: "bg-[#4d7cff]", border: "border-[#4d7cff]", text: "text-white", badge: "bg-[#4d7cff] text-white" },
+  paylah: { bg: "bg-[#9b6bff]", border: "border-[#9b6bff]", text: "text-white", badge: "bg-[#9b6bff] text-white" },
+  voice: { bg: "bg-[#ffd21f]", border: "border-[#ffd21f]", text: "text-[#0a0a0a]", badge: "bg-[#ffd21f] text-[#0a0a0a]" },
+  vision: { bg: "bg-[#3ecf6e]", border: "border-[#3ecf6e]", text: "text-[#0a0a0a]", badge: "bg-[#3ecf6e] text-[#0a0a0a]" },
+  calendar: { bg: "bg-[#2bd4c7]", border: "border-[#2bd4c7]", text: "text-[#0a0a0a]", badge: "bg-[#2bd4c7] text-[#0a0a0a]" },
+};
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<ShowcaseKey>("apple-pay");
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
@@ -48,7 +56,6 @@ export default function Home() {
     {
       title: string;
       badge: string;
-      badgeColor: string;
       icon: React.ReactNode;
       description: string;
       terminal: Array<{ role: "device" | "system" | "ai" | "bot"; label: string; text: string }>;
@@ -69,8 +76,7 @@ export default function Home() {
     "apple-pay": {
       title: "Apple Pay Tap-to-Log",
       badge: "iOS 17+ Shortcuts",
-      badgeColor: "border-sky-500/30 bg-sky-500/10 text-sky-400",
-      icon: <IconContactless className="w-4 h-4 text-sky-400" />,
+      icon: <IconContactless className="w-4 h-4" />,
       description:
         "Tap your iPhone at any physical terminal. iOS Shortcuts fires a cryptographically signed HMAC webhook to log the expense and send an interactive Telegram card.",
       terminal: [
@@ -101,8 +107,7 @@ export default function Home() {
     paylah: {
       title: "DBS PayLah! & PayNow Push",
       badge: "Cloud Pub/Sub",
-      badgeColor: "border-purple-500/30 bg-purple-500/10 text-purple-400",
-      icon: <IconPubSub className="w-4 h-4 text-purple-400" />,
+      icon: <IconPubSub className="w-4 h-4" />,
       description:
         "Event-driven push architecture. Whenever DBS emails a payment receipt, Google Cloud Pub/Sub pushes it directly to the serverless webhook for regex extraction.",
       terminal: [
@@ -133,8 +138,7 @@ export default function Home() {
     voice: {
       title: "Multimodal Voice Memos",
       badge: "Gemini 3.6 Flash Audio",
-      badgeColor: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-      icon: <IconMicrophone className="w-4 h-4 text-amber-400" />,
+      icon: <IconMicrophone className="w-4 h-4" />,
       description:
         "Speak naturally on Telegram while on the move. Spoken Opus voice memos are streamed in-memory with magic-byte validation and converted into structured actions.",
       terminal: [
@@ -164,8 +168,7 @@ export default function Home() {
     vision: {
       title: "Receipt Vision OCR",
       badge: "Gemini Vision OCR",
-      badgeColor: "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-      icon: <IconCameraScan className="w-4 h-4 text-emerald-400" />,
+      icon: <IconCameraScan className="w-4 h-4" />,
       description:
         "Send photos of physical receipts, meal bills, or invoices. Extracts up to 30 line items with tax calculation and batch review before cloud commitment.",
       terminal: [
@@ -195,8 +198,7 @@ export default function Home() {
     calendar: {
       title: "Dual-Calendar Agenda",
       badge: "Google Calendar API v3",
-      badgeColor: "border-cyan-500/30 bg-cyan-500/10 text-cyan-400",
-      icon: <IconCalendar className="w-4 h-4 text-cyan-400" />,
+      icon: <IconCalendar className="w-4 h-4" />,
       description:
         "Schedules across separate Personal and Work calendars with automated conflict detection, Singapore Timezone localization, and cryptographic confirmation safeguards.",
       terminal: [
@@ -240,112 +242,103 @@ export default function Home() {
       ? commands
       : commands.filter((c) => c.category === selectedCategoryFilter);
 
+  const accent = ACCENT[activeTab];
+
   return (
-    <div className="min-h-screen bg-[#07080b] text-zinc-100 font-sans selection:bg-emerald-500 selection:text-black relative overflow-x-hidden">
-      {/* Background Architectural Canvas Grid */}
-      <div className="fixed inset-0 pointer-events-none bg-tech-grid opacity-50 z-0" />
+    <div className="min-h-screen bg-[#fdf6e9] text-[#0a0a0a] font-sans relative overflow-x-hidden">
+      {/* Flat dotted texture */}
+      <div className="fixed inset-0 pointer-events-none bg-tech-grid opacity-70 z-0" />
 
-      {/* Atmospheric Ambient Depth */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute -top-48 left-1/2 -translate-x-1/2 w-[1100px] h-[520px] bg-gradient-to-b from-emerald-500/10 via-teal-500/5 to-transparent blur-[160px] rounded-full animate-glow" />
-        <div className="absolute top-1/3 -left-64 w-[650px] h-[550px] bg-indigo-600/5 blur-[180px] rounded-full" />
-        <div className="absolute top-2/3 -right-64 w-[650px] h-[550px] bg-purple-600/5 blur-[180px] rounded-full" />
-      </div>
-
-      {/* FLOATING FROSTED NAVBAR */}
-      <div className="fixed top-5 inset-x-0 z-50 px-4 sm:px-8">
-        <header className="max-w-6xl mx-auto glass-panel rounded-2xl px-5 py-3 flex items-center justify-between shadow-2xl shadow-black/80 border border-white/[0.08]">
+      {/* NAVBAR — flat, thick bottom border, no blur */}
+      <header className="sticky top-0 z-50 bg-[#fdf6e9]/95 border-b-[3px] border-[#0a0a0a]">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-3.5 flex items-center justify-between">
           {/* Brand Mark */}
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-zinc-950 shadow-md shadow-emerald-500/20 border border-emerald-400/30">
-              <IconBolt className="w-4 h-4 text-zinc-950 fill-current" />
+            <div className="w-9 h-9 rounded-lg bg-[#ffd21f] border-[3px] border-[#0a0a0a] flex items-center justify-center shadow-[3px_3px_0_#0a0a0a]">
+              <IconBolt className="w-4 h-4 text-[#0a0a0a] fill-current" />
             </div>
             <div className="flex items-center gap-2.5">
-              <span className="font-display text-sm font-bold tracking-tight text-white">
-                Personal Assistant
+              <span className="font-display text-sm tracking-tight text-[#0a0a0a]">
+                PERSONAL ASSISTANT
               </span>
-              <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-[10px] font-mono font-medium text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#3ecf6e] border-2 border-[#0a0a0a] text-[10px] font-mono font-bold text-[#0a0a0a]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#0a0a0a] animate-pulse" />
                 ACTIVE NODE
               </span>
             </div>
           </div>
 
           {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-7 text-xs font-medium text-zinc-400">
-            <a href="#showcase" className="hover:text-emerald-400 transition-colors">
-              Interactive Workbench
+          <nav className="hidden md:flex items-center gap-6 text-xs font-bold uppercase tracking-wide text-[#0a0a0a]">
+            <a href="#showcase" className="hover:bg-[#ffd21f] px-2 py-1 rounded-md border-2 border-transparent hover:border-[#0a0a0a] transition-all">
+              Workbench
             </a>
-            <a href="#features" className="hover:text-emerald-400 transition-colors">
+            <a href="#features" className="hover:bg-[#ffd21f] px-2 py-1 rounded-md border-2 border-transparent hover:border-[#0a0a0a] transition-all">
               Capabilities
             </a>
-            <a href="#architecture" className="hover:text-emerald-400 transition-colors">
+            <a href="#architecture" className="hover:bg-[#ffd21f] px-2 py-1 rounded-md border-2 border-transparent hover:border-[#0a0a0a] transition-all">
               Pipeline
             </a>
-            <a href="#commands" className="hover:text-emerald-400 transition-colors">
+            <a href="#commands" className="hover:bg-[#ffd21f] px-2 py-1 rounded-md border-2 border-transparent hover:border-[#0a0a0a] transition-all">
               Command Deck
             </a>
           </nav>
 
-          {/* TOP RIGHT: Elevated 'Developed by Evan Yap' Badge */}
+          {/* TOP RIGHT: Built-by badge */}
           <div className="flex items-center gap-2.5">
             <a
               href="https://www.linkedin.com/in/evanyapzhikai/"
               target="_blank"
               rel="noopener noreferrer"
-              className="group relative inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800/90 border border-zinc-700/60 hover:border-emerald-500/40 text-xs font-medium text-zinc-300 transition-all duration-200 shadow-lg hover:shadow-emerald-500/15"
+              className="nb-press hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border-[3px] border-[#0a0a0a] shadow-[3px_3px_0_#0a0a0a] text-xs font-bold text-[#0a0a0a]"
               title="Connect with Evan Yap on LinkedIn"
             >
-              <div className="w-5 h-5 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 group-hover:bg-blue-600/30 transition-colors">
-                <IconLinkedIn className="w-3 h-3 text-blue-400" />
+              <div className="w-5 h-5 rounded bg-[#4d7cff] border-2 border-[#0a0a0a] flex items-center justify-center text-white">
+                <IconLinkedIn className="w-3 h-3" />
               </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-zinc-400 text-[11px] hidden sm:inline">Built by</span>
-                <span className="font-semibold text-white group-hover:text-emerald-300 transition-colors">
-                  Evan Yap
-                </span>
-              </div>
-              <IconExternalLink className="w-3 h-3 text-zinc-500 group-hover:text-emerald-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+              <span>Built by Evan Yap</span>
+              <IconExternalLink className="w-3 h-3" />
             </a>
 
             <a
               href="https://github.com/evanyap7/telegram-personal-assistant"
               target="_blank"
               rel="noopener noreferrer"
-              className="p-2 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/60 text-zinc-400 hover:text-white transition-colors"
+              className="nb-press p-2 rounded-lg bg-white border-[3px] border-[#0a0a0a] shadow-[3px_3px_0_#0a0a0a] text-[#0a0a0a]"
               title="View Source on GitHub"
             >
               <IconGitHub className="w-4 h-4" />
             </a>
           </div>
-        </header>
-      </div>
+        </div>
+      </header>
 
       {/* MAIN CONTAINER */}
-      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-8 pt-32 pb-24">
+      <div className="relative z-10 max-w-6xl mx-auto px-5 sm:px-8 pb-24">
         {/* HERO SECTION */}
-        <section className="py-12 sm:py-20 text-center sm:text-left relative">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-400 text-xs font-mono font-medium mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-            v2.5 • Event-Driven Fintech & Voice Processing Engine
+        <section className="py-14 sm:py-20 text-center sm:text-left relative">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md bg-white border-[3px] border-[#0a0a0a] shadow-[4px_4px_0_#0a0a0a] text-[#0a0a0a] text-xs font-mono font-bold mb-7">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#3ecf6e] border border-[#0a0a0a]" />
+            v2.5 • Event-Driven Fintech &amp; Voice Processing Engine
           </div>
 
-          <h1 className="font-display text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-white max-w-4xl leading-[1.08]">
-            Financial Telemetry &{" "}
-            <span className="bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
-              Multimodal Automation.
+          <h1 className="font-display text-3xl sm:text-5xl md:text-6xl tracking-tight text-[#0a0a0a] max-w-4xl leading-[1.15]">
+            Financial Telemetry &amp;{" "}
+            <span className="relative inline-block">
+              <span className="relative z-10">Multimodal Automation.</span>
+              <span className="absolute left-0 right-0 bottom-1 h-3 sm:h-5 bg-[#ffd21f] -z-0" />
             </span>
           </h1>
 
-          <p className="mt-6 text-base sm:text-lg text-zinc-400 max-w-2xl leading-relaxed font-normal">
+          <p className="mt-6 text-base sm:text-lg text-[#0a0a0a]/70 max-w-2xl leading-relaxed font-medium">
             A serverless assistant orchestrating Apple Pay NFC tap webhooks, DBS PayLah
             real-time push receipts, Opus voice buffers, and receipt vision OCR into
-            Google Sheets & Calendar in under 3 seconds.
+            Google Sheets &amp; Calendar in under 3 seconds.
           </p>
 
           {/* Quick Filter Switchers */}
           <div className="mt-8 flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs">
-            <span className="text-zinc-500 text-[11px] font-mono uppercase tracking-wider font-semibold mr-1">
+            <span className="text-[#0a0a0a]/60 text-[11px] font-mono uppercase tracking-wider font-bold mr-1">
               Select Trigger:
             </span>
             {[
@@ -362,10 +355,10 @@ export default function Home() {
                   setActiveTab(chip.id as ShowcaseKey);
                   document.getElementById("showcase")?.scrollIntoView({ behavior: "smooth" });
                 }}
-                className={`px-3 py-1.5 rounded-xl border transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`nb-press px-3 py-1.5 rounded-lg border-[3px] border-[#0a0a0a] cursor-pointer flex items-center gap-1.5 font-bold ${
                   activeTab === chip.id
-                    ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 font-semibold shadow-sm"
-                    : "bg-zinc-900/80 border-zinc-800/90 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/80"
+                    ? `${ACCENT[chip.id as ShowcaseKey].bg} ${ACCENT[chip.id as ShowcaseKey].text} shadow-[3px_3px_0_#0a0a0a]`
+                    : "bg-white text-[#0a0a0a] shadow-[3px_3px_0_#0a0a0a]"
                 }`}
               >
                 {chip.icon}
@@ -377,47 +370,44 @@ export default function Home() {
           {/* Technical Telemetry Grid */}
           <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 max-w-4xl">
             {[
-              { label: "Fintech Latency", value: "< 3s", sub: "NFC Tap & Pub/Sub Push", icon: <IconClock className="w-4 h-4 text-emerald-400" /> },
-              { label: "Extraction Accuracy", value: "100%", sub: "Regex + LLM Fast-Path", icon: <IconCheck className="w-4 h-4 text-emerald-400" /> },
-              { label: "Dual-Calendar Engine", value: "2-Way", sub: "Personal & Work routing", icon: <IconCalendar className="w-4 h-4 text-emerald-400" /> },
-              { label: "Security Safeguards", value: "0-Trust", sub: "HMAC single-use tokens", icon: <IconShield className="w-4 h-4 text-emerald-400" /> },
+              { label: "Fintech Latency", value: "< 3s", sub: "NFC Tap & Pub/Sub Push", icon: <IconClock className="w-4 h-4" />, accent: "bg-[#ffd21f]" },
+              { label: "Extraction Accuracy", value: "100%", sub: "Regex + LLM Fast-Path", icon: <IconCheck className="w-4 h-4" />, accent: "bg-[#3ecf6e]" },
+              { label: "Dual-Calendar Engine", value: "2-Way", sub: "Personal & Work routing", icon: <IconCalendar className="w-4 h-4" />, accent: "bg-[#2bd4c7]" },
+              { label: "Security Safeguards", value: "0-Trust", sub: "HMAC single-use tokens", icon: <IconShield className="w-4 h-4" />, accent: "bg-[#ff5c5c]" },
             ].map((metric) => (
-              <div
-                key={metric.label}
-                className="p-4 rounded-2xl glass-card text-left relative overflow-hidden"
-              >
+              <div key={metric.label} className="nb-card p-4 rounded-xl text-left">
                 <div className="flex items-center justify-between mb-2">
-                  <div className="font-mono text-2xl sm:text-3xl font-bold text-white tracking-tight">
+                  <div className="font-mono text-2xl sm:text-3xl font-bold text-[#0a0a0a] tracking-tight">
                     {metric.value}
                   </div>
-                  <div className="p-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+                  <div className={`p-1.5 rounded-md border-2 border-[#0a0a0a] ${metric.accent}`}>
                     {metric.icon}
                   </div>
                 </div>
-                <div className="text-xs font-semibold text-emerald-400">{metric.label}</div>
-                <div className="text-[11px] text-zinc-500 mt-0.5">{metric.sub}</div>
+                <div className="text-xs font-bold text-[#0a0a0a]">{metric.label}</div>
+                <div className="text-[11px] text-[#0a0a0a]/60 mt-0.5">{metric.sub}</div>
               </div>
             ))}
           </div>
         </section>
 
         {/* INTERACTIVE WORKBENCH */}
-        <section id="showcase" className="my-12 sm:my-20 scroll-mt-28">
+        <section id="showcase" className="my-12 sm:my-20 scroll-mt-24">
           <div className="text-center max-w-2xl mx-auto mb-8">
-            <span className="text-xs font-mono font-semibold tracking-wider uppercase text-emerald-400 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <span className="text-xs font-mono font-bold tracking-wider uppercase text-[#0a0a0a] px-3 py-1 rounded-md bg-[#ffd21f] border-2 border-[#0a0a0a]">
               Interactive Workbench
             </span>
-            <h2 className="font-display text-3xl sm:text-4xl font-bold text-white mt-3">
+            <h2 className="font-display text-2xl sm:text-3xl text-[#0a0a0a] mt-4">
               Event Pipeline in Action
             </h2>
-            <p className="text-sm text-zinc-400 mt-2">
+            <p className="text-sm text-[#0a0a0a]/70 mt-2 font-medium">
               Toggle between the simulated Telegram interactive card and the resulting Google Sheets row.
             </p>
           </div>
 
           {/* Workbench Tabs */}
           <div className="flex justify-center mb-6">
-            <div className="p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800/90 flex flex-wrap items-center justify-center gap-1 shadow-inner">
+            <div className="p-1.5 rounded-xl bg-white border-[3px] border-[#0a0a0a] flex flex-wrap items-center justify-center gap-1.5 shadow-[5px_5px_0_#0a0a0a]">
               {(
                 [
                   { id: "apple-pay", label: "Apple Pay Tap", tag: "iOS 17", icon: <IconContactless className="w-3.5 h-3.5" /> },
@@ -433,19 +423,19 @@ export default function Home() {
                     key={tab.id}
                     type="button"
                     onClick={() => setActiveTab(tab.id)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-colors duration-150 flex items-center gap-2 cursor-pointer border ${
+                    className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-colors duration-150 flex items-center gap-2 cursor-pointer border-2 ${
                       isActive
-                        ? "bg-zinc-800 border-zinc-700/80 text-white font-semibold shadow-sm"
-                        : "border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                        ? `${ACCENT[tab.id].bg} ${ACCENT[tab.id].text} border-[#0a0a0a]`
+                        : "border-transparent text-[#0a0a0a]/60 hover:bg-[#fdf6e9]"
                     }`}
                   >
                     {tab.icon}
                     <span>{tab.label}</span>
                     <span
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors ${
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
                         isActive
-                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                          : "bg-zinc-800/80 text-zinc-500"
+                          ? "bg-white border-[#0a0a0a] text-[#0a0a0a]"
+                          : "bg-[#fdf6e9] border-[#0a0a0a]/20 text-[#0a0a0a]/50"
                       }`}
                     >
                       {tab.tag}
@@ -457,80 +447,80 @@ export default function Home() {
           </div>
 
           {/* Workbench Display Console */}
-          <div className="glass-panel rounded-3xl p-6 sm:p-8 border border-white/[0.08] shadow-2xl relative overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-zinc-800/80">
+          <div className="nb-panel rounded-2xl p-6 sm:p-8 relative">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b-[3px] border-[#0a0a0a]">
               <div>
                 <div className="flex items-center gap-3">
-                  <h3 className="font-display text-xl font-bold text-white">
+                  <h3 className="font-display text-lg text-[#0a0a0a]">
                     {showcaseData[activeTab].title}
                   </h3>
                   <span
-                    className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full border ${showcaseData[activeTab].badgeColor}`}
+                    className={`text-[11px] font-mono font-bold px-2.5 py-0.5 rounded-md border-2 border-[#0a0a0a] ${accent.badge}`}
                   >
                     {showcaseData[activeTab].badge}
                   </span>
                 </div>
-                <p className="text-xs sm:text-sm text-zinc-400 mt-1 max-w-xl">
+                <p className="text-xs sm:text-sm text-[#0a0a0a]/70 mt-1 max-w-xl font-medium">
                   {showcaseData[activeTab].description}
                 </p>
               </div>
 
               {/* View mode toggle */}
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-zinc-950 border border-zinc-800 text-xs">
+              <div className="flex items-center gap-1 p-1 rounded-lg bg-[#fdf6e9] border-2 border-[#0a0a0a] text-xs">
                 <button
                   type="button"
                   onClick={() => setViewMode("card")}
-                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer flex items-center gap-1.5 font-bold ${
                     viewMode === "card"
-                      ? "bg-zinc-800 text-white font-semibold"
-                      : "text-zinc-400 hover:text-zinc-200"
+                      ? "bg-[#0a0a0a] text-white"
+                      : "text-[#0a0a0a]/60 hover:text-[#0a0a0a]"
                   }`}
                 >
-                  <IconTelegram className="w-3.5 h-3.5 text-blue-400" />
+                  <IconTelegram className="w-3.5 h-3.5" />
                   <span>Telegram Card</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewMode("sheet")}
-                  className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer flex items-center gap-1.5 font-bold ${
                     viewMode === "sheet"
-                      ? "bg-zinc-800 text-white font-semibold"
-                      : "text-zinc-400 hover:text-zinc-200"
+                      ? "bg-[#0a0a0a] text-white"
+                      : "text-[#0a0a0a]/60 hover:text-[#0a0a0a]"
                   }`}
                 >
-                  <IconSheetTable className="w-3.5 h-3.5 text-emerald-400" />
+                  <IconSheetTable className="w-3.5 h-3.5" />
                   <span>Google Sheets</span>
                 </button>
               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6 items-stretch">
-              {/* Left Column: Serverless Log Pipeline */}
-              <div className="rounded-2xl bg-zinc-950/90 border border-zinc-800/80 p-5 font-mono text-xs flex flex-col justify-between shadow-inner min-h-[320px]">
+              {/* Left Column: Serverless Log Pipeline (inverted flat terminal) */}
+              <div className="rounded-xl bg-[#0a0a0a] border-[3px] border-[#0a0a0a] p-5 font-mono text-xs flex flex-col justify-between min-h-[320px]">
                 <div>
-                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-zinc-900 text-zinc-500 text-[11px] uppercase tracking-wider">
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/15 text-white/50 text-[11px] uppercase tracking-wider">
                     <span className="flex items-center gap-1.5">
-                      <IconTerminal className="w-3.5 h-3.5 text-zinc-400" />
+                      <IconTerminal className="w-3.5 h-3.5 text-white/70" />
                       Serverless Execution Trace
                     </span>
-                    <span className="text-emerald-400 font-bold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-[#3ecf6e] font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#3ecf6e] animate-pulse" />
                       FAST PATH
                     </span>
                   </div>
 
                   {activeTab === "voice" && (
-                    <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between">
-                      <div className="text-amber-400 text-xs font-sans font-medium flex items-center gap-2">
-                        <IconMicrophone className="w-4 h-4 text-amber-400" />
+                    <div className="mb-4 p-3 rounded-lg bg-[#ffd21f]/15 border border-[#ffd21f]/40 flex items-center justify-between">
+                      <div className="text-[#ffd21f] text-xs font-sans font-bold flex items-center gap-2">
+                        <IconMicrophone className="w-4 h-4" />
                         <span>Streaming Opus audio buffer</span>
                       </div>
                       <div className="flex items-center gap-1 h-6">
-                        <span className="w-1 bg-amber-400 rounded-full wave-bar-1" />
-                        <span className="w-1 bg-amber-400 rounded-full wave-bar-2" />
-                        <span className="w-1 bg-amber-400 rounded-full wave-bar-3" />
-                        <span className="w-1 bg-amber-400 rounded-full wave-bar-4" />
-                        <span className="w-1 bg-amber-400 rounded-full wave-bar-5" />
+                        <span className="w-1 bg-[#ffd21f] rounded-full wave-bar-1" />
+                        <span className="w-1 bg-[#ffd21f] rounded-full wave-bar-2" />
+                        <span className="w-1 bg-[#ffd21f] rounded-full wave-bar-3" />
+                        <span className="w-1 bg-[#ffd21f] rounded-full wave-bar-4" />
+                        <span className="w-1 bg-[#ffd21f] rounded-full wave-bar-5" />
                       </div>
                     </div>
                   )}
@@ -538,20 +528,20 @@ export default function Home() {
                   <div className="space-y-3">
                     {showcaseData[activeTab].terminal.map((step, i) => (
                       <div key={i} className="flex items-start gap-2.5">
-                        <span className="text-zinc-600 select-none">0{i + 1}</span>
+                        <span className="text-white/30 select-none">0{i + 1}</span>
                         <div className="flex-1">
-                          <span className="text-[10px] uppercase font-bold text-zinc-500 mr-2 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800">
+                          <span className="text-[10px] uppercase font-bold text-white/50 mr-2 px-1.5 py-0.5 rounded bg-white/10">
                             {step.label}
                           </span>
                           <span
                             className={`leading-relaxed ${
                               step.role === "system"
-                                ? "text-cyan-400"
+                                ? "text-[#2bd4c7]"
                                 : step.role === "ai"
-                                ? "text-purple-300"
+                                ? "text-[#9b6bff]"
                                 : step.role === "bot"
-                                ? "text-emerald-400 font-semibold"
-                                : "text-zinc-300"
+                                ? "text-[#3ecf6e] font-semibold"
+                                : "text-white/80"
                             }`}
                           >
                             {step.text}
@@ -562,12 +552,12 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="mt-6 pt-3 border-t border-zinc-900/80 flex items-center justify-between text-[11px] text-zinc-500">
+                <div className="mt-6 pt-3 border-t border-white/15 flex items-center justify-between text-[11px] text-white/50">
                   <span className="flex items-center gap-1">
-                    <IconClock className="w-3.5 h-3.5 text-zinc-500" />
+                    <IconClock className="w-3.5 h-3.5" />
                     Roundtrip Latency: ~380ms
                   </span>
-                  <span className="flex items-center gap-1 text-emerald-400">
+                  <span className="flex items-center gap-1 text-[#3ecf6e]">
                     <IconShield className="w-3.5 h-3.5" />
                     HMAC Verified
                   </span>
@@ -575,60 +565,60 @@ export default function Home() {
               </div>
 
               {/* Right Column: Dynamic View */}
-              <div className="rounded-2xl bg-gradient-to-b from-zinc-900 to-zinc-950 border border-zinc-800 p-6 flex flex-col justify-between shadow-xl min-h-[320px]">
+              <div className="rounded-xl bg-[#fdf6e9] border-[3px] border-[#0a0a0a] p-6 flex flex-col justify-between min-h-[320px]">
                 {viewMode === "card" ? (
                   <>
                     <div>
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-400 text-xs">
-                            <IconTelegram className="w-3.5 h-3.5 text-blue-400" />
+                          <div className="w-7 h-7 rounded-lg bg-[#4d7cff] border-2 border-[#0a0a0a] flex items-center justify-center text-white text-xs">
+                            <IconTelegram className="w-3.5 h-3.5" />
                           </div>
                           <div>
-                            <div className="text-xs font-semibold text-zinc-200">
+                            <div className="text-xs font-bold text-[#0a0a0a]">
                               Telegram Bot Card
                             </div>
-                            <div className="text-[10px] text-zinc-500">Delivered in Singapore (SGT)</div>
+                            <div className="text-[10px] text-[#0a0a0a]/50">Delivered in Singapore (SGT)</div>
                           </div>
                         </div>
-                        <span className="text-[10px] text-zinc-500 font-mono">Just Now</span>
+                        <span className="text-[10px] text-[#0a0a0a]/50 font-mono">Just Now</span>
                       </div>
 
-                      <div className="p-4 rounded-xl bg-zinc-950/80 border border-zinc-800/90 mb-4">
-                        <div className="flex items-center gap-2 text-sm font-bold text-white mb-3">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                      <div className="p-4 rounded-lg bg-white border-2 border-[#0a0a0a] mb-4">
+                        <div className="flex items-center gap-2 text-sm font-bold text-[#0a0a0a] mb-3">
+                          <span className="w-2 h-2 rounded-full bg-[#3ecf6e] border border-[#0a0a0a]" />
                           {showcaseData[activeTab].previewCard.header}
                         </div>
 
                         <div className="space-y-2.5 text-xs">
                           {showcaseData[activeTab].previewCard.lines.map((line, idx) => (
                             <div key={idx} className="flex items-center justify-between">
-                              <span className="text-zinc-400">{line.label}:</span>
-                              <span className="font-semibold text-zinc-200">{line.value}</span>
+                              <span className="text-[#0a0a0a]/60">{line.label}:</span>
+                              <span className="font-bold text-[#0a0a0a]">{line.value}</span>
                             </div>
                           ))}
                         </div>
                       </div>
                     </div>
 
-                    {/* Interactive Action Buttons with Zero Emojis */}
+                    {/* Interactive Action Buttons */}
                     <div className="grid grid-cols-2 gap-2 pt-2">
                       <button
                         type="button"
                         onClick={() =>
                           setInteractiveCategory((c) => (c === "Dining" ? "Groceries" : "Dining"))
                         }
-                        className="py-2 px-3 rounded-xl bg-zinc-800/90 hover:bg-zinc-750 text-zinc-200 text-xs font-medium border border-zinc-700/60 text-center transition-all hover:text-white cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+                        className="nb-press py-2 px-3 rounded-lg bg-white text-[#0a0a0a] text-xs font-bold border-2 border-[#0a0a0a] text-center flex items-center justify-center gap-1.5"
                       >
-                        <IconPencil className="w-3.5 h-3.5 text-zinc-400" />
+                        <IconPencil className="w-3.5 h-3.5" />
                         <span>Change Category</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => alert("Simulation: Soft-delete undo triggered in Google Sheets.")}
-                        className="py-2 px-3 rounded-xl bg-zinc-800/90 hover:bg-rose-950/40 text-rose-300 text-xs font-medium border border-zinc-700/60 text-center transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+                        className="nb-press py-2 px-3 rounded-lg bg-[#ff5c5c] text-white text-xs font-bold border-2 border-[#0a0a0a] text-center flex items-center justify-center gap-1.5"
                       >
-                        <IconTrash className="w-3.5 h-3.5 text-rose-400" />
+                        <IconTrash className="w-3.5 h-3.5" />
                         <span>Undo / Delete</span>
                       </button>
                     </div>
@@ -637,44 +627,44 @@ export default function Home() {
                   <div>
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-400 text-xs font-bold">
-                          <IconSheetTable className="w-3.5 h-3.5 text-emerald-400" />
+                        <div className="w-7 h-7 rounded-lg bg-[#3ecf6e] border-2 border-[#0a0a0a] flex items-center justify-center text-[#0a0a0a] text-xs font-bold">
+                          <IconSheetTable className="w-3.5 h-3.5" />
                         </div>
                         <div>
-                          <div className="text-xs font-semibold text-zinc-200">
+                          <div className="text-xs font-bold text-[#0a0a0a]">
                             Google Sheets Live Data
                           </div>
-                          <div className="text-[10px] text-zinc-500">Transactions Sheet • Row 25</div>
+                          <div className="text-[10px] text-[#0a0a0a]/50">Transactions Sheet • Row 25</div>
                         </div>
                       </div>
-                      <span className="text-[10px] text-emerald-400 font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                      <span className="text-[10px] text-[#0a0a0a] font-mono font-bold px-2 py-0.5 rounded bg-[#3ecf6e] border-2 border-[#0a0a0a]">
                         APPENDED
                       </span>
                     </div>
 
-                    <div className="p-4 rounded-xl bg-zinc-950/90 border border-zinc-800/90 font-mono text-xs space-y-2.5">
-                      <div className="flex justify-between border-b border-zinc-900 pb-2">
-                        <span className="text-zinc-500">Timestamp:</span>
-                        <span className="text-zinc-200">{showcaseData[activeTab].sheetRow.timestamp}</span>
+                    <div className="p-4 rounded-lg bg-white border-2 border-[#0a0a0a] font-mono text-xs space-y-2.5">
+                      <div className="flex justify-between border-b border-[#0a0a0a]/15 pb-2">
+                        <span className="text-[#0a0a0a]/50">Timestamp:</span>
+                        <span className="text-[#0a0a0a]">{showcaseData[activeTab].sheetRow.timestamp}</span>
                       </div>
-                      <div className="flex justify-between border-b border-zinc-900 pb-2">
-                        <span className="text-zinc-500">Amount:</span>
-                        <span className="text-emerald-400 font-bold">{showcaseData[activeTab].sheetRow.amount}</span>
+                      <div className="flex justify-between border-b border-[#0a0a0a]/15 pb-2">
+                        <span className="text-[#0a0a0a]/50">Amount:</span>
+                        <span className="text-[#0a0a0a] font-bold">{showcaseData[activeTab].sheetRow.amount}</span>
                       </div>
-                      <div className="flex justify-between border-b border-zinc-900 pb-2">
-                        <span className="text-zinc-500">Category:</span>
-                        <span className="text-purple-300 px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-[11px]">
+                      <div className="flex justify-between border-b border-[#0a0a0a]/15 pb-2">
+                        <span className="text-[#0a0a0a]/50">Category:</span>
+                        <span className="text-[#0a0a0a] px-1.5 py-0.5 rounded bg-[#9b6bff]/20 border border-[#9b6bff] text-[11px] font-bold">
                           {showcaseData[activeTab].sheetRow.category}
                         </span>
                       </div>
-                      <div className="flex justify-between border-b border-zinc-900 pb-2">
-                        <span className="text-zinc-500">Description:</span>
-                        <span className="text-zinc-300 truncate max-w-[200px]">{showcaseData[activeTab].sheetRow.description}</span>
+                      <div className="flex justify-between border-b border-[#0a0a0a]/15 pb-2">
+                        <span className="text-[#0a0a0a]/50">Description:</span>
+                        <span className="text-[#0a0a0a] truncate max-w-[200px]">{showcaseData[activeTab].sheetRow.description}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-zinc-500">Row Status:</span>
-                        <span className="text-emerald-400 font-bold flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        <span className="text-[#0a0a0a]/50">Row Status:</span>
+                        <span className="text-[#0a0a0a] font-bold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#3ecf6e] border border-[#0a0a0a]" />
                           {showcaseData[activeTab].sheetRow.status}
                         </span>
                       </div>
@@ -689,149 +679,149 @@ export default function Home() {
         {/* SYSTEM CAPABILITIES BENTO MATRIX */}
         <section id="features" className="my-16 sm:my-24">
           <div className="text-center max-w-2xl mx-auto mb-12">
-            <span className="text-xs font-mono font-semibold tracking-wider uppercase text-emerald-400 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+            <span className="text-xs font-mono font-bold tracking-wider uppercase text-[#0a0a0a] px-3 py-1 rounded-md bg-[#ffd21f] border-2 border-[#0a0a0a]">
               System Capabilities
             </span>
-            <h2 className="font-display text-3xl sm:text-4xl font-bold text-white mt-3">
+            <h2 className="font-display text-2xl sm:text-3xl text-[#0a0a0a] mt-4">
               Full-Stack Architecture
             </h2>
-            <p className="text-sm text-zinc-400 mt-2">
+            <p className="text-sm text-[#0a0a0a]/70 mt-2 font-medium">
               Bespoke event handling, zero-trust confirmation loops, and multimodal intelligence.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {/* Bento 1: Wide Fintech Hub */}
-            <div className="md:col-span-2 p-7 rounded-3xl glass-card relative overflow-hidden border border-white/[0.08] hover:border-blue-500/40">
+            <div className="md:col-span-2 nb-card p-7 rounded-2xl relative">
               <div className="flex items-start justify-between mb-4">
-                <div className="p-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
-                  <IconContactless className="w-6 h-6 text-blue-400" />
+                <div className="p-3 rounded-xl bg-[#4d7cff] border-2 border-[#0a0a0a] text-white">
+                  <IconContactless className="w-6 h-6" />
                 </div>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-blue-400 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#0a0a0a] px-2.5 py-1 rounded-md bg-[#fdf6e9] border-2 border-[#0a0a0a]">
                   Fintech Hub
                 </span>
               </div>
-              <h3 className="font-display text-xl font-bold text-white mb-2">
-                Apple Pay Tap & DBS PayLah Real-Time Push
+              <h3 className="font-display text-lg text-[#0a0a0a] mb-2">
+                Apple Pay Tap &amp; DBS PayLah Real-Time Push
               </h3>
-              <p className="text-sm text-zinc-400 leading-relaxed max-w-xl">
+              <p className="text-sm text-[#0a0a0a]/70 leading-relaxed max-w-xl font-medium">
                 Couples iOS 17 Shortcuts webhooks with Google Cloud Pub/Sub push notifications.
                 Receipts from NFC taps or DBS PayNow transfers are parsed deterministically and logged in under 3 seconds.
               </p>
 
-              <div className="mt-6 pt-5 border-t border-zinc-900 grid grid-cols-3 gap-4 text-xs">
+              <div className="mt-6 pt-5 border-t-2 border-[#0a0a0a]/10 grid grid-cols-3 gap-4 text-xs">
                 <div>
-                  <div className="text-zinc-500 text-[11px] font-mono">NFC Response</div>
-                  <div className="font-mono font-bold text-white mt-0.5">&lt; 1.2s</div>
+                  <div className="text-[#0a0a0a]/50 text-[11px] font-mono">NFC Response</div>
+                  <div className="font-mono font-bold text-[#0a0a0a] mt-0.5">&lt; 1.2s</div>
                 </div>
                 <div>
-                  <div className="text-zinc-500 text-[11px] font-mono">Pub/Sub Ingestion</div>
-                  <div className="font-mono font-bold text-white mt-0.5">Push Driven</div>
+                  <div className="text-[#0a0a0a]/50 text-[11px] font-mono">Pub/Sub Ingestion</div>
+                  <div className="font-mono font-bold text-[#0a0a0a] mt-0.5">Push Driven</div>
                 </div>
                 <div>
-                  <div className="text-zinc-500 text-[11px] font-mono">Regex Precision</div>
-                  <div className="font-mono font-bold text-emerald-400 mt-0.5">100% Deterministic</div>
+                  <div className="text-[#0a0a0a]/50 text-[11px] font-mono">Regex Precision</div>
+                  <div className="font-mono font-bold text-[#3ecf6e] mt-0.5">100% Deterministic</div>
                 </div>
               </div>
             </div>
 
             {/* Bento 2: Voice Audio Buffer */}
-            <div className="p-7 rounded-3xl glass-card border border-white/[0.08] hover:border-amber-500/40 flex flex-col justify-between">
+            <div className="nb-card p-7 rounded-2xl flex flex-col justify-between">
               <div>
                 <div className="flex items-start justify-between mb-4">
-                  <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
-                    <IconMicrophone className="w-6 h-6 text-amber-400" />
+                  <div className="p-3 rounded-xl bg-[#ffd21f] border-2 border-[#0a0a0a] text-[#0a0a0a]">
+                    <IconMicrophone className="w-6 h-6" />
                   </div>
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#0a0a0a] px-2.5 py-1 rounded-md bg-[#fdf6e9] border-2 border-[#0a0a0a]">
                     Audio Buffer
                   </span>
                 </div>
-                <h3 className="font-display text-xl font-bold text-white mb-2">
-                  Voice Notes & Memos
+                <h3 className="font-display text-lg text-[#0a0a0a] mb-2">
+                  Voice Notes &amp; Memos
                 </h3>
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                <p className="text-xs sm:text-sm text-[#0a0a0a]/70 leading-relaxed font-medium">
                   In-memory audio pipeline validating magic-bytes and streaming Opus audio directly to Gemini 3.6 Flash.
                 </p>
               </div>
 
-              <div className="mt-6 pt-5 border-t border-zinc-900 flex items-center justify-between text-xs">
-                <span className="text-zinc-500">Zero-Disk Overhead</span>
-                <span className="font-mono font-bold text-amber-400">RAM Stream</span>
+              <div className="mt-6 pt-5 border-t-2 border-[#0a0a0a]/10 flex items-center justify-between text-xs">
+                <span className="text-[#0a0a0a]/50">Zero-Disk Overhead</span>
+                <span className="font-mono font-bold text-[#0a0a0a]">RAM Stream</span>
               </div>
             </div>
 
             {/* Bento 3: Dual Calendar */}
-            <div className="p-7 rounded-3xl glass-card border border-white/[0.08] hover:border-cyan-500/40 flex flex-col justify-between">
+            <div className="nb-card p-7 rounded-2xl flex flex-col justify-between">
               <div>
                 <div className="flex items-start justify-between mb-4">
-                  <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-                    <IconCalendar className="w-6 h-6 text-cyan-400" />
+                  <div className="p-3 rounded-xl bg-[#2bd4c7] border-2 border-[#0a0a0a] text-[#0a0a0a]">
+                    <IconCalendar className="w-6 h-6" />
                   </div>
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#0a0a0a] px-2.5 py-1 rounded-md bg-[#fdf6e9] border-2 border-[#0a0a0a]">
                     Calendar Engine
                   </span>
                 </div>
-                <h3 className="font-display text-xl font-bold text-white mb-2">
+                <h3 className="font-display text-lg text-[#0a0a0a] mb-2">
                   Dual-Calendar Routing
                 </h3>
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                <p className="text-xs sm:text-sm text-[#0a0a0a]/70 leading-relaxed font-medium">
                   Syncs across Personal and Work calendars with automated conflict checks and Singapore Time localization.
                 </p>
               </div>
 
-              <div className="mt-6 pt-5 border-t border-zinc-900 flex items-center justify-between text-xs">
-                <span className="text-zinc-500">Calendar Routing</span>
-                <span className="font-mono font-bold text-cyan-400">Personal & Work</span>
+              <div className="mt-6 pt-5 border-t-2 border-[#0a0a0a]/10 flex items-center justify-between text-xs">
+                <span className="text-[#0a0a0a]/50">Calendar Routing</span>
+                <span className="font-mono font-bold text-[#0a0a0a]">Personal & Work</span>
               </div>
             </div>
 
             {/* Bento 4: Receipt Vision */}
-            <div className="p-7 rounded-3xl glass-card border border-white/[0.08] hover:border-emerald-500/40 flex flex-col justify-between">
+            <div className="nb-card p-7 rounded-2xl flex flex-col justify-between">
               <div>
                 <div className="flex items-start justify-between mb-4">
-                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                    <IconCameraScan className="w-6 h-6 text-emerald-400" />
+                  <div className="p-3 rounded-xl bg-[#3ecf6e] border-2 border-[#0a0a0a] text-[#0a0a0a]">
+                    <IconCameraScan className="w-6 h-6" />
                   </div>
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#0a0a0a] px-2.5 py-1 rounded-md bg-[#fdf6e9] border-2 border-[#0a0a0a]">
                     Computer Vision
                   </span>
                 </div>
-                <h3 className="font-display text-xl font-bold text-white mb-2">
-                  Vision & Receipt OCR
+                <h3 className="font-display text-lg text-[#0a0a0a] mb-2">
+                  Vision &amp; Receipt OCR
                 </h3>
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                <p className="text-xs sm:text-sm text-[#0a0a0a]/70 leading-relaxed font-medium">
                   Extracts up to 30 line items from bills, flyers, or timetable photos with subtotal and GST breakdown.
                 </p>
               </div>
 
-              <div className="mt-6 pt-5 border-t border-zinc-900 flex items-center justify-between text-xs">
-                <span className="text-zinc-500">Batch Processing</span>
-                <span className="font-mono font-bold text-emerald-400">Up to 30 Items</span>
+              <div className="mt-6 pt-5 border-t-2 border-[#0a0a0a]/10 flex items-center justify-between text-xs">
+                <span className="text-[#0a0a0a]/50">Batch Processing</span>
+                <span className="font-mono font-bold text-[#0a0a0a]">Up to 30 Items</span>
               </div>
             </div>
 
             {/* Bento 5: Zero-Trust Security */}
-            <div className="p-7 rounded-3xl glass-card border border-white/[0.08] hover:border-rose-500/40 flex flex-col justify-between">
+            <div className="nb-card p-7 rounded-2xl flex flex-col justify-between">
               <div>
                 <div className="flex items-start justify-between mb-4">
-                  <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400">
-                    <IconShield className="w-6 h-6 text-rose-400" />
+                  <div className="p-3 rounded-xl bg-[#ff5c5c] border-2 border-[#0a0a0a] text-white">
+                    <IconShield className="w-6 h-6" />
                   </div>
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-rose-400 px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/20">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#0a0a0a] px-2.5 py-1 rounded-md bg-[#fdf6e9] border-2 border-[#0a0a0a]">
                     Zero-Trust
                   </span>
                 </div>
-                <h3 className="font-display text-xl font-bold text-white mb-2">
+                <h3 className="font-display text-lg text-[#0a0a0a] mb-2">
                   Security Safeguards
                 </h3>
-                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                <p className="text-xs sm:text-sm text-[#0a0a0a]/70 leading-relaxed font-medium">
                   Single-use cryptographic tokens with 5-minute auto-expiry, user allowlisting, and stateful deduplication.
                 </p>
               </div>
 
-              <div className="mt-6 pt-5 border-t border-zinc-900 flex items-center justify-between text-xs">
-                <span className="text-zinc-500">Action Expiration</span>
-                <span className="font-mono font-bold text-rose-400">5 Mins TTL</span>
+              <div className="mt-6 pt-5 border-t-2 border-[#0a0a0a]/10 flex items-center justify-between text-xs">
+                <span className="text-[#0a0a0a]/50">Action Expiration</span>
+                <span className="font-mono font-bold text-[#0a0a0a]">5 Mins TTL</span>
               </div>
             </div>
           </div>
@@ -839,15 +829,15 @@ export default function Home() {
 
         {/* ARCHITECTURE PIPELINE */}
         <section id="architecture" className="my-16 sm:my-24">
-          <div className="p-8 sm:p-10 rounded-3xl glass-panel border border-white/[0.08] shadow-2xl relative overflow-hidden">
+          <div className="nb-panel p-8 sm:p-10 rounded-2xl relative">
             <div className="max-w-3xl mb-8">
-              <span className="text-xs font-mono font-semibold tracking-wider uppercase text-emerald-400 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+              <span className="text-xs font-mono font-bold tracking-wider uppercase text-[#0a0a0a] px-3 py-1 rounded-md bg-[#ffd21f] border-2 border-[#0a0a0a]">
                 Data Flow
               </span>
-              <h2 className="font-display text-2xl sm:text-3xl font-bold text-white mt-3">
+              <h2 className="font-display text-xl sm:text-2xl text-[#0a0a0a] mt-4">
                 Event-Driven Serverless Pipeline
               </h2>
-              <p className="text-xs sm:text-sm text-zinc-400 mt-2 leading-relaxed">
+              <p className="text-xs sm:text-sm text-[#0a0a0a]/70 mt-2 leading-relaxed font-medium">
                 How incoming physical signals translate into structured cloud records in under 3 seconds.
               </p>
             </div>
@@ -859,48 +849,52 @@ export default function Home() {
                   title: "Signal Ingestion",
                   desc: "Apple Pay NFC Shortcut, Gmail Pub/Sub webhook, or Telegram bot payload.",
                   badge: "HTTPS / HMAC",
-                  icon: <IconBolt className="w-4 h-4 text-emerald-400" />,
+                  icon: <IconBolt className="w-4 h-4" />,
+                  accent: "bg-[#ffd21f]",
                 },
                 {
                   step: "02",
                   title: "Auth & Validation",
                   desc: "Secret verification, user ID allowlist check, and stateful UpdateLog deduplication.",
                   badge: "Zero-Trust",
-                  icon: <IconShield className="w-4 h-4 text-cyan-400" />,
+                  icon: <IconShield className="w-4 h-4" />,
+                  accent: "bg-[#2bd4c7]",
                 },
                 {
                   step: "03",
                   title: "Intelligence Routing",
                   desc: "Gemini 3.6 Flash multimodal audio/vision & deterministic regex fast-path.",
                   badge: "AI SDK v4",
-                  icon: <IconSparkles className="w-4 h-4 text-purple-400" />,
+                  icon: <IconSparkles className="w-4 h-4" />,
+                  accent: "bg-[#9b6bff]",
                 },
                 {
                   step: "04",
                   title: "Storage & Feedback",
                   desc: "Google Sheets / Calendar append & interactive Telegram callback dispatch.",
                   badge: "Workspace API",
-                  icon: <IconDatabase className="w-4 h-4 text-amber-400" />,
+                  icon: <IconDatabase className="w-4 h-4" />,
+                  accent: "bg-[#3ecf6e]",
                 },
               ].map((pipe) => (
                 <div
                   key={pipe.step}
-                  className="p-5 rounded-2xl bg-zinc-950/80 border border-zinc-800/80 flex flex-col justify-between"
+                  className="p-5 rounded-xl bg-[#fdf6e9] border-2 border-[#0a0a0a] flex flex-col justify-between"
                 >
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
+                      <div className={`flex items-center gap-2 px-2 py-1 rounded-md border-2 border-[#0a0a0a] ${pipe.accent}`}>
                         {pipe.icon}
-                        <span className="text-xs font-mono font-bold text-emerald-400">
+                        <span className="text-xs font-mono font-bold text-[#0a0a0a]">
                           {pipe.step}
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-white border border-[#0a0a0a]/30 text-[#0a0a0a]">
                         {pipe.badge}
                       </span>
                     </div>
-                    <div className="font-display text-sm font-bold text-white mb-1.5">{pipe.title}</div>
-                    <div className="text-xs text-zinc-400 leading-relaxed">{pipe.desc}</div>
+                    <div className="font-display text-sm text-[#0a0a0a] mb-1.5">{pipe.title}</div>
+                    <div className="text-xs text-[#0a0a0a]/70 leading-relaxed font-medium">{pipe.desc}</div>
                   </div>
                 </div>
               ))}
@@ -910,26 +904,26 @@ export default function Home() {
 
         {/* COMMAND REFERENCE */}
         <section id="commands" className="my-16 sm:my-24">
-          <div className="p-8 sm:p-10 rounded-3xl glass-panel border border-white/[0.08] shadow-2xl">
+          <div className="nb-panel p-8 sm:p-10 rounded-2xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
               <div>
-                <h2 className="font-display text-2xl font-bold text-white">Bot Command Reference</h2>
-                <p className="text-xs sm:text-sm text-zinc-400 mt-1">
+                <h2 className="font-display text-xl text-[#0a0a0a]">Bot Command Reference</h2>
+                <p className="text-xs sm:text-sm text-[#0a0a0a]/70 mt-1 font-medium">
                   Click any command to copy it directly to your clipboard.
                 </p>
               </div>
 
               {/* Filter Pills */}
-              <div className="flex items-center gap-1.5 p-1 rounded-xl bg-zinc-950 border border-zinc-800 text-xs">
+              <div className="flex items-center gap-1.5 p-1 rounded-lg bg-[#fdf6e9] border-2 border-[#0a0a0a] text-xs">
                 {["All", "Calendar", "Finance", "Fintech", "System"].map((cat) => (
                   <button
                     key={cat}
                     type="button"
                     onClick={() => setSelectedCategoryFilter(cat)}
-                    className={`px-3 py-1 rounded-lg transition-colors cursor-pointer ${
+                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer font-bold ${
                       selectedCategoryFilter === cat
-                        ? "bg-zinc-800 text-white font-semibold"
-                        : "text-zinc-400 hover:text-zinc-200"
+                        ? "bg-[#0a0a0a] text-white"
+                        : "text-[#0a0a0a]/60 hover:text-[#0a0a0a]"
                     }`}
                   >
                     {cat}
@@ -938,30 +932,30 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="divide-y divide-zinc-800/60 font-mono text-sm">
+            <div className="divide-y-2 divide-[#0a0a0a]/10 font-mono text-sm">
               {filteredCommands.map((c) => (
                 <div
                   key={c.cmd}
                   onClick={() => handleCopy(c.cmd)}
-                  className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-white/[0.02] px-2 rounded-xl transition-colors cursor-pointer group"
+                  className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-[#ffd21f]/15 px-2 rounded-lg transition-colors cursor-pointer group"
                 >
                   <div className="flex items-center gap-3">
-                    <code className="text-emerald-400 font-semibold px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 group-hover:border-emerald-500/40 transition-colors flex items-center gap-1.5">
-                      <IconCodeBracket className="w-3.5 h-3.5 text-emerald-400" />
+                    <code className="text-[#0a0a0a] font-bold px-2.5 py-1 rounded-md bg-[#3ecf6e] border-2 border-[#0a0a0a] flex items-center gap-1.5">
+                      <IconCodeBracket className="w-3.5 h-3.5" />
                       {c.cmd}
                     </code>
-                    <span className="text-zinc-300 font-sans text-xs sm:text-sm">{c.desc}</span>
+                    <span className="text-[#0a0a0a] font-sans text-xs sm:text-sm font-medium">{c.desc}</span>
                   </div>
 
-                  <span className="text-xs text-zinc-500 group-hover:text-emerald-400 transition-colors flex items-center gap-1.5">
+                  <span className="text-xs text-[#0a0a0a]/60 group-hover:text-[#0a0a0a] transition-colors flex items-center gap-1.5 font-bold">
                     {copiedCmd === c.cmd ? (
                       <>
-                        <IconCheck className="w-3.5 h-3.5 text-emerald-400" />
-                        <span className="text-emerald-400 font-semibold">Copied to clipboard</span>
+                        <IconCheck className="w-3.5 h-3.5" />
+                        <span>Copied to clipboard</span>
                       </>
                     ) : (
                       <>
-                        <IconCopy className="w-3.5 h-3.5 text-zinc-500 group-hover:text-emerald-400" />
+                        <IconCopy className="w-3.5 h-3.5" />
                         <span>Copy</span>
                       </>
                     )}
@@ -973,9 +967,9 @@ export default function Home() {
         </section>
 
         {/* CRAFTED FOOTER */}
-        <footer className="mt-20 pt-10 border-t border-zinc-900 text-xs text-zinc-500 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <footer className="mt-20 pt-8 border-t-[3px] border-[#0a0a0a] text-xs text-[#0a0a0a]/70 flex flex-col sm:flex-row items-center justify-between gap-4 font-bold">
           <div className="flex items-center gap-2">
-            <span>Built with Next.js, Vercel AI SDK & Gemini</span>
+            <span>Built with Next.js, Vercel AI SDK &amp; Gemini</span>
             <span>•</span>
             <span>Private Serverless Assistant</span>
           </div>
@@ -985,17 +979,17 @@ export default function Home() {
               href="https://www.linkedin.com/in/evanyapzhikai/"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-zinc-400 hover:text-emerald-400 transition-colors font-medium flex items-center gap-1.5"
+              className="text-[#0a0a0a] hover:bg-[#ffd21f] px-2 py-1 rounded-md transition-colors flex items-center gap-1.5"
             >
               <span>Developed by</span>
-              <strong className="text-white hover:text-emerald-300">Evan Yap</strong>
+              <strong>Evan Yap</strong>
             </a>
             <span>•</span>
             <a
               href="https://github.com/evanyap7/telegram-personal-assistant"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-zinc-300 transition-colors flex items-center gap-1"
+              className="hover:bg-[#ffd21f] px-2 py-1 rounded-md transition-colors flex items-center gap-1"
             >
               <IconGitHub className="w-3.5 h-3.5" />
               <span>GitHub</span>
