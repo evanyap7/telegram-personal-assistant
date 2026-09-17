@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGmailClient } from "@/lib/google";
 import { safeCompare } from "@/lib/security";
+import { sendTelegramMessage } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -49,10 +50,25 @@ export async function GET(req: NextRequest) {
     });
   } catch (error: any) {
     console.error("Failed to renew Gmail push notification watch:", error);
+    const errMsg = error?.message || String(error);
+    if (
+      errMsg.includes("invalid_grant") ||
+      errMsg.includes("expired") ||
+      errMsg.includes("revoked") ||
+      errMsg.includes("credentials missing")
+    ) {
+      const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
+      if (allowedUserId) {
+        await sendTelegramMessage(
+          allowedUserId,
+          "⚠️ *Gmail Watch Renewal Alert*: Google authorization has expired.\n\nPlease re-authorize to keep real-time PayLah tracking active."
+        ).catch(() => {});
+      }
+    }
     return NextResponse.json(
       {
         ok: false,
-        error: error?.message || "Failed to renew Gmail watch",
+        error: errMsg || "Failed to renew Gmail watch",
       },
       { status: 500 }
     );

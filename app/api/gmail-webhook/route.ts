@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { syncPayLahTransactions } from "@/lib/paylah-sync";
 import { safeCompare } from "@/lib/security";
+import { sendTelegramMessage } from "@/lib/telegram";
 
 function verifyAuth(req: NextRequest): boolean {
   const secret = process.env.GMAIL_WEBHOOK_SECRET || process.env.APPLE_WALLET_SECRET;
@@ -81,11 +82,26 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error("Gmail webhook error:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    if (
+      errMsg.includes("invalid_grant") ||
+      errMsg.includes("expired") ||
+      errMsg.includes("revoked") ||
+      errMsg.includes("credentials missing")
+    ) {
+      const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
+      if (allowedUserId) {
+        await sendTelegramMessage(
+          allowedUserId,
+          "⚠️ *Gmail Sync Auth Error*: Google authorization has expired or was revoked.\n\nPayLah & email receipt tracking is currently paused. Please re-authorize to resume automatic tracking."
+        ).catch(() => {});
+      }
+    }
     return NextResponse.json(
       {
         success: false,
         error: "Internal Server Error",
-        message: error instanceof Error ? error.message : String(error),
+        message: errMsg,
       },
       { status: 200 }
     );
