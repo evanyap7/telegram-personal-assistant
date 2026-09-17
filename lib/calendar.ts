@@ -192,6 +192,59 @@ export async function deleteCalendarEvent(input: {
   });
 }
 
+export async function renameCalendarEvent(input: {
+  calendarName: "personal" | "work";
+  title: string;
+  newTitle: string;
+  eventId?: string;
+}): Promise<{
+  id: string;
+  htmlLink: string | null;
+  title: string;
+}> {
+  const calendar = getCalendarClient();
+  const calendarId = getCalendarId(input.calendarName);
+
+  let targetEventId: string | null = input.eventId ?? null;
+
+  if (targetEventId) {
+    try {
+      await calendar.events.get({ calendarId, eventId: targetEventId });
+    } catch {
+      targetEventId = null;
+    }
+  }
+
+  if (!targetEventId) {
+    const matches = await searchUpcomingCalendarEvents({
+      calendarName: input.calendarName,
+      query: input.title,
+    });
+
+    if (matches.length > 0) {
+      targetEventId = matches[0].eventId;
+    }
+  }
+
+  if (!targetEventId) {
+    throw new Error(`Could not find an event titled "${input.title}" to rename.`);
+  }
+
+  const response = await calendar.events.patch({
+    calendarId,
+    eventId: targetEventId,
+    requestBody: {
+      summary: input.newTitle,
+    },
+  });
+
+  return {
+    id: response.data.id ?? targetEventId,
+    htmlLink: response.data.htmlLink ?? null,
+    title: response.data.summary ?? input.newTitle,
+  };
+}
+
 export type MoveCalendarEventInput = {
   fromCalendar: "personal" | "work";
   toCalendar: "personal" | "work";
@@ -276,17 +329,6 @@ export async function moveCalendarEvent(
     input.date ||
     (start ? singaporeDateFromDateTime(start) : "");
 
-  if (targetOldEventId) {
-    try {
-      await deleteCalendarEvent({
-        calendarName: input.fromCalendar,
-        eventId: targetOldEventId,
-      });
-    } catch (err) {
-      console.warn("Failed to delete old event during move:", err);
-    }
-  }
-
   let createRes: { id: string; htmlLink: string | null };
   if (isAllDay) {
     createRes = await createCalendarEvent({
@@ -305,6 +347,17 @@ export async function moveCalendarEvent(
       start,
       end,
     });
+  }
+
+  if (targetOldEventId) {
+    try {
+      await deleteCalendarEvent({
+        calendarName: input.fromCalendar,
+        eventId: targetOldEventId,
+      });
+    } catch (err) {
+      console.warn("Failed to delete old event during move:", err);
+    }
   }
 
   return {

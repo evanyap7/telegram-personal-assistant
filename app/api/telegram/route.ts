@@ -11,6 +11,7 @@ import {
   deleteCalendarEvent,
   getUpcomingSchedule,
   moveCalendarEvent,
+  renameCalendarEvent,
   searchUpcomingCalendarEvents,
 } from "@/lib/calendar";
 import {
@@ -3982,6 +3983,42 @@ export async function POST(request: Request) {
         );
 
         await markUpdateFailed(updateId, errorText(moveError));
+        return Response.json({ ok: true });
+      }
+    }
+
+    if (intent.action === "calendar_rename") {
+      try {
+        const renameRes = await renameCalendarEvent({
+          calendarName: intent.calendarName,
+          title: intent.title,
+          newTitle: intent.newTitle,
+          eventId: intent.eventId,
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          `✅ Renamed event to "${renameRes.title}"${
+            renameRes.htmlLink ? `\nLink: ${renameRes.htmlLink}` : ""
+          }`
+        );
+
+        await markUpdateCompleted(updateId, "calendar_rename");
+        return Response.json({ ok: true });
+      } catch (renameError) {
+        log("telegram.calendar_rename.failed", {
+          updateId,
+          error: errorText(renameError),
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          `Sorry, I couldn't rename "${intent.title}": ${
+            renameError instanceof Error ? renameError.message : "Unknown error"
+          }`
+        );
+
+        await markUpdateFailed(updateId, errorText(renameError));
         return Response.json({ ok: true });
       }
     }
