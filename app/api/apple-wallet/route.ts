@@ -20,12 +20,37 @@ const VALID_CATEGORIES = [
 type Category = (typeof VALID_CATEGORIES)[number];
 
 function normalizeAmount(val: unknown): number | null {
+  if (val === null || val === undefined) return null;
+
+  // Handle nested object payloads (e.g. from Shortcuts variables or dictionary properties)
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    const candidate =
+      obj.amount ??
+      obj.Amount ??
+      obj.value ??
+      obj.Value ??
+      obj.number ??
+      obj.Number ??
+      obj.total ??
+      obj.Total;
+    if (candidate !== undefined && candidate !== val) {
+      return normalizeAmount(candidate);
+    }
+  }
+
   if (typeof val === "number" && !Number.isNaN(val) && val > 0) {
     return Math.round(val * 100) / 100;
   }
+
   if (typeof val === "string") {
+    let cleaned = val.trim();
+    // Handle European comma decimal if there's no dot: e.g. "12,50" -> "12.50"
+    if (cleaned.includes(",") && !cleaned.includes(".")) {
+      cleaned = cleaned.replace(",", ".");
+    }
     // Strip currency symbols and letters, keeping digits, dot, minus
-    const cleaned = val.replace(/[^0-9.-]/g, "");
+    cleaned = cleaned.replace(/[^0-9.-]/g, "");
     const num = parseFloat(cleaned);
     if (!Number.isNaN(num) && num > 0) {
       return Math.round(num * 100) / 100;
@@ -33,6 +58,32 @@ function normalizeAmount(val: unknown): number | null {
   }
   return null;
 }
+
+function getField(source: Record<string, unknown>, candidateKeys: string[]): unknown {
+  // 1. Direct key lookup
+  for (const key of candidateKeys) {
+    if (source[key] !== undefined && source[key] !== null && source[key] !== "") {
+      return source[key];
+    }
+  }
+
+  // 2. Normalized lookup (lowercase, stripped spaces, underscores, hyphens)
+  const normMap = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(source)) {
+    normMap.set(k.toLowerCase().replace(/[\s_-]/g, ""), v);
+  }
+
+  for (const key of candidateKeys) {
+    const normKey = key.toLowerCase().replace(/[\s_-]/g, "");
+    const match = normMap.get(normKey);
+    if (match !== undefined && match !== null && match !== "") {
+      return match;
+    }
+  }
+
+  return undefined;
+}
+
 
 function quickCategorizeMerchant(merchant: string): Category | null {
   const lower = merchant.toLowerCase();
@@ -206,15 +257,15 @@ Given a merchant name, optional item purchased, and optional category from Apple
   }
 }
 
-function verifyAuth(req: NextRequest, bodySecret?: string): boolean {
-  const expectedSecret = process.env.APPLE_WALLET_SECRET;
+function verifyAuth(req: NextRequest, bodySecret?: unknown): boolean {
+  const expectedSecret = process.env.APPLE_WALLET_SECRET?.trim();
   if (!expectedSecret) {
     console.error("APPLE_WALLET_SECRET environment variable is not configured.");
     return false;
   }
 
   // 1. Check body secret if passed by Shortcut
-  if (bodySecret && safeCompare(bodySecret, expectedSecret)) {
+  if (typeof bodySecret === "string" && safeCompare(bodySecret.trim(), expectedSecret)) {
     return true;
   }
 
@@ -224,7 +275,7 @@ function verifyAuth(req: NextRequest, bodySecret?: string): boolean {
     req.headers.get("x-wallet-secret") ||
     req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
 
-  if (safeCompare(headerKey, expectedSecret)) {
+  if (headerKey && safeCompare(headerKey.trim(), expectedSecret)) {
     return true;
   }
 
@@ -234,62 +285,22 @@ function verifyAuth(req: NextRequest, bodySecret?: string): boolean {
     req.nextUrl.searchParams.get("secret") ||
     req.nextUrl.searchParams.get("token");
 
-  if (safeCompare(queryKey, expectedSecret)) {
+  if (queryKey && safeCompare(queryKey.trim(), expectedSecret)) {
     return true;
   }
 
   return false;
 }
 
-export async function GET(req: NextRequest) {
-  const isAuthed = verifyAuth(req);
-
-  return NextResponse.json({
-    status: "ok",
-    service: "Telegram Assistant Apple Wallet Webhook",
-    authenticated: isAuthed,
-    message: isAuthed
-      ? "Authentication valid! You can send POST requests with transaction details."
-      : "Endpoint ready. Include ?key=<APPLE_WALLET_SECRET> or header x-api-key for authentication.",
-  });
-}
-
-export async function POST(req: NextRequest) {
-  let body: Record<string, unknown> = {};
-  try {
-    const textBody = await req.text();
-    if (textBody && textBody.trim()) {
-      body = JSON.parse(textBody);
-    }
-  } catch {
-    // If not JSON, leave body as empty object
-  }
-
-  const bodySecret =
-    body.secret ? String(body.secret) :
-    body.key ? String(body.key) :
-    body.token ? String(body.token) : undefined;
-
-  if (!verifyAuth(req, bodySecret)) {
-    return NextResponse.json(
-      {
-        error: "Unauthorized",
-        message:
-          "Invalid or missing secret key. Pass ?key=<APPLE_WALLET_SECRET> in the URL or 'x-api-key' in headers.",
-      },
-      { status: 401 }
-    );
-  }
-
-  // Parse fields passed from iOS Shortcuts flexibly
-  const rawAmount =
-    body.amount ??
-    body.value ??
-    body.price ??
-    body.total ??
-    body["Transaction Amount"] ??
-    body["transaction_amount"] ??
-    body["TransactionAmount"];
+async function processWalletTransaction(payload: Record<string, unknown>) {
+  const rawAmount = getField(payload, [
+    "amount",
+    "value",
+    "price",
+    "total",
+    "transaction_amount",
+    "transactionamount",
+  ]);
   const amount = normalizeAmount(rawAmount);
 
   if (!amount) {
@@ -305,52 +316,63 @@ export async function POST(req: NextRequest) {
   }
 
   const rawMerchant =
-    body.merchant ??
-    body.payee ??
-    body.vendor ??
-    body.name ??
-    body.store ??
-    body["Merchant"] ??
-    body["Payee"] ??
-    body.description ??
-    "Apple Pay Purchase";
+    getField(payload, [
+      "merchant",
+      "payee",
+      "vendor",
+      "name",
+      "store",
+      "description",
+    ]) ?? "Apple Pay Purchase";
   const merchant = String(rawMerchant).trim() || "Apple Pay Purchase";
 
-  const rawItem =
-    body.item ??
-    body.itemName ??
-    body.item_name ??
-    body.product ??
-    body.note ??
-    body.notes;
+  const rawItem = getField(payload, [
+    "item",
+    "itemName",
+    "item_name",
+    "product",
+    "note",
+    "notes",
+  ]);
   const itemCandidate = rawItem ? String(rawItem).trim() : undefined;
   const item = itemCandidate && itemCandidate !== merchant ? itemCandidate : undefined;
 
   const rawCurrency =
-    body.currency ??
-    body.currencyCode ??
-    body["Currency"] ??
-    "SGD";
+    getField(payload, [
+      "currency",
+      "currencyCode",
+      "currency_code",
+      "Currency Code",
+    ]) ?? "SGD";
   const currency = String(rawCurrency).trim().toUpperCase() || "SGD";
 
-  const rawCard =
-    body.card ??
-    body.card_name ??
-    body["Card"] ??
-    body.paymentMethod ??
-    body.account;
+  const rawCard = getField(payload, [
+    "card",
+    "card_name",
+    "cardName",
+    "Card Name",
+    "paymentMethod",
+    "payment_method",
+    "Payment Method",
+    "account",
+    "accountName",
+  ]);
   const card = rawCard ? String(rawCard).trim() : undefined;
 
-  const rawCategory =
-    body.category ??
-    body["Category"];
+  const rawCategory = getField(payload, [
+    "category",
+    "rawCategory",
+    "transactionCategory",
+  ]);
   const categoryStr = rawCategory ? String(rawCategory).trim() : undefined;
 
-  const rawDate =
-    body.date ??
-    body["Date"] ??
-    body.timestamp ??
-    body.time;
+  const rawDate = getField(payload, [
+    "date",
+    "timestamp",
+    "time",
+    "transactionDate",
+    "transaction_date",
+  ]);
 
   // Safe date resolution (never throws RangeError)
   const dateObj = parseSingaporeDate(rawDate ? String(rawDate) : undefined);
@@ -438,3 +460,75 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+export async function GET(req: NextRequest) {
+  const isAuthed = verifyAuth(req);
+
+  // If query params include amount and request is authenticated, allow recording via GET
+  if (isAuthed && req.nextUrl.searchParams.has("amount")) {
+    const queryPayload: Record<string, unknown> = {};
+    for (const [k, v] of req.nextUrl.searchParams.entries()) {
+      queryPayload[k] = v;
+    }
+    return processWalletTransaction(queryPayload);
+  }
+
+  return NextResponse.json({
+    status: "ok",
+    service: "Telegram Assistant Apple Wallet Webhook",
+    authenticated: isAuthed,
+    message: isAuthed
+      ? "Authentication valid! You can send POST requests with transaction details."
+      : "Endpoint ready. Include ?key=<APPLE_WALLET_SECRET> or header x-api-key for authentication.",
+  });
+}
+
+export async function POST(req: NextRequest) {
+  let body: Record<string, unknown> = {};
+  try {
+    const textBody = await req.text();
+    if (textBody && textBody.trim()) {
+      try {
+        body = JSON.parse(textBody);
+      } catch {
+        // Fallback: try parsing form-encoded or URL-encoded body
+        const params = new URLSearchParams(textBody);
+        const parsed: Record<string, unknown> = {};
+        for (const [k, v] of params.entries()) {
+          parsed[k] = v;
+        }
+        if (Object.keys(parsed).length > 0) {
+          body = parsed;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Could not read request body in apple-wallet route:", err);
+  }
+
+  // Combine query parameters and body so nothing is missed
+  const queryParams: Record<string, unknown> = {};
+  for (const [k, v] of req.nextUrl.searchParams.entries()) {
+    queryParams[k] = v;
+  }
+  const payload: Record<string, unknown> = { ...queryParams, ...body };
+
+  const bodySecret =
+    payload.secret ??
+    payload.key ??
+    payload.token;
+
+  if (!verifyAuth(req, bodySecret)) {
+    return NextResponse.json(
+      {
+        error: "Unauthorized",
+        message:
+          "Invalid or missing secret key. Pass ?key=<APPLE_WALLET_SECRET> in the URL or 'x-api-key' in headers.",
+      },
+      { status: 401 }
+    );
+  }
+
+  return processWalletTransaction(payload);
+}
+

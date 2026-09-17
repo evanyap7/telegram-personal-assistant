@@ -57,10 +57,9 @@ Now configure the fields:
 Set the URL to your assistant endpoint with your secret key:
 
 ```text
-https://<YOUR-VERCEL-DOMAIN>/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322
+https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322
 ```
 
-> Replace `<YOUR-VERCEL-DOMAIN>` with your live assistant domain (e.g. `https://telegram-personal-assistant-xxx.vercel.app`).
 
 #### B. Expand Arrow (Options)
 Tap the small arrow **`>`** next to the URL to expand options:
@@ -121,7 +120,7 @@ If you want your iPhone to pop up a prompt asking *"What did you buy?"* every ti
 You can verify your endpoint right now with `curl`:
 
 ```bash
-curl -X POST "https://<YOUR-VERCEL-DOMAIN>/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322" \
+curl -X POST "https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322" \
   -H "Content-Type: application/json" \
   -d '{
     "amount": "4.20",
