@@ -7,6 +7,7 @@ import { transcribeTelegramVoiceNote } from "@/lib/voice-transcribe";
 import { z } from "zod";
 
 import {
+  checkAndSendEventReminders,
   createCalendarEvent,
   deleteCalendarEvent,
   getUpcomingSchedule,
@@ -387,6 +388,8 @@ function formatCalendarEvent(input: {
   start?: string;
   end?: string;
   date?: string;
+  location?: string;
+  reminderMinutes?: number;
   eventId?: string;
 }): string {
   const timeLines =
@@ -400,13 +403,30 @@ function formatCalendarEvent(input: {
         `End: ${formatSingaporeDateTime(input.end ?? "")}`,
       ];
 
-  return [
-    `Calendar: ${input.calendarName}`,
+  const lines = [
+    `Calendar: ${input.calendarName === "work" ? "💼 Work" : "🏠 Personal"}`,
     `Title: ${input.title}`,
-    ...timeLines,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+
+  if (input.location) {
+    lines.push(`Location: 📍 ${input.location}`);
+  }
+
+  lines.push(...timeLines);
+
+  if (input.reminderMinutes) {
+    const hrs = Math.floor(input.reminderMinutes / 60);
+    const mins = input.reminderMinutes % 60;
+    const durStr =
+      hrs > 0
+        ? mins > 0
+          ? `${hrs}h ${mins}m`
+          : `${hrs} hour${hrs === 1 ? "" : "s"}`
+        : `${mins} minute${mins === 1 ? "" : "s"}`;
+    lines.push(`Reminder: 🔔 ${durStr} before`);
+  }
+
+  return lines.filter(Boolean).join("\n");
 }
 
 async function resolveRepliedTransaction(
@@ -695,6 +715,8 @@ async function handleCalendarBatchCreateCallback(input: {
           allDay: true as const,
           title: eventItem.title,
           date: eventItem.date,
+          location: eventItem.location,
+          reminderMinutes: eventItem.reminderMinutes,
         }
       : {
           calendarName: batch.calendarName,
@@ -702,6 +724,8 @@ async function handleCalendarBatchCreateCallback(input: {
           title: eventItem.title,
           start: eventItem.start,
           end: eventItem.end,
+          location: eventItem.location,
+          reminderMinutes: eventItem.reminderMinutes,
         };
 
     await createCalendarEvent(payload);
@@ -709,8 +733,9 @@ async function handleCalendarBatchCreateCallback(input: {
     const timing = eventItem.allDay
       ? `${formatCalendarDate(eventItem.date)} (All day)`
       : `${formatSingaporeDateTime(eventItem.start)} – ${formatSingaporeDateTime(eventItem.end)}`;
+    const loc = eventItem.location ? `\n  📍 ${eventItem.location}` : "";
 
-    createdItems.push(`• ${eventItem.title}\n  ${timing}`);
+    createdItems.push(`• ${eventItem.title}\n  ${timing}${loc}`);
   }
 
   await sendTelegramMessage(
@@ -2329,6 +2354,8 @@ async function processAssistantImages(input: {
             allDay: true as const,
             title: event.title,
             date: event.date,
+            location: event.location,
+            reminderMinutes: event.reminderMinutes,
           }
         : {
             calendarName: imageIntent.calendarName,
@@ -2336,6 +2363,8 @@ async function processAssistantImages(input: {
             title: event.title,
             start: event.start,
             end: event.end,
+            location: event.location,
+            reminderMinutes: event.reminderMinutes,
           };
 
       const token = await savePendingCalendarAction({
@@ -2350,19 +2379,7 @@ async function processAssistantImages(input: {
             ? "I found this event across the images. Create it?"
             : "I found this event in the image. Create it?",
           "",
-          event.allDay
-            ? [
-                `Calendar: ${imageIntent.calendarName}`,
-                `Title: ${event.title}`,
-                `Date: ${formatCalendarDate(event.date)}`,
-                "Time: All day",
-              ].join("\n")
-            : [
-                `Calendar: ${imageIntent.calendarName}`,
-                `Title: ${event.title}`,
-                `Start: ${formatSingaporeDateTime(event.start)}`,
-                `End: ${formatSingaporeDateTime(event.end)}`,
-              ].join("\n"),
+          formatCalendarEvent(payload),
         ].join("\n"),
         {
           inline_keyboard: [
@@ -2398,7 +2415,8 @@ async function processAssistantImages(input: {
       const timing = ev.allDay
         ? `${formatCalendarDate(ev.date)} (All day)`
         : `${formatSingaporeDateTime(ev.start)} – ${formatSingaporeDateTime(ev.end)}`;
-      return `${idx + 1}. ${ev.title}\n   📅 ${timing}`;
+      const loc = ev.location ? `\n   📍 ${ev.location}` : "";
+      return `${idx + 1}. ${ev.title}\n   📅 ${timing}${loc}`;
     });
 
     await sendTelegramMessage(
@@ -2932,6 +2950,24 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    if (text === "/reminders" || text.toLowerCase() === "check reminders") {
+      const result = await checkAndSendEventReminders();
+      if (result.remindersSent > 0) {
+        await sendTelegramMessage(
+          chatId,
+          `✅ Checked calendar (${result.eventsChecked} upcoming events found). Dispatched ${result.remindersSent} reminder notification(s)!`
+        );
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          `🔔 No event reminders currently due across your personal and work calendars (${result.eventsChecked} upcoming events checked).`
+        );
+      }
+
+      await markUpdateCompleted(updateId, "check_reminders");
+      return Response.json({ ok: true });
+    }
+
     if (text === "/agenda" || text === "/calendar today") {
       const now = new Date();
       const sgTodayStr = new Intl.DateTimeFormat("en-CA", {
@@ -3452,12 +3488,13 @@ export async function POST(request: Request) {
       }
 
       const payload = intent.allDay
-
         ? {
           calendarName: intent.calendarName,
           allDay: true as const,
           title: intent.title,
           date: intent.date,
+          location: intent.location,
+          reminderMinutes: intent.reminderMinutes,
         }
         : {
           calendarName: intent.calendarName,
@@ -3465,6 +3502,8 @@ export async function POST(request: Request) {
           title: intent.title,
           start: intent.start,
           end: intent.end,
+          location: intent.location,
+          reminderMinutes: intent.reminderMinutes,
         };
 
       const token = await savePendingCalendarAction({
@@ -3477,22 +3516,7 @@ export async function POST(request: Request) {
         [
           "Create this calendar event?",
           "",
-          formatCalendarEvent(
-            intent.allDay
-              ? {
-                calendarName: intent.calendarName,
-                allDay: true,
-                title: intent.title,
-                date: intent.date,
-              }
-              : {
-                calendarName: intent.calendarName,
-                allDay: false,
-                title: intent.title,
-                start: intent.start,
-                end: intent.end,
-              }
-          ),
+          formatCalendarEvent(payload),
         ].join("\n"),
         {
           inline_keyboard: [
@@ -3932,6 +3956,78 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "calendar_move") {
+      const isReplyingToPending = Boolean(
+        message.reply_to_message?.text?.includes("Create it?") ||
+        message.reply_to_message?.text?.includes("Create this calendar event?")
+      );
+      const isSameCalendar = intent.fromCalendar === intent.toCalendar;
+
+      if (userCalendarContext.activePending && (isReplyingToPending || isSameCalendar)) {
+        await cancelActivePendingCalendarAction(message.from.id);
+
+        const pending = userCalendarContext.activePending.payload;
+        const resolvedCalendar = intent.toCalendar || pending.calendarName;
+        const isAllDay = intent.allDay ?? pending.allDay;
+
+        const defaultDate = pending.allDay
+          ? pending.date
+          : pending.start.slice(0, 10);
+
+        const payload = isAllDay
+          ? {
+              calendarName: resolvedCalendar,
+              allDay: true as const,
+              title: intent.title || pending.title,
+              date: intent.date || defaultDate,
+              location: intent.location || pending.location,
+              reminderMinutes: pending.reminderMinutes,
+            }
+          : {
+              calendarName: resolvedCalendar,
+              allDay: false as const,
+              title: intent.title || pending.title,
+              start:
+                intent.start ||
+                (pending.allDay ? `${pending.date}T09:00:00+08:00` : pending.start),
+              end:
+                intent.end ||
+                (pending.allDay ? `${pending.date}T09:30:00+08:00` : pending.end),
+              location: intent.location || pending.location,
+              reminderMinutes: pending.reminderMinutes,
+            };
+
+        const token = await savePendingCalendarAction({
+          userId: message.from.id,
+          payload,
+        });
+
+        await sendTelegramMessage(
+          chatId,
+          [
+            "Create this calendar event?",
+            "",
+            formatCalendarEvent(payload),
+          ].join("\n"),
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: "✅ Yes, create",
+                  callback_data: `calendar_yes:${token}`,
+                },
+                {
+                  text: "❌ No, cancel",
+                  callback_data: `calendar_no:${token}`,
+                },
+              ],
+            ],
+          }
+        );
+
+        await markUpdateCompleted(updateId, "calendar_add_pending");
+        return Response.json({ ok: true });
+      }
+
       try {
         const moveRes = await moveCalendarEvent({
           fromCalendar: intent.fromCalendar,

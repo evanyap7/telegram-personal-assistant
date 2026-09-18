@@ -16,12 +16,16 @@ const calendarEventSchema = z.discriminatedUnion("allDay", [
     allDay: z.literal(true),
     title: z.string().min(1).max(120),
     date: singaporeDateSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
   z.object({
     allDay: z.literal(false),
     title: z.string().min(1).max(120),
     start: singaporeDateTimeSchema,
     end: singaporeDateTimeSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
 ]);
 
@@ -146,7 +150,9 @@ Calendar output:
     {
       "allDay": true,
       "title": "event title",
-      "date": "YYYY-MM-DD"
+      "date": "YYYY-MM-DD",
+      "location": "meeting venue, room, address, or link (optional)",
+      "reminderMinutes": positive integer (optional)
     }
   ]
 }
@@ -160,7 +166,9 @@ Timed calendar-event output:
       "allDay": false,
       "title": "event title",
       "start": "YYYY-MM-DDTHH:mm:ss+08:00",
-      "end": "YYYY-MM-DDTHH:mm:ss+08:00"
+      "end": "YYYY-MM-DDTHH:mm:ss+08:00",
+      "location": "meeting venue, room, address, or link (optional)",
+      "reminderMinutes": positive integer (optional)
     }
   ]
 }
@@ -203,10 +211,18 @@ Rules:
 - If the instruction asks to add dates/events to a calendar, return calendar_from_image.
 - Use personal unless the instruction explicitly says work.
 - If an event has a date but no time, set allDay to true.
-- For timed events, require both a start and end time or an explicit duration.
-- Never invent dates, times, amounts, merchants, or durations.
+- For timed events:
+  - End time MUST ALWAYS be strictly after start time. NEVER output an event where start and end times are identical.
+  - If both start and end times or an explicit duration are given, use them.
+  - If only a deadline, due date/time, or closing time is specified (e.g. "closes at 11:59pm", "deadline: 5pm", "due by 18:00"):
+    - If the deadline is 11:59pm / 23:59 (end of day), set allDay to true for that date, OR set start to 23:30:00 and end to 23:59:00.
+    - For other deadline times (e.g. 5:00pm), set start to 30 minutes before the deadline (16:30:00) and end to the deadline (17:00:00).
+- Never invent ungrounded dates, amounts, merchants, or events not present in the images.
 - Extract all calendar events found across all provided images (up to 30 events total).
-- If the user instruction requests locations (e.g. "include location of both meetings"), include the location in the title (e.g. "Meeting Title (Room / Location Name)").
+- If a location, address, venue, meeting room, or online link (e.g. Zoom, Meet, Teams, AI Workbench) is shown on the images or requested in the instruction, extract it into the dedicated "location" field (do not append it to the title).
+- If the user's instruction asks for a notification or reminder (e.g. "notify me about this 2 hours before the deadline", "remind me 1 hour before"):
+  - Extract the lead time in minutes into "reminderMinutes" (e.g. "2 hours before" -> 120, "30 minutes before" -> 30).
+  - If no reminder time is mentioned in the instruction, omit "reminderMinutes".
 - For receipt, invoice, bank statement, or transaction screenshots across the images:
   - If multiple distinct transactions or line items are visible (e.g. across multiple images or within an image), return finance_batch_from_image containing all extracted items (up to 25 items).
   - If only a single transaction/charge is visible across all images, return finance_from_image.

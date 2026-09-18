@@ -19,6 +19,8 @@ const calendarAddSchema = z.discriminatedUnion("allDay", [
     title: z.string().min(1).max(100),
     start: singaporeDateTimeSchema,
     end: singaporeDateTimeSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
   z.object({
     action: z.literal("calendar_add"),
@@ -26,6 +28,8 @@ const calendarAddSchema = z.discriminatedUnion("allDay", [
     allDay: z.literal(true),
     title: z.string().min(1).max(100),
     date: z.string().date(),
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
 ]);
 
@@ -108,6 +112,7 @@ const intentSchema = z.union([
     start: singaporeDateTimeSchema.optional(),
     end: singaporeDateTimeSchema.optional(),
     date: z.string().date().optional(),
+    location: z.string().max(200).optional(),
   }),
   z.object({
     action: z.literal("unknown"),
@@ -127,6 +132,8 @@ export type ConversationContext = {
     start?: string;
     end?: string;
     date?: string;
+    location?: string;
+    reminderMinutes?: number;
   };
   recentCalendarEvent?: {
     calendarName: "personal" | "work";
@@ -135,6 +142,7 @@ export type ConversationContext = {
     start?: string;
     end?: string;
     date?: string;
+    location?: string;
     eventId?: string;
   };
   recentChatHistory?: Array<{
@@ -217,14 +225,17 @@ export async function parseAssistantIntent(
     }
     if (context.activePendingCalendar) {
       const p = context.activePendingCalendar;
+      const loc = p.location ? `\n- Location: "${p.location}"` : "";
+      const rem = p.reminderMinutes ? `\n- Reminder: ${p.reminderMinutes} minutes before` : "";
       items.push(
-        `Active pending calendar confirmation:\n- Calendar: ${p.calendarName}\n- Title: "${p.title}"\n- All-day: ${p.allDay}\n- Timing: ${p.allDay ? p.date : `${p.start} to ${p.end}`}`
+        `Active pending calendar confirmation:\n- Calendar: ${p.calendarName}\n- Title: "${p.title}"\n- All-day: ${p.allDay}\n- Timing: ${p.allDay ? p.date : `${p.start} to ${p.end}`}${loc}${rem}`
       );
     }
     if (context.recentCalendarEvent) {
       const r = context.recentCalendarEvent;
+      const loc = r.location ? `\n- Location: "${r.location}"` : "";
       items.push(
-        `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}\n- Event ID: ${r.eventId ?? "none"}`
+        `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}${loc}\n- Event ID: ${r.eventId ?? "none"}`
       );
     }
     if (context.recentTransaction) {
@@ -400,7 +411,9 @@ start time plus end time or duration:
   "allDay": false,
   "title": "event title",
   "start": "YYYY-MM-DDTHH:mm:ss+08:00",
-  "end": "YYYY-MM-DDTHH:mm:ss+08:00"
+  "end": "YYYY-MM-DDTHH:mm:ss+08:00",
+  "location": "optional meeting location, room, address, or online meeting link",
+  "reminderMinutes": positive integer (minutes before event to notify; e.g. 120 for 2 hours before, 30 for 30 mins; optional)
 }
 
 All-day calendar creation, when the user gives a date but no time:
@@ -409,7 +422,9 @@ All-day calendar creation, when the user gives a date but no time:
   "calendarName": "personal" or "work",
   "allDay": true,
   "title": "event title",
-  "date": "YYYY-MM-DD"
+  "date": "YYYY-MM-DD",
+  "location": "optional location",
+  "reminderMinutes": optional number
 }
 
 Calendar view / agenda query:
@@ -490,7 +505,7 @@ Email draft creation:
   "bcc": "optional bcc address"
 }
 
-Calendar move or switch:
+Calendar move or switch (ONLY for an existing event that has already been created in Google Calendar; NEVER for modifying pending confirmation drafts):
 {
   "action": "calendar_move",
   "fromCalendar": "personal" or "work",
@@ -511,12 +526,16 @@ ${contextBlock}
 
 Contextual Reference Rules:
 - If an active pending calendar confirmation is present in the context:
+  - If the user asks to modify, rename, or adjust any aspect of this pending event (e.g. "change the title to ...", "rename to ...", "title should be ...", "make it work instead", "change time to 7pm"):
+    Return calendar_add with the updated fields, retaining the unchanged fields from the pending event!
+    CRITICAL: NEVER return calendar_move when an active pending confirmation is present and the user wants to adjust it. calendar_move is strictly for moving already-created events between calendars.
   - If the user asks to change the calendar (e.g. "add it to my work calendar", "change it to work calendar", "switch to work", "make it work instead", "put this in work", "work calendar instead"):
-    Return calendar_add with the requested calendarName ("personal" or "work") retaining the title and timing (start/end or date) from the pending event! DO NOT return unknown.
-  - If the user asks to change the time (e.g. "make it 7pm", "change to 8pm"), update the start and end times while retaining the title and calendar.
-  - If the user asks to change the date (e.g. "make it tomorrow", "change to 8 sept"), update the date while retaining the title and calendar.
-  - If the user asks to change the title (e.g. "rename it to ...", "title should be ..."), update the title while retaining the timing and calendar.
-- If the user replied to an event creation message OR asks to change an event that was just created:
+    Return calendar_add with the requested calendarName ("personal" or "work") retaining the title and timing (start/end or date) from the pending event! DO NOT return unknown and DO NOT return calendar_move.
+  - If the user asks to change or rename the title (e.g. "change the title to: ...", "rename it to ...", "title should be ...", "call it ..."):
+    Return calendar_add with the new title while retaining the timing and calendar from the pending event! DO NOT return calendar_move.
+  - If the user asks to change the time (e.g. "make it 7pm", "change to 8pm"), return calendar_add with the updated start and end times while retaining the title and calendar.
+  - If the user asks to change the date (e.g. "make it tomorrow", "change to 8 sept"), return calendar_add with the updated date while retaining the title and calendar.
+- If the user replied to an event creation confirmation (e.g. "Created event ...", "Added to your calendar") OR asks to change an event that was just created:
   - If the user asks to move it or change its calendar (e.g. "sorry can u add this to my work calendar instead", "move this to my work calendar", "switch to work calendar", "change this to work"):
     Return calendar_move with fromCalendar, toCalendar, title, and any known event details from the context or replied message.
   - If the user asks to delete it (e.g. "delete that event", "cancel it", "undo"):
@@ -553,6 +572,10 @@ Calendar creation rules:
   set allDay to false and provide start and end.
 - For timed events, require a clear start time and end time or duration.
 - Never invent a date, time, or duration.
+- If the user specifies a location (e.g. "at Starbucks Raffles City", "in Room 302", "at Level 4", "on Zoom", "Google Meet link"), extract this into the "location" field rather than repeating it in the title.
+- If the user requests a reminder or notification (e.g. "notify me 2 hours before", "remind me 30 mins before", "set reminder 1 hour before"):
+  - Extract the lead time in minutes into "reminderMinutes" (e.g. "2 hours before" -> 120, "1 hour before" -> 60, "45 mins" -> 45).
+  - If no reminder time is mentioned, omit "reminderMinutes".
 - If no date can be determined, return unknown.
 - Include seconds as :00 and end timed datetimes with +08:00.
 - "Add gym tomorrow" means an all-day calendar_add.

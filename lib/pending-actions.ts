@@ -10,12 +10,16 @@ export type CalendarAddPayload =
       title: string;
       start: string;
       end: string;
+      location?: string;
+      reminderMinutes?: number;
     }
   | {
       calendarName: "personal" | "work";
       allDay: true;
       title: string;
       date: string;
+      location?: string;
+      reminderMinutes?: number;
     };
 
 export type FinanceAddPayload = {
@@ -58,11 +62,15 @@ export type CalendarBatchEventItem =
       title: string;
       start: string;
       end: string;
+      location?: string;
+      reminderMinutes?: number;
     }
   | {
       allDay: true;
       title: string;
       date: string;
+      location?: string;
+      reminderMinutes?: number;
     };
 
 export type CalendarBatchAddPayload = {
@@ -771,6 +779,7 @@ export type UserCalendarContext = {
     start?: string;
     end?: string;
     date?: string;
+    location?: string;
     eventId?: string;
   };
 };
@@ -829,6 +838,7 @@ export async function getLatestUserCalendarContext(
           start: parsed.start,
           end: parsed.end,
           date: parsed.date,
+          location: parsed.location,
           eventId: parsed.eventId,
         };
       } catch {}
