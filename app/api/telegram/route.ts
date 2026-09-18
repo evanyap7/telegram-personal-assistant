@@ -81,9 +81,11 @@ import {
 } from "@/lib/chat-history";
 import {
   addTodo,
+  checkAndSendTodoReminders,
   completeTodo,
   deleteTodo,
   listTodos,
+  muteTodoReminder,
   searchActiveTodos,
   TodoItem,
 } from "@/lib/todos";
@@ -1427,10 +1429,12 @@ async function handleTodoDoneCallback(input: {
   }
 
   await answerTelegramCallback(input.callbackId, "✅ Task marked as completed!");
+  await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
+  const reminderNote = result.todo.remindIntervalMinutes ? " (Reminders stopped)" : "";
   await sendTelegramMessage(
     input.chatId,
-    `✅ Completed: "${result.todo.task}"! 🎉`
+    `✅ Completed: "${result.todo.task}"! 🎉${reminderNote}`
   );
 
   await markUpdateCompleted(input.updateId, "todo_completed_callback");
@@ -1667,13 +1671,26 @@ async function handleMenuCallback(input: {
   }
 
   if (subAction === "reminders") {
-    await answerTelegramCallback(callbackId, "Checking event reminders...");
-    const result = await checkAndSendEventReminders();
-    const text =
-      result.remindersSent > 0
-        ? `✅ Checked calendar (${result.eventsChecked} upcoming events found). Dispatched ${result.remindersSent} reminder notification(s)!`
-        : `🔔 No event reminders currently due across your personal and work calendars (${result.eventsChecked} upcoming events checked).`;
-    await sendTelegramMessage(chatId, text, {
+    await answerTelegramCallback(callbackId, "Checking reminders...");
+    const [eventResult, todoResult] = await Promise.all([
+      checkAndSendEventReminders(),
+      checkAndSendTodoReminders(),
+    ]);
+
+    const lines: string[] = ["🔔 *Reminders Status*:"];
+    if (eventResult.remindersSent > 0) {
+      lines.push(`📅 Dispatched ${eventResult.remindersSent} calendar event reminder(s)!`);
+    } else {
+      lines.push(`📅 No calendar reminders due (${eventResult.eventsChecked} upcoming events checked).`);
+    }
+
+    if (todoResult.remindersSent > 0) {
+      lines.push(`⏰ Dispatched ${todoResult.remindersSent} recurring task reminder(s)!`);
+    } else {
+      lines.push(`⏰ No to-do reminders due (${todoResult.todosChecked} active recurring task(s) checked).`);
+    }
+
+    await sendTelegramMessage(chatId, lines.join("\n\n"), {
       inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
     });
     await markUpdateCompleted(input.updateId, "menu_reminders");
@@ -1990,6 +2007,23 @@ async function handleCallback(input: {
       taskId,
     });
 
+    return;
+  }
+
+  if (action === "todo_mute") {
+    const taskId = parts[1];
+    if (!taskId) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+    await muteTodoReminder(taskId);
+    await answerTelegramCallback(input.callbackId, "🔕 Reminders paused.");
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+    await sendTelegramMessage(
+      input.chatId,
+      "🔕 Recurring reminders paused for this task. It remains in your active to-do list."
+    );
+    await markUpdateCompleted(input.updateId, "todo_mute_callback");
     return;
   }
 
@@ -3319,19 +3353,25 @@ export async function POST(request: Request) {
     }
 
     if (text === "/reminders" || text.toLowerCase() === "check reminders") {
-      const result = await checkAndSendEventReminders();
-      if (result.remindersSent > 0) {
-        await sendTelegramMessage(
-          chatId,
-          `✅ Checked calendar (${result.eventsChecked} upcoming events found). Dispatched ${result.remindersSent} reminder notification(s)!`
-        );
+      const [eventResult, todoResult] = await Promise.all([
+        checkAndSendEventReminders(),
+        checkAndSendTodoReminders(),
+      ]);
+
+      const lines: string[] = ["🔔 *Reminders Status*:"];
+      if (eventResult.remindersSent > 0) {
+        lines.push(`📅 Dispatched ${eventResult.remindersSent} calendar event reminder(s)!`);
       } else {
-        await sendTelegramMessage(
-          chatId,
-          `🔔 No event reminders currently due across your personal and work calendars (${result.eventsChecked} upcoming events checked).`
-        );
+        lines.push(`📅 No calendar reminders due (${eventResult.eventsChecked} upcoming events checked).`);
       }
 
+      if (todoResult.remindersSent > 0) {
+        lines.push(`⏰ Dispatched ${todoResult.remindersSent} recurring task reminder(s)!`);
+      } else {
+        lines.push(`⏰ No to-do reminders due (${todoResult.todosChecked} active recurring task(s) checked).`);
+      }
+
+      await sendTelegramMessage(chatId, lines.join("\n\n"));
       await markUpdateCompleted(updateId, "check_reminders");
       return Response.json({ ok: true });
     }
@@ -3424,6 +3464,45 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    if (text.startsWith("/remind ") || text.startsWith("/todo remind ")) {
+      const taskText = text.replace(/^\/(?:todo\s+)?remind\s+/, "").trim();
+      if (!taskText) {
+        await sendTelegramMessage(
+          chatId,
+          "Please specify what to remind you: /remind <task>"
+        );
+        await markUpdateCompleted(updateId, "todo_remind_empty");
+        return Response.json({ ok: true });
+      }
+
+      const todo = await addTodo({
+        task: taskText,
+        remindIntervalMinutes: 30,
+        chatId,
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        `✅ Added to your to-do list:\n• ${todo.task}\n🔔 Reminder: Every 30 mins until marked done`,
+        {
+          inline_keyboard: [
+            [
+              {
+                text: "✅ Mark Done",
+                callback_data: `todo_done:${todo.taskId}`,
+              },
+              {
+                text: "🔕 Mute Reminder",
+                callback_data: `todo_mute:${todo.taskId}`,
+              },
+            ],
+          ],
+        }
+      );
+      await markUpdateCompleted(updateId, "todo_remind_command");
+      return Response.json({ ok: true });
+    }
+
     if (text.startsWith("/todo add ")) {
       const taskText = text.replace("/todo add ", "").trim();
       if (!taskText) {
@@ -3432,7 +3511,7 @@ export async function POST(request: Request) {
         return Response.json({ ok: true });
       }
 
-      const todo = await addTodo({ task: taskText });
+      const todo = await addTodo({ task: taskText, chatId });
       await sendTelegramMessage(
         chatId,
         `✅ Added to your to-do list:\n• ${todo.task}`,
@@ -4138,24 +4217,35 @@ export async function POST(request: Request) {
         task: intent.task,
         dueDate: intent.dueDate,
         priority: intent.priority,
+        remindIntervalMinutes: intent.remindIntervalMinutes,
+        chatId,
       });
 
       const dueStr = todo.dueDate
         ? `\n📅 Due: ${formatCalendarDate(todo.dueDate)}`
         : "";
+      const remindStr = todo.remindIntervalMinutes
+        ? `\n🔔 Reminder: Every ${todo.remindIntervalMinutes} mins until marked done`
+        : "";
+
+      const buttons = [
+        {
+          text: "✅ Mark Done",
+          callback_data: `todo_done:${todo.taskId}`,
+        },
+      ];
+      if (todo.remindIntervalMinutes) {
+        buttons.push({
+          text: "🔕 Mute",
+          callback_data: `todo_mute:${todo.taskId}`,
+        });
+      }
 
       await sendTelegramMessage(
         chatId,
-        `✅ Added to your to-do list:\n• ${todo.task}${dueStr}`,
+        `✅ Added to your to-do list:\n• ${todo.task}${dueStr}${remindStr}`,
         {
-          inline_keyboard: [
-            [
-              {
-                text: "✅ Mark Done",
-                callback_data: `todo_done:${todo.taskId}`,
-              },
-            ],
-          ],
+          inline_keyboard: [buttons],
         }
       );
 

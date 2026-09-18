@@ -81,6 +81,7 @@ const intentSchema = z.union([
     task: z.string().min(1).max(300),
     dueDate: z.string().date().optional(),
     priority: z.enum(["low", "medium", "high"]).default("medium"),
+    remindIntervalMinutes: z.number().int().positive().optional(),
   }),
   z.object({
     action: z.literal("todo_view"),
@@ -474,7 +475,8 @@ To-do item creation:
   "action": "todo_add",
   "task": "task description",
   "dueDate": "YYYY-MM-DD (if mentioned, otherwise omit)",
-  "priority": "low", "medium", or "high"
+  "priority": "low", "medium", or "high",
+  "remindIntervalMinutes": 30 (default 30 whenever user asks to be reminded to do something, or requested interval)
 }
 
 To-do view:
@@ -600,8 +602,12 @@ Finance summary rules:
 
 To-do rules:
 - If the user asks to add something to their to-do list, tasks, reminder, or "todo: ...", return todo_add.
+- CRITICAL REMINDER RULE: Whenever the user asks you to REMIND them to do something (e.g. "remind me to...", "set a reminder to...", "nag me to...", "remind me every 30 mins to..."), return action "todo_add" with 'remindIntervalMinutes: 30' (or whatever interval in minutes was requested, default 30).
+- If the user merely asks to add a task without asking for reminders (e.g. "add buy milk to my todo list", "todo: clean room"), do NOT include 'remindIntervalMinutes'.
 - "Add buy milk to my todo list" -> todo_add with task "buy milk".
-- "Remind me to call John today" -> todo_add with task "call John", dueDate: "${currentDate}".
+- "Remind me to call John today" -> todo_add with task "call John", dueDate: "${currentDate}", remindIntervalMinutes: 30.
+- "Remind me to buy groceries" -> todo_add with task "buy groceries", remindIntervalMinutes: 30.
+- "Remind me every 15 minutes to drink water" -> todo_add with task "drink water", remindIntervalMinutes: 15.
 - "Add finish presentation due tomorrow" -> todo_add with task "finish presentation" and dueDate of tomorrow.
 - "What do I have to do for today?", "what do I have to do today?", "what are my tasks for today?", "today's todo list" -> todo_view with timeframe "today".
 - "What's on my to-do list?", "show my tasks", "view my todo list", "what do I have to do?", "list my todos" -> todo_view with timeframe "all".
