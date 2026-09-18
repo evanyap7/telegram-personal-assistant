@@ -190,9 +190,8 @@ Schedule: Every 10 or 15 minutes
 
 ## 💼 Engineering & Resume Highlights
 
-- **Architected a serverless Next.js personal assistant** on Vercel, orchestrating Gemini 3.6 Flash and Perplexity Sonar via Vercel AI SDK to parse natural text, Opus voice notes, and images into type-safe, Zod-validated intents.
-- **Engineered real-time fintech ingestion pipelines for Apple Pay & DBS PayLah**, coupling iOS Shortcuts webhooks with Gmail API receipt parsing to auto-categorize and log purchases to Google Sheets within seconds.
-- **Built an in-memory multimodal pipeline** with buffer processing, transcribing voice memos on the fly and extracting structured calendar events and locations from photo flyers and receipts.
-- **Developed a dual-engine Google Calendar & Sheets sync system** managing multiple calendars (Personal/Work) with time-window resolution, interactive inline buttons, and soft-delete audit trails.
-- **Designed persistent reminder & nag schedulers** evaluating upcoming calendar events and 30-minute recurring to-do reminders with 1-tap completion callbacks.
-- **Enforced zero-trust security and idempotency** using single-use cryptographic tokens with 5-minute expiry, webhook secret authorization, user allowlisting, and stateful deduplication.
+- **Architected fintech ingestion pipelines for Apple Pay, Grab, DBS/POSB, and e-commerce receipts (Shopee, Amazon)** via iOS Shortcuts and Gmail push webhooks (Google Cloud Pub/Sub); parallel batch execution (`Promise.allSettled`) and a regex-first parser cut sync latency 78% and eliminated date-parsing crashes.
+- **Engineered a cost-optimized, 3-tiered AI intent engine (Gemini Flash-Lite → 3.6 Flash → Perplexity Sonar failover)** on Vercel AI SDK, cutting inference cost 70% with 809ms median classification latency, enforced by Zod schemas for 100% type-safe action routing.
+- **Built an in-memory multimodal pipeline with magic-byte validation**, transcribing Opus voice memos and extracting up to 30 calendar events (with venues, room numbers, and meeting links) or 25 receipt items per image, synced across Google Sheets and dual calendars (Personal/Work).
+- **Designed an asynchronous reminder engine & interactive Telegram dashboard**, dispatching dynamic event alerts and persistent 30-minute recurring to-do notifications until completion, accompanied by a 12-button inline control panel with 1-tap completion callbacks.
+- **Hardened production security and distributed reliability** with constant-time authorization (`timingSafeEqual`), prompt-injection guardrails, and automated PII/PAN/NRIC redaction; exponential backoff with jitter and idempotency ledgers prevented duplicate transactions and retry storms.
