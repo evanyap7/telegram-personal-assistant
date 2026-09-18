@@ -1,551 +1,198 @@
-# Telegram Personal Assistant
+# 🤖 Telegram Personal Assistant
 
-A secure, serverless Telegram personal assistant for natural-language finance tracking and Google Calendar management.
+Hey! 👋 This is my personal Telegram assistant bot that essentially runs my daily life — handling my expenses, scheduling, nagging to-dos, and Gmail drafts without me ever having to open five different apps. 
 
-The assistant lets an authorized user record income and expenses, review recent transactions, create calendar events, search for records or events, and safely delete them through multi-step confirmation flows.
+I built this full-stack serverless bot using **Next.js**, **TypeScript**, **Google Gemini 3.6 Flash**, **Perplexity Sonar**, and **Vercel**. It hooks directly into my **Telegram**, **Google Sheets**, **Google Calendar**, and **Gmail**.
 
-Built as an independent full-stack project with Next.js, TypeScript, Vercel AI SDK, Perplexity Sonar, Telegram Bot API, Google Sheets API, Google Calendar API, Zod, and Vercel.
+---
 
-## Features
+## ⚡ What this bot actually does for me
 
-### Finance Tracking
+### 1. 💸 Hands-off Finance & Expense Tracking
+I hate manually logging expenses. So I made it as frictionless as possible:
+- **Apple Pay Auto-Log**: The second I tap my iPhone or Apple Watch at a store, an iOS Shortcut fires in the background, hits my webhook, categorizes the purchase with AI, and logs it to my Google Sheet.
+- **DBS PayLah! & Grab Auto-Sync**: The bot scans my Gmail for payment confirmations from DBS, POSB, PayNow, and Grab, extracts what I bought, and logs it. (I can also trigger `/sync` anytime).
+- **Natural Language & Voice**: I can literally text or voice-note *"spent $6.50 on chicken rice for lunch"* or *"earned $150 from freelance"*, and it parses the amount, currency, category, and date.
+- **Receipt Photos**: Snap a picture of a receipt, and the vision model breaks down the total, merchant, and items.
+- **Monthly Spending Breakdown**: Tap `/finance_summary` or ask *"how much did I spend this month?"* for clean category-by-category charts.
+- **Safe Soft Deletes**: Made a mistake? Tap the `[🗑️ Undo]` button on the Telegram alert or say *"delete my coffee expense"* — it safely marks it deleted in Google Sheets without destroying history.
 
-- Record income and expenses using natural language or voice notes
-- Extract transaction type, amount, currency, category, description, and date
-- Accurately preserve backdated transaction dates in Google Sheets
-- Generate unique transaction IDs
-- View monthly, weekly, or daily financial summaries & category breakdowns (`/finance summary`)
-- View recent active transactions with `/finance list`
-- Search for finance records using natural language
-- Soft-delete transactions instead of permanently removing rows
-- Retain transaction status and deletion timestamps for auditability
+### 2. 📅 Smart Google Calendar & Meeting Locations
+- **Personal & Work Calendar Routing**: Just text *"Schedule project sync tomorrow 3pm to 4:30pm in Room 302 at work"*, and it routes to my work calendar, schedules the time, and extracts the location cleanly.
+- **Flyer & Email Screenshot OCR**: When I receive an event poster, conference email, or meeting flyer, I just screenshot it, send it to the bot with *"add this to my calendar"*, and the AI extracts the exact start/end times, venue/meeting link into the `Location` field, and creates the event.
+- **Upcoming Event Reminders**: Before an event starts (default 30 mins, or custom like *"notify me 2 hours before the deadline"*), the bot sends me a Telegram ping with countdown, venue location, and a direct Google Calendar link.
+- **Daily Agenda & Week View**: Send `/agenda` or tap the button to get today's timeline in Singapore time.
 
-Examples:
+### 3. ⏰ Persistent 30-Minute To-Do Reminders (The "Nag" Feature)
+I tend to procrastinate or forget quick tasks. So I built an automated nag engine:
+- If I tell the bot *"remind me to call John"* or `/remind buy groceries`, it adds it to my to-do list and **pings me on Telegram every 30 minutes** until I actually get it done.
+- The reminder message includes two quick inline buttons:
+  - `[✅ Mark Done]`: Marks the task completed in Google Sheets and stops all future reminder notifications immediately.
+  - `[🔕 Mute Reminder]`: Silences the 30-minute notifications if I'm in a meeting, while keeping the task active.
+- Daily tasks (`/todo today`) and full task lists (`/todo`) with 1-tap checkmark buttons.
 
-```text
-spent $6.20 for lunch
-spent $2.50 on coffee
-earned $100 from freelance work
-how much did I spend this month?
-delete my coffee expense
-```
+### 4. 🎮 Interactive Inline Button Control Panel
+Instead of remembering a bunch of slash commands, I can just type `/menu`, `/start`, `/help`, or *"menu"* to bring up an interactive dashboard with 12 quick-tap buttons:
+- 📅 Today's Agenda (`menu:agenda`)
+- 📆 Upcoming Events (`menu:calendar`)
+- 🔔 Check Reminders (`menu:reminders`)
+- 📋 Active Tasks (`menu:todos`)
+- 📌 Today's Tasks (`menu:todos_today`)
+- 💰 Spending Summary (`menu:finance_summary`)
+- 💳 Recent Expenses (`menu:finance_list`)
+- 🔄 Sync DBS & Grab (`menu:sync`)
+- 🎤 Voice Notes Guide (`menu:guide_voice`)
+- 📸 Photos & OCR Guide (`menu:guide_image`)
+- 📖 Full Guide & Tips (`menu:guide_all`)
+- ⚙️ Sync Commands (`menu:set_commands`)
 
-### Calendar Management
+Every view has a `« Back to Dashboard` button, making navigation super smooth.
 
-- Create Google Calendar events using natural language or voice notes
-- Route events to Personal or Work calendars
-- View today's agenda across both calendars (`/agenda`)
-- View upcoming events for the next 7 days (`/calendar list`)
-- Require confirmation before creating an event
-- Search upcoming calendar events by title or keyword
-- Select the exact event before deletion
-- Require a second explicit confirmation before deleting an event
-- Support date-only requests as all-day events
-- Support timed events when users provide a clear start/end time or duration
+### 5. ✉️ Gmail Drafts on the Fly
+If I need to write an email while walking, I just voice note:
+> *"Draft an email to Alex about the Q4 product roadmap update and tell him we're on track for Friday"*
 
-Examples:
+The bot creates a polite, well-structured draft directly inside my Gmail account and drops a link in Telegram so I can review and hit send whenever I want.
 
-```text
-Add gym tomorrow
-What's on my calendar today?
-Schedule floorball tomorrow from 8 pm to 9:30 pm
-Add project meeting next Friday from 2 pm to 3 pm in work
-delete gym tomorrow from personal
-```
+### 6. 🎙️ Voice Notes & Multi-Image Albums
+- **Opus Voice Memos**: Native Telegram voice notes are downloaded in memory, transcribed via Gemini, and processed just like text.
+- **Batch Image Debouncing**: If I dump 5 receipt photos or event screenshots in a single Telegram album, the bot groups them and confirms them together instead of spamming 5 separate messages.
 
-### To-Do List Tracking
+---
 
-- Track tasks directly inside Telegram using natural language or voice notes
-- Ask for daily agenda: "What do I have to do for today?" (`/todo today`)
-- View full active to-do list with interactive inline checkmark buttons (`/todo`)
-- Complete tasks with a single tap in Telegram or naturally: "I'm done with buy groceries"
-- Remove tasks safely with confirmation: "Remove buy groceries from my list"
-- Automatic priority support (🔴 High, 🟡 Medium, 🟢 Low) and due dates
-- Data stored persistently in a dedicated `Todos` tab in Google Sheets
+## 🛠️ Tech Stack
 
-Examples:
-
-```text
-What do I have to do for today?
-Add buy groceries to my to-do list
-Remind me to finish report by Friday
-I'm done with buy groceries
-Remove buy groceries from my list
-/todo
-/todo today
-/todo add Call dentist
-```
-
-### Email Drafting (Gmail API)
-
-- Draft emails using natural language voice notes or text messages
-- AI formats recipient, subject line, and polite body text
-- Safe Telegram confirmation preview card before creating draft
-- Direct draft creation in Gmail via Gmail API (`users.drafts.create`)
-- Quick link to open Gmail Drafts folder directly
-
-Examples:
-
-```text
-Draft an email to alex@example.com about project update
-Write an email to boss@company.com saying I will be late tomorrow
-```
-
-### Apple Pay & Apple Wallet Auto-Tracking
-
-- Auto-capture every Apple Pay tap in the background via iOS 17+ Shortcuts Personal Automation
-- Secure webhook (`/api/apple-wallet`) validates API secret and ingests merchant, amount, currency, and card
-- Hybrid categorization: instant merchant matching + Gemini 3.6 Flash fallback
-- Real-time Telegram notification cards with interactive inline buttons:
-  - `[✏️ Change Category]` to quickly re-classify across 8 spending categories
-  - `[🗑️ Undo / Delete]` to soft-delete accidental transactions immediately
-- Conversational reply support: swipe-reply to the Telegram alert with what you bought (e.g. *"bought iced latte"*) to auto-update description and re-categorize in Google Sheets
-
-### DBS PayLah! & PayNow Auto-Sync (Gmail API)
-
-- Automated email ingestion engine querying Gmail for DBS PayLah / PayNow transaction confirmation emails
-- AI receipt parsing via Google Gemini 3.6 Flash to extract amount, merchant, item name, and date
-- Telegram command support: trigger `/paylah` or say *"sync paylah"* to scan and import new receipts
-- Deduplication with `UpdateLog` in Google Sheets ensuring each Gmail message ID is processed exactly once
-- Real-time Telegram alerts with interactive category and undo buttons
-
-### Voice Notes & Multimodal Processing
-
-- Send voice notes or audio messages directly on Telegram
-- Hands-free audio transcription powered by Google Gemini 3.6 Flash
-- Automatically routed through the finance or calendar engine
-- Vision OCR for receipts and calendar schedules with batch event creation
-
-### Security and Reliability
-
-- Telegram webhook secret-token verification
-- Allowlist access control using an approved Telegram user ID
-- Zod validation for incoming Telegram updates and AI-generated intents
-- Persistent callback state stored in Google Sheets
-- One-time action tokens for confirmations
-- Telegram user-ownership checks for every callback action
-- Five-minute expiration for pending actions
-- Idempotency logging to prevent duplicate Telegram update processing
-- Inline callback acknowledgement and keyboard removal
-- Structured error logs with credential redaction
-- Finance soft deletion for auditable records
-- Calendar deletion only after explicit confirmation
-
-## Tech Stack
-
-| Area | Technologies |
+| Component | Tech |
 | --- | --- |
-| Backend | Next.js Route Handlers, Node.js, TypeScript |
-| AI Intent Parsing | Vercel AI SDK, Gemini 3.6 Flash, Perplexity Sonar API |
-| Messaging | Telegram Bot API |
-| Finance Storage | Google Sheets API |
-| Calendar | Google Calendar API |
-| Email & Banking Ingestion | Gmail API, Apple Shortcuts Personal Automation |
-| Validation | Zod |
-| Deployment | Vercel |
+| **Backend Framework** | Next.js (App Router, Route Handlers), Node.js, TypeScript |
+| **Hosting & Serverless** | Vercel Edge / Serverless Functions |
+| **AI Models** | Google Gemini 3.6 Flash (Audio transcription, Vision OCR, Fast parsing) & Perplexity Sonar via Vercel AI SDK |
+| **Bot Interface** | Telegram Bot API (Webhooks, Inline Keyboards, Callbacks) |
+| **Database & State** | Google Sheets API (`Transactions`, `Todos`, `PendingActions`, `UpdateLog`) |
+| **Calendar Engine** | Google Calendar API (Dual-calendar: Personal & Work) |
+| **Email & Financial Sync** | Gmail API (OAuth 2.0), iOS Shortcuts Personal Automation |
+| **Validation** | Zod (Strict schema validation for all inputs & AI outputs) |
 
-## Architecture
+---
 
-```text
-       Apple Pay Tap                       DBS PayLah! Email                Telegram User
-             |                                    |                               |
-             v                                    v                               v
-iOS Shortcuts Automation                Gmail API Polling / Sync        Telegram Bot API Webhook
-             |                                    |                               |
-             v                                    v                               v
-Next.js: /api/apple-wallet             Next.js: /api/paylah-sync        Next.js: /api/telegram
-             |                                    |                               |
-             +--------------------+---------------+-------------------------------+
-                                  |
-                                  +--> Webhook secret & User allowlisting
-                                  +--> Zod validation & UpdateLog idempotency
-                                  +--> Gemini 3.6 Flash / Sonar AI parsing
-                                  |
-                                  +--> Google Sheets (Transactions & Todos)
-                                  +--> Google Calendar API (Personal & Work)
-                                  +--> Real-time Telegram interactive notifications
-```
-
-## Intent Parsing
-
-The assistant uses Perplexity Sonar through the Vercel AI SDK to convert natural-language Telegram messages into validated, structured intents.
-
-Supported intent types include:
+## 🏗️ Architecture Flow
 
 ```text
-finance_add
-calendar_add
-finance_delete_search
-calendar_delete_search
-unknown
+  [ Apple Pay Tap ]         [ DBS / Grab Email ]             [ Telegram User ]
+          │                         │                               │
+          ▼                         ▼                               ▼
+iOS Shortcut Automation      Gmail API Background Sync      Telegram Bot Webhook
+          │                         │                               │
+          ▼                         ▼                               ▼
+/api/apple-wallet            /api/paylah-sync               /api/telegram
+          │                         │                               │
+          └─────────────────────────┼───────────────────────────────┘
+                                    │
+                  ┌─────────────────┴─────────────────┐
+                  │ • Webhook Secret & User Auth      │
+                  │ • Zod Validation & Deduplication  │
+                  │ • Gemini 3.6 / Sonar AI Engine    │
+                  └─────────────────┬─────────────────┘
+                                    │
+          ┌─────────────────────────┼─────────────────────────┐
+          ▼                         ▼                         ▼
+   Google Sheets             Google Calendar              Telegram
+(Transactions & Todos)      (Personal & Work)       (Interactive Buttons &
+                                                      Event Reminders)
 ```
 
-Example finance intent:
+---
 
-```json
-{
-  "action": "finance_add",
-  "type": "expense",
-  "amount": 2.5,
-  "currency": "SGD",
-  "category": "Dining",
-  "description": "coffee",
-  "transactionDate": "2026-08-31"
-}
-```
+## 🔒 Security & Reliability
 
-Example timed calendar intent:
+Because this bot manages my actual money, schedule, and emails, I built it with strict guardrails:
+- **User Allowlisting**: Only my specific Telegram numeric User ID can interact with the bot. Unauthorized users get ignored.
+- **Webhook Secrets**: All incoming Telegram and Apple Wallet webhook calls verify high-entropy secret tokens.
+- **Cryptographic Confirmation Tokens**: Destructive actions (deleting calendar events or expenses) require multi-step confirmation with single-use tokens that expire after 5 minutes.
+- **Idempotency & Deduplication**: Telegram retries and duplicate Gmail receipts are checked against an `UpdateLog` sheet to ensure no transaction is ever recorded twice.
+- **Soft Deletes**: Deleting an expense marks it `deleted` in Google Sheets rather than removing the row, keeping a full audit trail.
 
-```json
-{
-  "action": "calendar_add",
-  "calendarName": "personal",
-  "allDay": false,
-  "title": "Floorball",
-  "start": "2026-09-02T20:00:00+08:00",
-  "end": "2026-09-02T21:30:00+08:00"
-}
-```
+---
 
-Example all-day calendar intent:
+## 📊 Google Sheets Setup
 
-```json
-{
-  "action": "calendar_add",
-  "calendarName": "work",
-  "allDay": true,
-  "title": "Freshies Start School",
-  "date": "2026-09-14"
-}
-```
+The database runs on a single Google Spreadsheet with these tabs:
 
-## Confirmation Flows
+1. **`Transactions`**: Logs all income/expenses with ID, timestamp, type, amount, currency, category, description, and status (`active` / `deleted`).
+2. **`Todos`**: Stores tasks with ID, created timestamp, task description, due date, priority, status (`active` / `completed`), completion timestamp, reminder interval (e.g. `30` mins), last reminded timestamp, and chat ID.
+3. **`PendingActions`**: Temporary server state holding payload JSON and 5-minute expiry tokens for inline button confirmations.
+4. **`UpdateLog`**: Webhook update deduplication ledger tracking processed Telegram update IDs.
 
-### Calendar Creation
+---
 
-Calendar events are never created immediately after AI parsing.
+## 🚀 Local Development
 
-```text
-Natural-language calendar request
-        |
-        v
-Parse and validate event details
-        |
-        v
-Store pending action in Google Sheets
-        |
-        v
-Send Telegram Yes/No buttons
-        |
-        +--> No: cancel pending action
-        |
-        +--> Yes: create Google Calendar event
-```
-
-### Finance Deletion
-
-Finance deletion uses a two-step flow:
-
-```text
-Delete request
-        |
-        v
-Search active finance transactions
-        |
-        v
-User selects exact transaction
-        |
-        v
-Show full transaction details
-        |
-        v
-User taps Yes/No
-        |
-        +--> No: keep transaction
-        |
-        +--> Yes: mark Status = deleted in Google Sheets
-```
-
-Finance rows are retained for auditability.
-
-### Calendar Deletion
-
-Calendar deletion also uses a two-step confirmation flow:
-
-```text
-Delete request
-        |
-        v
-Search upcoming events in selected calendar
-        |
-        v
-User selects exact event
-        |
-        v
-Show event title, calendar, start, and end
-        |
-        v
-User taps Yes/No
-        |
-        +--> No: keep event
-        |
-        +--> Yes: delete selected Google Calendar event
-```
-
-Calendar deletion is permanent only after the second explicit confirmation.
-
-## Google Sheets Structure
-
-The project uses one spreadsheet with three tabs.
-
-### `Transactions`
-
-| Column | Field |
-| --- | --- |
-| A | Transaction ID |
-| B | Timestamp |
-| C | Type |
-| D | Amount |
-| E | Currency |
-| F | Category |
-| G | Description |
-| H | Status |
-| I | Deleted At |
-
-Example:
-
-```text
-txn_abc123 | 31 Aug 2026 @ 4:43 PM | expense | 2.50 | SGD | Dining | coffee | active |
-```
-
-A deleted transaction remains in the sheet:
-
-```text
-txn_abc123 | 31 Aug 2026 @ 4:43 PM | expense | 2.50 | SGD | Dining | coffee | deleted | 2026-08-31T...
-```
-
-### `Todos`
-
-| Column | Field | Description |
-| --- | --- | --- |
-| A | Task ID | Unique ID (e.g. `todo_abc123`) |
-| B | Created At | Singapore timestamp |
-| C | Task | Task title or description |
-| D | Due Date | Optional due date (`YYYY-MM-DD`) |
-| E | Priority | `low`, `medium`, `high` |
-| F | Status | `active`, `completed`, or `deleted` |
-| G | Completed At | Completion Singapore timestamp |
-
-The `Todos` tab is automatically created and initialized with headers if it does not already exist.
-
-### `PendingActions`
-
-| Column | Field |
-| --- | --- |
-| A | Token |
-| B | User ID |
-| C | Action Type |
-| D | Payload JSON |
-| E | Expires At |
-| F | Status |
-
-This tab stores short-lived server-side state for calendar creation, selection, and deletion confirmation workflows.
-
-### `UpdateLog`
-
-| Column | Field |
-| --- | ---|
-| A | Telegram Update ID |
-| B | Status |
-| C | Started At |
-| D | Completed At |
-| E | Action |
-| F | Error |
-
-This tab prevents duplicate processing when Telegram retries webhook deliveries.
-
-## Local Setup
-
-### Prerequisites
-
-- Node.js 18 or later
-- npm
-- A Telegram bot token
-- A Perplexity API key
-- A Google Cloud project with Google Sheets API and Google Calendar API enabled
-- Google OAuth credentials or a supported Google authentication configuration
-- A Google Sheet for transaction and action state
-- Personal and Work Google Calendar IDs
-- A Vercel account for production deployment
-
-### Installation
-
-Clone the repository:
-
+### 1. Clone & Install
 ```bash
 git clone https://github.com/evanyap7/telegram-personal-assistant.git
 cd telegram-personal-assistant
-```
-
-Install dependencies:
-
-```bash
 npm install
 ```
 
-Create the local environment file:
-
+### 2. Configure `.env.local`
 ```bash
 cp .env.example .env.local
 ```
 
-Add the required environment variables:
-
+Fill in your credentials:
 ```env
+# Telegram
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_SECRET=your_long_random_webhook_secret
-TELEGRAM_ALLOWED_USER_ID=your_telegram_numeric_user_id
+TELEGRAM_ALLOWED_USER_ID=your_numeric_user_id
 
+# AI Models
+GEMINI_API_KEY=your_google_gemini_api_key
 PERPLEXITY_API_KEY=your_perplexity_api_key
 
+# Google APIs
 GOOGLE_SHEET_ID=your_google_sheet_id
 GOOGLE_PERSONAL_CALENDAR_ID=your_personal_calendar_id
 GOOGLE_WORK_CALENDAR_ID=your_work_calendar_id
-
 GOOGLE_CLIENT_ID=your_google_oauth_client_id
 GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
 GOOGLE_REFRESH_TOKEN=your_google_oauth_refresh_token
 
-APPLE_WALLET_SECRET=your_apple_wallet_webhook_secret
+# Apple Pay / Webhook Secrets
+APPLE_WALLET_SECRET=your_wallet_webhook_secret
+CRON_SECRET=your_cron_secret
 ```
 
-Never commit `.env.local`, OAuth credentials, refresh tokens, or bot tokens.
+### 3. Generate Gmail OAuth Token (For Drafts & DBS Sync)
+```bash
+npm run get-gmail-token
+```
+Follow the browser prompt to grant permissions and paste the generated `GOOGLE_REFRESH_TOKEN` into your `.env.local`.
 
-### Gmail API Setup (Drafting Emails & DBS PayLah Sync)
-
-To enable email drafting and DBS PayLah receipt syncing with your Gmail account (`evanyap7@gmail.com`):
-1. In Google Cloud Console, enable the **Gmail API**.
-2. Go to **Credentials** -> **Create Credentials** -> **OAuth client ID** (Web application).
-3. Add `http://localhost:3000/oauth2callback` to **Authorized redirect URIs**.
-4. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env.local`.
-5. Run the interactive token generator:
-   ```bash
-   npm run get-gmail-token
-   ```
-6. Follow the browser prompt to grant permission for `evanyap7@gmail.com` and copy the generated `GOOGLE_REFRESH_TOKEN` into `.env.local`.
-
-Start the development server:
-
+### 4. Run Locally
 ```bash
 npm run dev
 ```
 
-## Environment Variables
+---
 
-| Variable | Purpose |
-| --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Authenticates requests to the Telegram Bot API |
-| `TELEGRAM_WEBHOOK_SECRET` | Verifies that webhook requests came from Telegram |
-| `TELEGRAM_ALLOWED_USER_ID` | Restricts bot usage to one approved Telegram user |
-| `PERPLEXITY_API_KEY` | Authenticates Perplexity Sonar intent parsing |
-| `GOOGLE_SHEET_ID` | Identifies the spreadsheet used for application state |
-| `GOOGLE_PERSONAL_CALENDAR_ID` | Personal Google Calendar destination |
-| `GOOGLE_WORK_CALENDAR_ID` | Work Google Calendar destination |
-| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
-| `GOOGLE_REFRESH_TOKEN` | Google OAuth refresh token (drafting emails & PayLah receipt syncing) |
-| `APPLE_WALLET_SECRET` | Secret token securing Apple Pay & PayLah webhook endpoints |
+## ⏰ Background Cron Setup (Event & To-Do Reminders)
 
-## Telegram Webhook Setup
-
-After deploying the project, configure Telegram to send both messages and inline-button callbacks to the webhook endpoint.
-
-```bash
-curl -X POST \
-  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"url\": \"https://YOUR_VERCEL_DOMAIN/api/telegram\",
-    \"secret_token\": \"${TELEGRAM_WEBHOOK_SECRET}\",
-    \"allowed_updates\": [\"message\", \"callback_query\"],
-    \"drop_pending_updates\": true
-  }"
-```
-
-Replace:
+To have the bot check for event reminders (30 mins before meetings) and ping you every 30 mins for active to-do reminders, set up an external cron job (like [cron-job.org](https://cron-job.org)) to hit the reminder endpoint:
 
 ```text
-YOUR_VERCEL_DOMAIN
+GET https://YOUR_VERCEL_DOMAIN/api/cron/calendar-reminders
+Header: Authorization: Bearer <CRON_SECRET>
+Schedule: Every 10 or 15 minutes
 ```
 
-with the production Vercel deployment domain.
+---
 
-## Build and Deployment
+## 💼 Engineering & Resume Highlights
 
-Build locally before pushing:
-
-```bash
-npm run build
-```
-
-Deploy through the GitHub and Vercel integration:
-
-```bash
-git add .
-git commit -m "Describe your change"
-git push
-```
-
-Vercel automatically creates a production deployment from the connected production branch.
-
-## Example Commands
-
-### Finance
-
-```text
-spent $6.20 for lunch
-spent 23.50 SGD on groceries
-earned $100 from freelance work
-/finance list
-delete my coffee expense
-```
-
-### Calendar
-
-```text
-Add gym tomorrow
-Schedule floorball tomorrow from 8 pm to 9:30 pm
-Add a project meeting next Friday from 2 pm to 3 pm in work
-delete gym tomorrow from personal
-```
-
-## Safety Design Decisions
-
-- The AI model only classifies user intent and extracts structured data.
-- The AI model cannot call Google Sheets, Google Calendar, Telegram, or other external APIs directly.
-- Calendar creation always requires explicit user confirmation.
-- Finance deletion requires transaction selection and a second confirmation.
-- Calendar deletion requires event selection and a second confirmation.
-- Finance deletion is implemented as a soft delete to maintain transaction history.
-- Pending callback tokens are stored server-side, scoped to the authorized Telegram user, expire after five minutes, and can be used once.
-- Telegram update IDs are logged to prevent duplicate webhook processing.
-- Error logs redact recognizable secret formats before output.
-
-## Future Improvements
-
-- Add finance summaries by week, month, category, and currency
-- Add transaction restoration through `/finance undo <transaction-id>`
-- Support calendar event updates and rescheduling
-- Add date-specific deletion searches, such as “delete yesterday’s lunch”
-- Add recurring-event support
-- Add scheduled cleanup for expired pending actions and update logs
-- Support multiple authorized users with per-user spreadsheet and calendar scopes
-- Add a lightweight admin dashboard for reviewing finance activity and pending actions
-
-## Resume Highlights
-
-- **Architected a serverless Next.js assistant** on Vercel, orchestrating Gemini 3.6 Flash and Perplexity Sonar via Vercel AI SDK to parse text, Opus voice notes, and images into type-safe, Zod-validated intents.
-- **Engineered sub-3-second fintech pipelines for Apple Pay & DBS PayLah**, coupling iOS Shortcuts webhooks with Google Cloud Pub/Sub event-driven Gmail push notifications and a regex-LLM hybrid parser to auto-log and categorize transactions.
-- **Built an in-memory multimodal pipeline** with magic-byte validation and audio-buffer processing, transcribing voice memos and extracting up to 30 batch calendar events or receipt items per screenshot.
-- **Developed a Google Sheets & Calendar analytics engine** synchronizing across 2 calendars (Personal/Work) with time-window resolution, category spending breakdowns, and interactive Telegram action cards for 1-tap edits and soft-delete audit trails.
-- **Enforced zero-trust security and idempotency** via single-use cryptographic tokens with 5-minute expiry, webhook secret authorization, user allowlisting, and stateful deduplication to prevent duplicate operations.
+- **Architected a serverless Next.js personal assistant** on Vercel, orchestrating Gemini 3.6 Flash and Perplexity Sonar via Vercel AI SDK to parse natural text, Opus voice notes, and images into type-safe, Zod-validated intents.
+- **Engineered real-time fintech ingestion pipelines for Apple Pay & DBS PayLah**, coupling iOS Shortcuts webhooks with Gmail API receipt parsing to auto-categorize and log purchases to Google Sheets within seconds.
+- **Built an in-memory multimodal pipeline** with buffer processing, transcribing voice memos on the fly and extracting structured calendar events and locations from photo flyers and receipts.
+- **Developed a dual-engine Google Calendar & Sheets sync system** managing multiple calendars (Personal/Work) with time-window resolution, interactive inline buttons, and soft-delete audit trails.
+- **Designed persistent reminder & nag schedulers** evaluating upcoming calendar events and 30-minute recurring to-do reminders with 1-tap completion callbacks.
+- **Enforced zero-trust security and idempotency** using single-use cryptographic tokens with 5-minute expiry, webhook secret authorization, user allowlisting, and stateful deduplication.
