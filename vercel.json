@@ -3,10 +3,6 @@
     {
       "path": "/api/cron/renew-gmail-watch",
       "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/cron/calendar-reminders",
-      "schedule": "*/10 * * * *"
     }
   ]
 }
