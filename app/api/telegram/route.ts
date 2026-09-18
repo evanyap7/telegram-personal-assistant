@@ -93,6 +93,7 @@ import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-inten
 import {
   answerTelegramCallback,
   editTelegramMessage,
+  InlineKeyboardMarkup,
   removeTelegramInlineKeyboard,
   sendTelegramChatAction,
   sendTelegramMessage,
@@ -193,6 +194,51 @@ const financeAddSchema = z.object({
   description: z.string().min(1).max(200),
 });
 
+function getBotDashboardMarkup(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        { text: "📅 Today's Agenda", callback_data: "menu:agenda" },
+        { text: "📆 Upcoming Events", callback_data: "menu:calendar" },
+      ],
+      [
+        { text: "🔔 Check Reminders", callback_data: "menu:reminders" },
+        { text: "📋 Active Tasks", callback_data: "menu:todos" },
+      ],
+      [
+        { text: "📌 Today's Tasks", callback_data: "menu:todos_today" },
+        { text: "💰 Spending Summary", callback_data: "menu:finance_summary" },
+      ],
+      [
+        { text: "💳 Recent Expenses", callback_data: "menu:finance_list" },
+        { text: "🔄 Sync DBS & Grab", callback_data: "menu:sync" },
+      ],
+      [
+        { text: "🎤 Voice Notes Guide", callback_data: "menu:guide_voice" },
+        { text: "📸 Photos & OCR Guide", callback_data: "menu:guide_image" },
+      ],
+      [
+        { text: "📖 Full Guide & Tips", callback_data: "menu:guide_all" },
+        { text: "⚙️ Sync Commands", callback_data: "menu:set_commands" },
+      ],
+    ],
+  };
+}
+
+function getBotDashboardText(): string {
+  return [
+    "🤖 *Personal Assistant Control Panel*",
+    "",
+    "Tap any button below to immediately run a function or view your data:",
+    "",
+    "• 📅 *Calendar*: Daily agenda, 7-day schedule & reminder checks",
+    "• 📝 *To-Dos*: Interactive task list with 1-tap complete buttons",
+    "• 💰 *Finances*: Monthly spending breakdown & recent transaction log",
+    "• 🔄 *Receipt Sync*: Automatically sync DBS & Grab from Gmail",
+    "• 🎤 *Voice & OCR*: Speak voice notes or send screenshots anytime!",
+  ].join("\n");
+}
+
 function helpText() {
   return [
     "Hi — I’m your personal assistant.",
@@ -200,7 +246,7 @@ function helpText() {
     "You can write or send voice notes 🎤:",
     "• spent $6.20 for lunch",
     "• what's on my calendar today?",
-    "• schedule floorball tomorrow from 8 pm to 9:30 pm",
+    "• schedule floorball tomorrow from 8 pm to 9:30 pm at Sports Hub",
     "• what do I have to do for today?",
     "• add buy groceries to my to-do list",
     "• I'm done with buy groceries",
@@ -215,7 +261,9 @@ function helpText() {
     "• [receipt image] Log this receipt as an expense",
     "",
     "Commands:",
+    "• /menu — Open interactive inline buttons dashboard",
     "• /agenda — View today's schedule",
+    "• /reminders — Check upcoming event reminders",
     "• /calendar list — View upcoming events (next 7 days)",
     "• /todo — View your active to-do list with checkmark buttons",
     "• /todo today — View today's tasks",
@@ -1526,6 +1574,303 @@ async function handleTodoSelectionCallback(input: {
   await markUpdateCompleted(input.updateId, "todo_delete_confirmation_prompted");
 }
 
+async function handleMenuCallback(input: {
+  callbackId: string;
+  subAction: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+  updateId: number;
+}) {
+  const { callbackId, subAction, chatId } = input;
+
+  if (subAction === "home") {
+    await answerTelegramCallback(callbackId);
+    await sendTelegramMessage(
+      chatId,
+      getBotDashboardText(),
+      getBotDashboardMarkup()
+    );
+    await markUpdateCompleted(input.updateId, "menu_home");
+    return;
+  }
+
+  if (subAction === "agenda") {
+    await answerTelegramCallback(callbackId, "Fetching today's schedule...");
+    const now = new Date();
+    const sgTodayStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+
+    const events = await getUpcomingSchedule({
+      timeMin: `${sgTodayStr}T00:00:00+08:00`,
+      timeMax: `${sgTodayStr}T23:59:59+08:00`,
+      maxResults: 25,
+    });
+
+    if (events.length === 0) {
+      await sendTelegramMessage(
+        chatId,
+        `📅 No events scheduled for today (${formatCalendarDate(sgTodayStr)}). Enjoy your day!`,
+        {
+          inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+        }
+      );
+    } else {
+      const formatted = formatScheduleAgendaView(events, {
+        timeframe: "today",
+        title: `Today’s Schedule (${formatCalendarDate(sgTodayStr)})`,
+        calendarName: "all",
+      });
+      const keyboard = formatted.replyMarkup?.inline_keyboard ?? [];
+      await sendTelegramMessage(chatId, formatted.text, {
+        inline_keyboard: [
+          ...keyboard,
+          [{ text: "« Back to Dashboard", callback_data: "menu:home" }],
+        ],
+      });
+    }
+    await markUpdateCompleted(input.updateId, "menu_agenda");
+    return;
+  }
+
+  if (subAction === "calendar") {
+    await answerTelegramCallback(callbackId, "Fetching upcoming schedule...");
+    const events = await getUpcomingSchedule({ maxResults: 15 });
+    if (events.length === 0) {
+      await sendTelegramMessage(
+        chatId,
+        "📅 No upcoming events found on your calendars.",
+        {
+          inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+        }
+      );
+    } else {
+      const formatted = formatSchedulePureTableView(events, {
+        timeframe: "upcoming",
+        title: "Upcoming Schedule (Next 7 Days)",
+        calendarName: "all",
+      });
+      const keyboard = formatted.replyMarkup?.inline_keyboard ?? [];
+      await sendTelegramMessage(chatId, formatted.text, {
+        inline_keyboard: [
+          ...keyboard,
+          [{ text: "« Back to Dashboard", callback_data: "menu:home" }],
+        ],
+      });
+    }
+    await markUpdateCompleted(input.updateId, "menu_calendar");
+    return;
+  }
+
+  if (subAction === "reminders") {
+    await answerTelegramCallback(callbackId, "Checking event reminders...");
+    const result = await checkAndSendEventReminders();
+    const text =
+      result.remindersSent > 0
+        ? `✅ Checked calendar (${result.eventsChecked} upcoming events found). Dispatched ${result.remindersSent} reminder notification(s)!`
+        : `🔔 No event reminders currently due across your personal and work calendars (${result.eventsChecked} upcoming events checked).`;
+    await sendTelegramMessage(chatId, text, {
+      inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+    });
+    await markUpdateCompleted(input.updateId, "menu_reminders");
+    return;
+  }
+
+  if (subAction === "todos") {
+    await answerTelegramCallback(callbackId, "Loading tasks...");
+    const todos = await listTodos({ status: "active" });
+    const formatted = formatTodoListMessage(todos, "Active To-Do List");
+    const keyboard = formatted.replyMarkup?.inline_keyboard ?? [];
+    await sendTelegramMessage(chatId, formatted.text, {
+      inline_keyboard: [
+        ...keyboard,
+        [{ text: "« Back to Dashboard", callback_data: "menu:home" }],
+      ],
+    });
+    await markUpdateCompleted(input.updateId, "menu_todos");
+    return;
+  }
+
+  if (subAction === "todos_today") {
+    await answerTelegramCallback(callbackId, "Loading today's tasks...");
+    const todos = await listTodos({ status: "active" });
+    const sgTodayStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+    const todayTodos = todos.filter((t) => t.dueDate === sgTodayStr);
+    const formatted = formatTodoListMessage(
+      todayTodos,
+      `Today’s Tasks (${formatCalendarDate(sgTodayStr)})`
+    );
+    const keyboard = formatted.replyMarkup?.inline_keyboard ?? [];
+    await sendTelegramMessage(chatId, formatted.text, {
+      inline_keyboard: [
+        ...keyboard,
+        [{ text: "« Back to Dashboard", callback_data: "menu:home" }],
+      ],
+    });
+    await markUpdateCompleted(input.updateId, "menu_todos_today");
+    return;
+  }
+
+  if (subAction === "finance_summary") {
+    await answerTelegramCallback(callbackId, "Calculating monthly spending...");
+    const summary = await getFinanceSummary("month");
+    await sendTelegramMessage(chatId, formatFinanceSummary(summary), {
+      inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+    });
+    await markUpdateCompleted(input.updateId, "menu_finance_summary");
+    return;
+  }
+
+  if (subAction === "finance_list") {
+    await answerTelegramCallback(callbackId, "Loading recent transactions...");
+    const transactions = await listRecentTransactions();
+    if (transactions.length === 0) {
+      await sendTelegramMessage(chatId, "No active finance transactions found.", {
+        inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+      });
+    } else {
+      await sendTelegramMessage(
+        chatId,
+        [
+          "Recent active transactions:",
+          "",
+          ...transactions
+            .slice(-10)
+            .reverse()
+            .map((t) => formatFinanceTransaction(t)),
+        ].join("\n\n"),
+        {
+          inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+        }
+      );
+    }
+    await markUpdateCompleted(input.updateId, "menu_finance_list");
+    return;
+  }
+
+  if (subAction === "sync") {
+    await answerTelegramCallback(callbackId, "Syncing transactions from Gmail...");
+    await sendTelegramMessage(
+      chatId,
+      "🔍 Checking your Gmail for recent DBS and Grab transactions..."
+    );
+    try {
+      const syncResult = await syncPayLahTransactions();
+      const text =
+        syncResult.logged === 0
+          ? `✅ Scan complete (${syncResult.scanned} emails checked).\n\nNo new DBS or Grab transactions found to log!`
+          : `🎉 Successfully synced ${syncResult.logged} new transaction${
+              syncResult.logged === 1 ? "" : "s"
+            } to your Google Sheet!`;
+      await sendTelegramMessage(chatId, text, {
+        inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+      });
+      await markUpdateCompleted(input.updateId, "menu_sync_success");
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      await sendTelegramMessage(chatId, `⚠️ Sync failed: ${errMsg}`, {
+        inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+      });
+      await markUpdateCompleted(input.updateId, "menu_sync_error");
+    }
+    return;
+  }
+
+  if (subAction === "guide_voice") {
+    await answerTelegramCallback(callbackId);
+    await sendTelegramMessage(
+      chatId,
+      [
+        "🎤 *Voice Note Guide*",
+        "",
+        "Hold the microphone button in Telegram to talk naturally to your assistant!",
+        "",
+        "Examples of what you can say:",
+        "• *Finances*: “Spent $14 on chicken rice for lunch”",
+        "• *Calendar*: “Schedule a project sync tomorrow 3pm to 4:30pm in Room 302”",
+        "• *Deadlines*: “Proposal submission closes Friday 6pm, notify me 2 hours before”",
+        "• *To-Dos*: “Remind me to buy printer ink tonight”",
+        "• *Email Drafts*: “Draft an email to Alex about the budget review”",
+        "",
+        "The audio is transcribed in real time and processed directly.",
+      ].join("\n"),
+      {
+        inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+      }
+    );
+    await markUpdateCompleted(input.updateId, "menu_guide_voice");
+    return;
+  }
+
+  if (subAction === "guide_image") {
+    await answerTelegramCallback(callbackId);
+    await sendTelegramMessage(
+      chatId,
+      [
+        "📸 *Photos, Screenshots & OCR Guide*",
+        "",
+        "Send photos or screenshots with a text caption:",
+        "",
+        "• *Receipts & Bills*: Send receipt photos -> automatically extracts merchant, amount, category, and date.",
+        "• *Deadlines & Events*: Send email/flyer screenshots with caption: “add this to my work calendar and notify me 2 hours before” -> automatically extracts title, timing, location, and reminder!",
+        "• *Photo Albums (Multiple)*: Send up to 10 photos together -> the bot debounces and groups them into a single batch confirmation.",
+      ].join("\n"),
+      {
+        inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+      }
+    );
+    await markUpdateCompleted(input.updateId, "menu_guide_image");
+    return;
+  }
+
+  if (subAction === "guide_all") {
+    await answerTelegramCallback(callbackId);
+    await sendTelegramMessage(chatId, helpText(), {
+      inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+    });
+    await markUpdateCompleted(input.updateId, "menu_guide_all");
+    return;
+  }
+
+  if (subAction === "set_commands") {
+    await answerTelegramCallback(callbackId, "Updating command menu...");
+    await setTelegramBotCommands([
+      { command: "menu", description: "Open interactive inline buttons dashboard" },
+      { command: "agenda", description: "View today's schedule" },
+      { command: "reminders", description: "Check upcoming event reminders" },
+      { command: "todo", description: "View active to-do list" },
+      { command: "todotoday", description: "View today's to-do list" },
+      { command: "calendar", description: "Calendar commands & upcoming events" },
+      { command: "finance", description: "Finance commands & summary" },
+      { command: "finance_summary", description: "Monthly spending & breakdown" },
+      { command: "finance_list", description: "Recent active transactions" },
+      { command: "sync", description: "Sync recent DBS & Grab transactions" },
+      { command: "help", description: "Show help and full guide" },
+    ]);
+    await sendTelegramMessage(
+      chatId,
+      "✅ Telegram bot command menu has been updated! Tap Menu or type / to see the commands.",
+      {
+        inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+      }
+    );
+    await markUpdateCompleted(input.updateId, "menu_set_commands");
+    return;
+  }
+
+  await answerTelegramCallback(callbackId, "Unknown action.");
+}
+
 async function handleCallback(input: {
   callbackId: string;
   callbackData: string;
@@ -1537,6 +1882,15 @@ async function handleCallback(input: {
 }) {
   const parts = input.callbackData.split(":");
   const action = parts[0];
+
+  if (action === "menu") {
+    const subAction = parts[1] || "home";
+    await handleMenuCallback({
+      ...input,
+      subAction,
+    });
+    return;
+  }
 
   if (action === "finance_add_yes" || action === "finance_add_no") {
     const token = parts[1];
@@ -2920,15 +3274,31 @@ export async function POST(request: Request) {
       await sendTelegramMessage(chatId, "Processing your request...");
     }
 
-    if (text === "/start" || text === "/help") {
-      await sendTelegramMessage(chatId, helpText());
-      await markUpdateCompleted(updateId, "help");
+    const lowerText = text.toLowerCase().trim();
+
+    if (
+      text === "/start" ||
+      text === "/help" ||
+      text === "/menu" ||
+      lowerText === "menu" ||
+      lowerText === "functions" ||
+      lowerText === "dashboard" ||
+      lowerText === "buttons"
+    ) {
+      await sendTelegramMessage(
+        chatId,
+        getBotDashboardText(),
+        getBotDashboardMarkup()
+      );
+      await markUpdateCompleted(updateId, "menu_dashboard");
       return Response.json({ ok: true });
     }
 
     if (text === "/setcommands") {
       await setTelegramBotCommands([
+        { command: "menu", description: "Open interactive inline buttons dashboard" },
         { command: "agenda", description: "View today's schedule" },
+        { command: "reminders", description: "Check upcoming event reminders" },
         { command: "todo", description: "View active to-do list" },
         { command: "todotoday", description: "View today's to-do list" },
         { command: "calendar", description: "Calendar commands & upcoming events" },
@@ -2936,15 +3306,13 @@ export async function POST(request: Request) {
         { command: "finance_summary", description: "Monthly spending & breakdown" },
         { command: "finance_list", description: "Recent active transactions" },
         { command: "sync", description: "Sync recent DBS & Grab transactions" },
-        { command: "grab", description: "Sync Grab receipts from Gmail" },
-        { command: "dbs", description: "Sync DBS/POSB transactions from Gmail" },
-        { command: "paylah", description: "Sync DBS PayLah receipts from Gmail" },
-        { command: "help", description: "Show help and example usage" },
+        { command: "help", description: "Show help and full guide" },
       ]);
 
       await sendTelegramMessage(
         chatId,
-        "✅ Telegram bot command menu has been updated! Tap Menu or type / to see the commands."
+        "✅ Telegram bot command menu has been updated! Tap Menu or type / to see the commands.",
+        getBotDashboardMarkup()
       );
       await markUpdateCompleted(updateId, "set_commands");
       return Response.json({ ok: true });
@@ -3257,7 +3625,7 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    const lowerText = text.toLowerCase().trim();
+    // lowerText already defined above
     if (
       text === "/paylah" ||
       text === "/paylah sync" ||
