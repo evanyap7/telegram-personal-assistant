@@ -33,7 +33,12 @@ function normalizeAmount(val: unknown): number | null {
       obj.number ??
       obj.Number ??
       obj.total ??
-      obj.Total;
+      obj.Total ??
+      obj.formatted ??
+      obj.formattedString ??
+      obj.displayString ??
+      obj.text ??
+      obj.string;
     if (candidate !== undefined && candidate !== val) {
       return normalizeAmount(candidate);
     }
@@ -292,7 +297,22 @@ function verifyAuth(req: NextRequest, bodySecret?: unknown): boolean {
   return false;
 }
 
-async function processWalletTransaction(payload: Record<string, unknown>) {
+async function processWalletTransaction(rawPayload: Record<string, unknown>) {
+  let payload: Record<string, unknown> = { ...rawPayload };
+
+  // Unwrap any nested wrapper like "transaction", "shortcut input", "data", "body", "payload"
+  const wrapperKeys = ["transaction", "shortcut input", "shortcutinput", "data", "body", "payload", "input"];
+  for (const [key, val] of Object.entries(payload)) {
+    if (
+      wrapperKeys.includes(key.toLowerCase().replace(/[\s_-]/g, "")) &&
+      typeof val === "object" &&
+      val !== null &&
+      !Array.isArray(val)
+    ) {
+      payload = { ...(val as Record<string, unknown>), ...payload };
+    }
+  }
+
   const rawAmount = getField(payload, [
     "amount",
     "value",
@@ -300,6 +320,7 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
     "total",
     "transaction_amount",
     "transactionamount",
+    "cost",
   ]);
   const amount = normalizeAmount(rawAmount);
 
@@ -323,6 +344,8 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
       "name",
       "store",
       "description",
+      "title",
+      "label",
     ]) ?? "Apple Pay Purchase";
   const merchant = String(rawMerchant).trim() || "Apple Pay Purchase";
 
@@ -333,6 +356,7 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
     "product",
     "note",
     "notes",
+    "details",
   ]);
   const itemCandidate = rawItem ? String(rawItem).trim() : undefined;
   const item = itemCandidate && itemCandidate !== merchant ? itemCandidate : undefined;
@@ -484,7 +508,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: Record<string, unknown> = {};
+  let body: unknown = {};
   try {
     const textBody = await req.text();
     if (textBody && textBody.trim()) {
@@ -506,12 +530,20 @@ export async function POST(req: NextRequest) {
     console.warn("Could not read request body in apple-wallet route:", err);
   }
 
+  // Handle array payload (e.g. [{ amount: ... }])
+  const resolvedBody: Record<string, unknown> =
+    Array.isArray(body) && body.length > 0 && typeof body[0] === "object" && body[0] !== null
+      ? (body[0] as Record<string, unknown>)
+      : typeof body === "object" && body !== null
+      ? (body as Record<string, unknown>)
+      : {};
+
   // Combine query parameters and body so nothing is missed
   const queryParams: Record<string, unknown> = {};
   for (const [k, v] of req.nextUrl.searchParams.entries()) {
     queryParams[k] = v;
   }
-  const payload: Record<string, unknown> = { ...queryParams, ...body };
+  const payload: Record<string, unknown> = { ...queryParams, ...resolvedBody };
 
   const bodySecret =
     payload.secret ??

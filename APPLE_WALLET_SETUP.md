@@ -68,18 +68,18 @@ Tap the small arrow **`>`** next to the URL to expand options:
 - **Request Body**: Change from `JSON` / None to **JSON**.
 
 #### C. Add JSON Fields
-Tap **Add new field** for each of the following:
+Tap **Add new field** for each of the following (⚠️ **Critical:** Always set Type to **Text**, NOT Number. If set to Number, iOS Shortcuts will crash with a conversion error because Apple Pay amounts carry currency metadata):
 
 | Key | Type | Value (Select from Shortcut Input) |
 |---|---|---|
-| `amount` | **Number** or **Text** | Tap variable -> Select **Shortcut Input** -> choose **Amount** |
-| `merchant` | **Text** | Tap variable -> Select **Shortcut Input** -> choose **Merchant** |
-| `card` | **Text** | Tap variable -> Select **Shortcut Input** -> choose **Card** (or Account) |
-| `category` | **Text** | Tap variable -> Select **Shortcut Input** -> choose **Category** |
-| `currency` | **Text** | Tap variable -> Select **Shortcut Input** -> choose **Currency Code** (or type `SGD`) |
+| `amount` | **Text** ⚠️ *(NOT Number)* | Tap variable -> Select **Shortcut Input** -> tap the blue pill -> choose **Amount** |
+| `merchant` | **Text** | Tap variable -> Select **Shortcut Input** -> tap the blue pill -> choose **Merchant** |
+| `card` | **Text** | Tap variable -> Select **Shortcut Input** -> tap the blue pill -> choose **Card** (or Account) |
+| `category` | **Text** | Tap variable -> Select **Shortcut Input** -> tap the blue pill -> choose **Category** |
+| `currency` | **Text** | Tap variable -> Select **Shortcut Input** -> tap the blue pill -> choose **Currency Code** (or type `SGD`) |
 | `item` | **Text** *(Optional)* | See "How to Include What You Bought" below |
 
-> 💡 *Tip on Shortcut Input*: When you tap inside the value field, a suggestion bar appears above your keyboard. Tap **Shortcut Input**, then tap the blue variable pill to select the specific attribute (Amount, Merchant, Card, etc.).
+> ⚠️ **Crucial Step for Variables**: When you tap inside the value field, a suggestion bar appears above your keyboard with **Shortcut Input**. When you tap it, a blue variable pill labeled `[Shortcut Input]` appears in the field. You **MUST tap that blue pill again** to choose the specific attribute (e.g. `Amount`, `Merchant`, `Card`). If you don't tap it, Shortcuts passes the whole unparsed transaction object instead of the specific value!
 
 ---
 
@@ -113,38 +113,53 @@ If you want your iPhone to pop up a prompt asking *"What did you buy?"* every ti
 
 ---
 
-## 🧪 Testing Your Setup
+## 🧪 Testing & Troubleshooting
 
-### 1. Test from your computer (Terminal / Browser)
+### 1. Instant 1-Tap Browser Test (Verify your webhook right now)
+Before worrying about iOS Shortcuts, you can verify that your backend endpoint, Google Sheets sync, and Telegram notifications are working right now:
 
-You can verify your endpoint right now with `curl`:
-
-```bash
-curl -X POST "https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "amount": "4.20",
-    "merchant": "Starbucks",
-    "card": "DBS Altitude"
-  }'
+👉 Open this link directly in Safari on your iPhone:
+```text
+https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322&amount=1.50&merchant=Test+Coffee
 ```
+- Within 1–2 seconds, you should receive a Telegram notification: `💳 Apple Pay Expense Logged!`
+- If you receive that message, your webhook backend and Google Sheets are **100% healthy and working**.
+- You can immediately tap **`[🗑️ Undo / Delete]`** in Telegram to remove that test row from your Google Sheet.
 
-Expected response:
-```json
-{
-  "success": true,
-  "transactionId": "txn_...",
-  "amount": 4.2,
-  "currency": "SGD",
-  "merchant": "Starbucks",
-  "category": "Dining",
-  "description": "Starbucks (Apple Pay - DBS Altitude)"
-}
-```
-And check your Telegram chat — you will receive an instant notification with category and undo buttons!
+---
 
-### 2. Test with a real Apple Pay purchase
+### 2. Why Apple Pay might not be triggering (Troubleshooting Checklist)
+
+If the instant browser test works, but your Apple Pay taps don't record expenses, check these **5 common reasons**:
+
+#### ⚠️ 1. Amount Field Type was set to "Number" instead of "Text" (Most Common!)
+- In Shortcuts > your Automation > Get Contents of URL > Request Body:
+- Check the field `amount`.
+- If its Type is set to **`Number`**, iOS Shortcuts **crashes silently** with a conversion error because Apple Pay's amount variable contains currency metadata.
+- **Fix:** Change the Type of `amount` to **`Text`**. Our backend automatically handles parsing numbers from text.
+
+#### ⚠️ 2. The Variable Pill wasn't expanded to choose the property
+- In Shortcuts, when you insert `Shortcut Input`, it appears as a blue pill: `[Shortcut Input]`.
+- You **must tap that blue pill** and select the specific attribute (e.g. `Amount`, `Merchant`, `Card`).
+- If left as just `[Shortcut Input]`, Shortcuts sends the entire unparsed object.
+
+#### ⚠️ 3. Tapping Apple Watch instead of iPhone
+- Apple Watch transactions **do not reliably trigger iPhone Automations** due to Apple's security sandbox between watchOS and iOS.
+- **Fix:** Test a payment by physically double-clicking and tapping your **iPhone** directly at a card terminal.
+
+#### ⚠️ 4. Online or In-App Purchases (Not physical NFC taps)
+- The iOS **Transaction** automation trigger **only** fires for **physical, in-person NFC contactless taps** at store payment terminals (e.g. MRT/bus, 7-Eleven, Starbucks, NTUC FairPrice).
+- It does **NOT** fire for online Safari checkouts or in-app payments (e.g. Grab, Shopee, Deliveroo, App Store). Those are online card payments, not Apple Wallet terminal transactions.
+
+#### ⚠️ 5. "Run Immediately" Setting
+- In Shortcuts > Automation tab > tap your Automation:
+- Make sure **"Run Immediately"** is selected (NOT "Run After Confirmation").
+- Make sure **"Notify When Run"** is toggled **OFF**.
+
+---
+
+### 3. Test with a real Apple Pay purchase
 Next time you buy a coffee, ride MRT/bus, or pay for groceries with Apple Pay:
-1. Tap your iPhone / Apple Watch to pay.
+1. Double-click the side button on your **iPhone** and tap the contactless payment terminal.
 2. Within 2-3 seconds, a Telegram notification will arrive confirming the recorded expense.
 3. If the AI inferred the category as "General" or you want to adjust it, tap **`[✏️ Change Category]`** to switch it with one tap.
