@@ -33,6 +33,30 @@ const calendarAddSchema = z.discriminatedUnion("allDay", [
   }),
 ]);
 
+const calendarBatchEventSchema = z.discriminatedUnion("allDay", [
+  z.object({
+    allDay: z.literal(false),
+    title: z.string().min(1).max(100),
+    start: singaporeDateTimeSchema,
+    end: singaporeDateTimeSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
+  }),
+  z.object({
+    allDay: z.literal(true),
+    title: z.string().min(1).max(100),
+    date: z.string().date(),
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
+  }),
+]);
+
+const calendarBatchAddSchema = z.object({
+  action: z.literal("calendar_batch_add"),
+  calendarName: z.enum(["personal", "work"]),
+  events: z.array(calendarBatchEventSchema).min(1).max(30),
+});
+
 const intentSchema = z.union([
   z.object({
     action: z.literal("finance_add"),
@@ -44,6 +68,7 @@ const intentSchema = z.union([
     explicitDate: z.string().date().optional(),
   }),
   calendarAddSchema,
+  calendarBatchAddSchema,
   z.object({
     action: z.literal("calendar_view"),
     calendarName: z.enum(["personal", "work", "all"]).default("all"),
@@ -391,7 +416,8 @@ Supported actions:
 11. email_draft
 12. calendar_move
 13. finance_modify
-14. unknown
+14. calendar_batch_add
+15. unknown
 
 Finance entry:
 {
@@ -426,6 +452,29 @@ All-day calendar creation, when the user gives a date but no time:
   "date": "YYYY-MM-DD",
   "location": "optional location",
   "reminderMinutes": optional number
+}
+
+Batch calendar creation (when user provides multiple calendar events in a single message):
+{
+  "action": "calendar_batch_add",
+  "calendarName": "personal" or "work",
+  "events": [
+    {
+      "allDay": false,
+      "title": "event title",
+      "start": "YYYY-MM-DDTHH:mm:ss+08:00",
+      "end": "YYYY-MM-DDTHH:mm:ss+08:00",
+      "location": "optional location",
+      "reminderMinutes": optional number
+    },
+    {
+      "allDay": true,
+      "title": "event title",
+      "date": "YYYY-MM-DD",
+      "location": "optional location",
+      "reminderMinutes": optional number
+    }
+  ]
 }
 
 Calendar view / agenda query:
@@ -572,8 +621,12 @@ Calendar creation rules:
   set allDay to true and return date only.
 - If the user gives both a date and time, create a timed event:
   set allDay to false and provide start and end.
-- For timed events, require a clear start time and end time or duration.
-- Never invent a date, time, or duration.
+- For timed events:
+  - If both start time and end time or duration are given, use them.
+  - If a start time is given but end time or duration is omitted (e.g. "at 8:45pm", "at 3 pm"), default the duration to 1 hour (end time = start time + 1 hour).
+  - End time MUST ALWAYS be strictly after start time.
+- If multiple calendar events are provided in a single message, return "calendar_batch_add" with all extracted events (up to 30 events).
+- Never invent a date or time that was not mentioned or implied.
 - If the user specifies a location (e.g. "at Starbucks Raffles City", "in Room 302", "at Level 4", "on Zoom", "Google Meet link"), extract this into the "location" field rather than repeating it in the title.
 - If the user requests a reminder or notification (e.g. "notify me 2 hours before", "remind me 30 mins before", "set reminder 1 hour before"):
   - Extract the lead time in minutes into "reminderMinutes" (e.g. "2 hours before" -> 120, "1 hour before" -> 60, "45 mins" -> 45).
@@ -582,8 +635,7 @@ Calendar creation rules:
 - Include seconds as :00 and end timed datetimes with +08:00.
 - "Add gym tomorrow" means an all-day calendar_add.
 - "Schedule gym tomorrow at 7 pm for 1 hour" means a timed calendar_add.
-- "Meeting tomorrow at 3 pm" returns unknown because end time or duration
-  is missing.
+- "Meeting tomorrow at 3 pm" means a timed calendar_add from 15:00:00 to 16:00:00 (default 1 hour duration).
 
 Calendar view rules:
 - If the user asks to see, check, list, or view their schedule, calendar, agenda, or events, return calendar_view.

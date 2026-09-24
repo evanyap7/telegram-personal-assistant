@@ -4054,6 +4054,56 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
+    if (intent.action === "calendar_batch_add") {
+      if (userCalendarContext.activePending) {
+        await cancelActivePendingCalendarAction(message.from.id);
+      }
+
+      const token = await savePendingCalendarBatchAction({
+        userId: message.from.id,
+        payload: {
+          calendarName: intent.calendarName,
+          events: intent.events,
+        },
+      });
+
+      const eventPreviews = intent.events.map((ev, idx) => {
+        const timing = ev.allDay
+          ? `${formatCalendarDate(ev.date)} (All day)`
+          : `${formatSingaporeDateTime(ev.start)} – ${formatSingaporeDateTime(ev.end)}`;
+        const loc = ev.location ? `\n   📍 ${ev.location}` : "";
+        return `${idx + 1}. ${ev.title}\n   📅 ${timing}${loc}`;
+      });
+
+      await sendTelegramMessage(
+        chatId,
+        [
+          `I found ${intent.events.length} events for your ${intent.calendarName} calendar:`,
+          "",
+          eventPreviews.join("\n\n"),
+          "",
+          `Create all ${intent.events.length} events?`,
+        ].join("\n"),
+        {
+          inline_keyboard: [
+            [
+              {
+                text: `✅ Yes, create all (${intent.events.length})`,
+                callback_data: `calendar_batch_yes:${token}`,
+              },
+              {
+                text: "❌ No, cancel",
+                callback_data: `calendar_batch_no:${token}`,
+              },
+            ],
+          ],
+        }
+      );
+
+      await markUpdateCompleted(updateId, "calendar_batch_pending");
+      return Response.json({ ok: true });
+    }
+
     if (intent.action === "finance_delete_search") {
       const resolvedTxnId =
         intent.transactionId ||
