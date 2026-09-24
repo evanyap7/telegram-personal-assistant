@@ -9,6 +9,7 @@
     "lint": "eslint",
     "get-gmail-token": "node scripts/get-gmail-token.mjs",
     "setup-gmail-watch": "node scripts/setup-gmail-watch.mjs",
+    "setup-dashboard": "node scripts/setup-sheet-dashboard.mjs",
     "bench:intent": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/bench/intent-latency.ts",
     "bench:cost": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/bench/model-cost.ts",
     "bench:parallel": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/bench/parallel-vs-sequential.ts",

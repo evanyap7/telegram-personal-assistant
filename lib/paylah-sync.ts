@@ -815,6 +815,9 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
               `• *Method:* ${paymentMethod}`,
               `• *Category:* ${category}`,
               `• *Recorded:* ${displayDate}`,
+              result.budgetStatus?.hasBudget && type === "expense"
+                ? result.budgetStatus.formattedMarkdownNotice
+                : null,
               "",
               "💬 _Tip: Swipe reply to this message anytime to rename the item or modify details!_",
             ]

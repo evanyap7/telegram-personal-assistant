@@ -438,6 +438,7 @@ async function processWalletTransaction(rawPayload: Record<string, unknown>) {
         `• *Category:* ${category}`,
         card ? `• *Card:* ${card}` : null,
         `• *Recorded:* ${displayDate}`,
+        result.budgetStatus?.hasBudget ? result.budgetStatus.formattedMarkdownNotice : null,
         "",
         "💬 _Tip: Swipe reply to this message anytime with what you bought (e.g. \"bought iced latte\") to update it!_",
       ]
