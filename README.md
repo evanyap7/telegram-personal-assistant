@@ -14,6 +14,8 @@ I hate manually logging expenses. So I made it as frictionless as possible:
 - **DBS PayLah! & Grab Auto-Sync**: The bot scans my Gmail for payment confirmations from DBS, POSB, PayNow, and Grab, extracts what I bought, and logs it. (I can also trigger `/sync` anytime).
 - **Natural Language & Voice**: I can literally text or voice-note *"spent $6.50 on chicken rice for lunch"* or *"earned $150 from freelance"*, and it parses the amount, currency, category, and date.
 - **Receipt Photos**: Snap a picture of a receipt, and the vision model breaks down the total, merchant, and items.
+- **Monthly Budget Control & Real-Time Pacing ($500/mo)**: Starting October 2026, an automated $500 monthly budget is imposed. Whenever any expense is recorded (via Apple Pay, PayLah, or chat), the bot calculates your month's total spend and reports your pacing: `💰 Budget: $485.50 / $500.00 left to spend` (or warns if exceeded). Check balance anytime with `/budget`.
+- **Executive UI/UX Google Sheets Dashboard (`📊 Dashboard`)**: Pinned as the first tab in Google Sheets with an executive dark slate/indigo theme, dynamic month dropdown (`L2`), live KPI cards (Total Expenditure, Budget, Remaining to Spend, Utilization % with sparklines, Daily Average run-rate), category breakdown, native embedded doughnut chart, and real-time Top 5 largest expenses ranking.
 - **Monthly Spending Breakdown**: Tap `/finance_summary` or ask *"how much did I spend this month?"* for clean category-by-category charts.
 - **Safe Soft Deletes**: Made a mistake? Tap the `[🗑️ Undo]` button on the Telegram alert or say *"delete my coffee expense"* — it safely marks it deleted in Google Sheets without destroying history.
 
@@ -39,6 +41,7 @@ Instead of remembering a bunch of slash commands, I can just type `/menu`, `/sta
 - 📋 Active Tasks (`menu:todos`)
 - 📌 Today's Tasks (`menu:todos_today`)
 - 💰 Spending Summary (`menu:finance_summary`)
+- 🎯 Monthly Budget (`menu:budget`)
 - 💳 Recent Expenses (`menu:finance_list`)
 - 🔄 Sync DBS & Grab (`menu:sync`)
 - 🎤 Voice Notes Guide (`menu:guide_voice`)
@@ -47,6 +50,22 @@ Instead of remembering a bunch of slash commands, I can just type `/menu`, `/sta
 - ⚙️ Sync Commands (`menu:set_commands`)
 
 Every view has a `« Back to Dashboard` button, making navigation super smooth.
+
+#### Quick Command Reference
+| Command | Description |
+| --- | --- |
+| `/menu`, `/start`, `/help` | Launch the interactive 12-button control panel |
+| `/budget` | View current month's budget, remaining spend, and daily pacing |
+| `/finance summary` | View monthly spending breakdown and category totals |
+| `/finance list` | View recent 10 transactions |
+| `/finance add <amount> <desc>` | Manually record an income or expense |
+| `/sync` | Run instant Gmail sync for DBS PayLah! and Grab receipts |
+| `/agenda` | View today's schedule with Singapore timezone formatting |
+| `/calendar` | List upcoming Google Calendar events |
+| `/todo` | View active to-dos with 1-tap completion buttons |
+| `/todo today` | View tasks due today |
+| `/remind <task>` | Create a task with persistent 30-minute Telegram pings |
+| `/set_commands` | Sync command menu shortcuts to Telegram's native UI |
 
 ### 5. ✉️ Gmail Drafts on the Fly
 If I need to write an email while walking, I just voice note:
@@ -118,10 +137,11 @@ Because this bot manages my actual money, schedule, and emails, I built it with 
 
 The database runs on a single Google Spreadsheet with these tabs:
 
-1. **`Transactions`**: Logs all income/expenses with ID, timestamp, type, amount, currency, category, description, and status (`active` / `deleted`).
-2. **`Todos`**: Stores tasks with ID, created timestamp, task description, due date, priority, status (`active` / `completed`), completion timestamp, reminder interval (e.g. `30` mins), last reminded timestamp, and chat ID.
-3. **`PendingActions`**: Temporary server state holding payload JSON and 5-minute expiry tokens for inline button confirmations.
-4. **`UpdateLog`**: Webhook update deduplication ledger tracking processed Telegram update IDs.
+1. **`📊 Dashboard`**: Pinned front-page executive financial dashboard featuring live KPI summary tiles, dynamic month selector dropdown (`Sep 2026`, `Oct 2026`), category breakdown table with inline sparklines, embedded native doughnut chart, and Top 5 highest expenses.
+2. **Monthly Sheets (`Sep 2026`, `Oct 2026`, ...)**: Logs all income/expenses with ID, timestamp, type, amount, currency, category, description, and status (`active` / `deleted`).
+3. **`Todos`**: Stores tasks with ID, created timestamp, task description, due date, priority, status (`active` / `completed`), completion timestamp, reminder interval (e.g. `30` mins), last reminded timestamp, and chat ID.
+4. **`PendingActions`**: Temporary server state holding payload JSON and 5-minute expiry tokens for inline button confirmations.
+5. **`UpdateLog`**: Webhook update deduplication ledger tracking processed Telegram update IDs.
 
 ---
 
@@ -169,7 +189,13 @@ npm run get-gmail-token
 ```
 Follow the browser prompt to grant permissions and paste the generated `GOOGLE_REFRESH_TOKEN` into your `.env.local`.
 
-### 4. Run Locally
+### 4. Setup or Refresh Google Sheet Dashboard
+```bash
+npm run setup-dashboard
+```
+Builds or updates the `📊 Dashboard` tab at Index 0 with all cards, formulas, and embedded native doughnut chart.
+
+### 5. Run Locally
 ```bash
 npm run dev
 ```
@@ -191,6 +217,7 @@ Schedule: Every 10 or 15 minutes
 ## 💼 Engineering & Resume Highlights
 
 - **Architected fintech ingestion pipelines for Apple Pay, Grab, DBS/POSB, and e-commerce receipts (Shopee, Amazon)** via iOS Shortcuts and Gmail push webhooks (Google Cloud Pub/Sub); parallel batch execution (`Promise.allSettled`) and a regex-first parser cut sync latency 78% and eliminated date-parsing crashes.
+- **Engineered an automated executive financial dashboard & budget pacing engine** in Google Sheets via programmatic API batch updates (`batchUpdate`), implementing dynamic month switching (`INDIRECT`), real-time KPI aggregations, embedded native doughnut charts, and distributed budget pacing notifications (`$X / $500 remaining`) across 6 transaction ingest pathways with zero race conditions.
 - **Engineered a cost-optimized, 3-tiered AI intent engine (Gemini Flash-Lite → 3.6 Flash → Perplexity Sonar failover)** on Vercel AI SDK, cutting inference cost 70% with 809ms median classification latency, enforced by Zod schemas for 100% type-safe action routing.
 - **Built an in-memory multimodal pipeline with magic-byte validation**, transcribing Opus voice memos and extracting up to 30 calendar events (with venues, room numbers, and meeting links) or 25 receipt items per image, synced across Google Sheets and dual calendars (Personal/Work).
 - **Designed an asynchronous reminder engine & interactive Telegram dashboard**, dispatching dynamic event alerts and persistent 30-minute recurring to-do notifications until completion, accompanied by a 12-button inline control panel with 1-tap completion callbacks.

@@ -37,6 +37,7 @@ import {
   softDeleteTransaction,
   updateTransaction,
 } from "@/lib/finance";
+import { formatBudgetSummary, isBudgetActiveForSheet } from "@/lib/budget";
 import {
   cancelActivePendingCalendarAction,
   cancelPendingCalendarAction,
@@ -212,15 +213,18 @@ function getBotDashboardMarkup(): InlineKeyboardMarkup {
         { text: "💰 Spending Summary", callback_data: "menu:finance_summary" },
       ],
       [
+        { text: "🎯 Monthly Budget", callback_data: "menu:budget" },
         { text: "💳 Recent Expenses", callback_data: "menu:finance_list" },
+      ],
+      [
         { text: "🔄 Sync DBS & Grab", callback_data: "menu:sync" },
-      ],
-      [
         { text: "🎤 Voice Notes Guide", callback_data: "menu:guide_voice" },
-        { text: "📸 Photos & OCR Guide", callback_data: "menu:guide_image" },
       ],
       [
+        { text: "📸 Photos & OCR Guide", callback_data: "menu:guide_image" },
         { text: "📖 Full Guide & Tips", callback_data: "menu:guide_all" },
+      ],
+      [
         { text: "⚙️ Sync Commands", callback_data: "menu:set_commands" },
       ],
     ],
@@ -562,6 +566,23 @@ function formatFinanceSummary(summary: FinanceSummary): string {
     `📈 Net Balance: ${netSign}$${summary.netSavings.toFixed(2)} ${summary.currency}`,
     `📝 Active Transactions: ${summary.transactionCount}`,
   ];
+
+  if (summary.period === "month") {
+    const budget = Number(process.env.MONTHLY_BUDGET) || 500;
+    const targetMonth = summary.targetMonth || "";
+    if (isBudgetActiveForSheet(targetMonth)) {
+      const remaining = budget - summary.totalExpense;
+      const pct = budget > 0 ? (summary.totalExpense / budget) * 100 : 0;
+      lines.push(`🎯 Monthly Budget: $${budget.toFixed(2)} ${summary.currency}`);
+      if (remaining >= 0) {
+        lines.push(`💰 Remaining: $${remaining.toFixed(2)} / $${budget.toFixed(2)} (${(100 - pct).toFixed(1)}% remaining)`);
+      } else {
+        lines.push(`🚨 Budget Exceeded: -$${Math.abs(remaining).toFixed(2)} / $${budget.toFixed(2)}`);
+      }
+    } else {
+      lines.push(`🎯 Budget Notice: $${budget.toFixed(2)}/mo cap begins 1 Oct 2026`);
+    }
+  }
 
   if (summary.categories.length > 0) {
     lines.push("", "Spending Breakdown by Category:");
@@ -1044,17 +1065,20 @@ async function handleFinanceAddCallback(input: {
 
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
-  await sendTelegramMessage(
-    input.chatId,
-    [
-      "Transaction added.",
-      `Type: ${payload.type}`,
-      `Amount: ${payload.amount.toFixed(2)} ${payload.currency}`,
-      `Category: ${payload.category}`,
-      `Description: ${payload.description}`,
-      `Date & Time: ${transaction.timestamp} (SGT)`,
-    ].join("\n")
-  );
+  const responseLines = [
+    "Transaction added.",
+    `Type: ${payload.type}`,
+    `Amount: ${payload.amount.toFixed(2)} ${payload.currency}`,
+    `Category: ${payload.category}`,
+    `Description: ${payload.description}`,
+    `Date & Time: ${transaction.timestamp} (SGT)`,
+  ];
+
+  if (transaction.budgetStatus?.hasBudget && payload.type === "expense") {
+    responseLines.push("", transaction.budgetStatus.formattedNotice);
+  }
+
+  await sendTelegramMessage(input.chatId, responseLines.join("\n"));
 
   await markUpdateCompleted(input.updateId, "finance_add");
 
@@ -1141,14 +1165,17 @@ async function handleFinanceBatchCreateCallback(input: {
   );
   const currency = batch.transactions[0]?.currency ?? "SGD";
 
-  await sendTelegramMessage(
-    input.chatId,
-    [
-      `✅ Logged ${results.length} transactions (Total: ${totalAmount.toFixed(2)} ${currency}):`,
-      "",
-      summaryLines.join("\n"),
-    ].join("\n")
-  );
+  const batchResponseLines = [
+    `✅ Logged ${results.length} transactions (Total: ${totalAmount.toFixed(2)} ${currency}):`,
+    "",
+    summaryLines.join("\n"),
+  ];
+
+  if (results[0]?.budgetStatus?.hasBudget) {
+    batchResponseLines.push("", results[0].budgetStatus.formattedNotice);
+  }
+
+  await sendTelegramMessage(input.chatId, batchResponseLines.join("\n"));
 
   await markUpdateCompleted(input.updateId, "finance_batch_add");
 
@@ -1748,6 +1775,16 @@ async function handleMenuCallback(input: {
     return;
   }
 
+  if (subAction === "budget") {
+    await answerTelegramCallback(callbackId, "Loading monthly budget status...");
+    const budgetSummary = await formatBudgetSummary();
+    await sendTelegramMessage(chatId, budgetSummary, {
+      inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+    });
+    await markUpdateCompleted(input.updateId, "menu_budget");
+    return;
+  }
+
   if (subAction === "finance_list") {
     await answerTelegramCallback(callbackId, "Loading recent transactions...");
     const transactions = await listRecentTransactions();
@@ -1869,6 +1906,7 @@ async function handleMenuCallback(input: {
       { command: "todotoday", description: "View today's to-do list" },
       { command: "calendar", description: "Calendar commands & upcoming events" },
       { command: "finance", description: "Finance commands & summary" },
+      { command: "budget", description: "View monthly budget status ($500 cap)" },
       { command: "finance_summary", description: "Monthly spending & breakdown" },
       { command: "finance_list", description: "Recent active transactions" },
       { command: "sync", description: "Sync recent DBS & Grab transactions" },
@@ -3337,6 +3375,7 @@ export async function POST(request: Request) {
         { command: "todotoday", description: "View today's to-do list" },
         { command: "calendar", description: "Calendar commands & upcoming events" },
         { command: "finance", description: "Finance commands & summary" },
+        { command: "budget", description: "View monthly budget status ($500 cap)" },
         { command: "finance_summary", description: "Monthly spending & breakdown" },
         { command: "finance_list", description: "Recent active transactions" },
         { command: "sync", description: "Sync recent DBS & Grab transactions" },
@@ -3572,6 +3611,7 @@ export async function POST(request: Request) {
           "Or use commands:",
           "• /finance summary — View monthly spending breakdown",
           "• /finance list — View last 10 active transactions",
+          "• /budget — View monthly budget progress ($500 cap starting Oct)",
         ].join("\n")
       );
 
@@ -3604,6 +3644,29 @@ export async function POST(request: Request) {
       await sendTelegramMessage(chatId, formatFinanceSummary(summary));
 
       await markUpdateCompleted(updateId, "finance_summary_command");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/budget" ||
+      text.startsWith("/budget ") ||
+      lowerText === "budget" ||
+      lowerText === "my budget" ||
+      lowerText === "check budget" ||
+      lowerText === "show budget" ||
+      lowerText === "how much budget left" ||
+      text === "/finance budget" ||
+      text.startsWith("/finance budget ")
+    ) {
+      const monthArg = text
+        .replace("/finance budget", "")
+        .replace("/budget", "")
+        .trim();
+
+      const summaryText = await formatBudgetSummary(monthArg);
+      await sendTelegramMessage(chatId, summaryText);
+
+      await markUpdateCompleted(updateId, "budget_command");
       return Response.json({ ok: true });
     }
 
@@ -3659,21 +3722,24 @@ export async function POST(request: Request) {
         description,
       });
 
-      await addTransaction({
+      const txnResult = await addTransaction({
         ...input,
         transactionTimestamp: message.date ? new Date(message.date * 1000) : new Date(),
       });
 
-      await sendTelegramMessage(
-        chatId,
-        [
-          "Transaction added.",
-          `Type: ${input.type}`,
-          `Amount: ${input.amount.toFixed(2)} ${input.currency.toUpperCase()}`,
-          `Category: ${input.category}`,
-          `Description: ${input.description}`,
-        ].join("\n")
-      );
+      const responseLines = [
+        "Transaction added.",
+        `Type: ${input.type}`,
+        `Amount: ${input.amount.toFixed(2)} ${input.currency.toUpperCase()}`,
+        `Category: ${input.category}`,
+        `Description: ${input.description}`,
+      ];
+
+      if (txnResult.budgetStatus?.hasBudget && input.type === "expense") {
+        responseLines.push("", txnResult.budgetStatus.formattedNotice);
+      }
+
+      await sendTelegramMessage(chatId, responseLines.join("\n"));
 
       await markUpdateCompleted(updateId, "finance_add_command");
       return Response.json({ ok: true });
@@ -3824,17 +3890,20 @@ export async function POST(request: Request) {
         transactionTimestamp: messageDateObj,
       });
 
-      await sendTelegramMessage(
-        chatId,
-        [
-          "Transaction added.",
-          `Type: ${intent.type}`,
-          `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
-          `Category: ${intent.category}`,
-          `Description: ${intent.description}`,
-          `Date & Time: ${transaction.timestamp} (SGT)`,
-        ].join("\n")
-      );
+      const responseLines = [
+        "Transaction added.",
+        `Type: ${intent.type}`,
+        `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
+        `Category: ${intent.category}`,
+        `Description: ${intent.description}`,
+        `Date & Time: ${transaction.timestamp} (SGT)`,
+      ];
+
+      if (transaction.budgetStatus?.hasBudget && intent.type === "expense") {
+        responseLines.push("", transaction.budgetStatus.formattedNotice);
+      }
+
+      await sendTelegramMessage(chatId, responseLines.join("\n"));
 
       await markUpdateCompleted(updateId, "finance_add_natural_language");
       return Response.json({ ok: true });

@@ -1,6 +1,9 @@
 import { getSheetsClient, withExponentialBackoff } from "./google";
 import { maskSensitiveFinancialData } from "./security";
 import { parseSingaporeDate } from "./date-parser";
+import { getMonthlyBudgetStatus, MonthlyBudgetStatus } from "./budget";
+
+export { getMonthlyBudgetStatus, type MonthlyBudgetStatus };
 
 export const UPDATE_LOG_SHEET = "UpdateLog";
 
@@ -263,6 +266,7 @@ export async function ensureMonthlyTransactionsSheet(
 
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
+  const insertIndex = titles.some((t) => t.includes("Dashboard")) ? 1 : 0;
 
   // Create sheet with frozen row 1, 1000 rows, 26 columns
   const addSheetRes = await withExponentialBackoff(() =>
@@ -274,7 +278,7 @@ export async function ensureMonthlyTransactionsSheet(
             addSheet: {
               properties: {
                 title: sheetName,
-                index: 0,
+                index: insertIndex,
                 gridProperties: {
                   rowCount: 1000,
                   columnCount: 26,
@@ -426,6 +430,7 @@ export async function addTransaction(input: TransactionInput): Promise<{
   transactionId: string;
   timestamp: string;
   sheetName: string;
+  budgetStatus?: MonthlyBudgetStatus;
 }> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -461,22 +466,30 @@ export async function addTransaction(input: TransactionInput): Promise<{
     });
   });
 
+  let budgetStatus: MonthlyBudgetStatus | undefined = undefined;
+  try {
+    budgetStatus = await getMonthlyBudgetStatus(targetSheet, dateObj);
+  } catch (err) {
+    console.warn("Could not calculate budget status after adding transaction:", err);
+  }
+
   return {
     transactionId,
     timestamp,
     sheetName: targetSheet,
+    budgetStatus,
   };
 }
 
 export async function addTransactionsBatch(
   items: TransactionInput[]
-): Promise<Array<{ transactionId: string; timestamp: string; sheetName: string }>> {
+): Promise<Array<{ transactionId: string; timestamp: string; sheetName: string; budgetStatus?: MonthlyBudgetStatus }>> {
   if (items.length === 0) return [];
 
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  const results: Array<{ transactionId: string; timestamp: string; sheetName: string }> = [];
+  const results: Array<{ transactionId: string; timestamp: string; sheetName: string; budgetStatus?: MonthlyBudgetStatus }> = [];
   const groups = new Map<string, (string | number)[][]>();
 
   for (const input of items) {
@@ -516,6 +529,18 @@ export async function addTransactionsBatch(
         },
       })
     );
+
+    // Compute updated budget status for this sheet
+    try {
+      const budgetStatus = await getMonthlyBudgetStatus(sheetName);
+      for (const res of results) {
+        if (res.sheetName === sheetName) {
+          res.budgetStatus = budgetStatus;
+        }
+      }
+    } catch (err) {
+      console.warn(`Could not compute budget status for ${sheetName}:`, err);
+    }
   }
 
   return results;
