@@ -130,6 +130,7 @@ import {
   handleOwedCommand,
 } from "@/lib/handlers/split-handler";
 import { checkAndSendLeaveNowAlerts } from "@/lib/travel";
+import { triageUnreadInbox } from "@/lib/inbox-triage";
 
 
 const financeAddSchema = z.object({
@@ -2995,6 +2996,7 @@ export async function POST(request: Request) {
         { command: "finance_list", description: "Recent active transactions" },
         { command: "split", description: "Split bill (e.g. /split 80 Alex Ben)" },
         { command: "owed", description: "View who owes you and IOU balances" },
+        { command: "inbox", description: "Triage unread Gmail inbox" },
         { command: "sync", description: "Sync recent DBS & Grab transactions" },
         { command: "help", description: "Show help and full guide" },
       ]);
@@ -3328,6 +3330,29 @@ export async function POST(request: Request) {
         },
       });
       await markUpdateCompleted(updateId, "freeslots_command");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/inbox" ||
+      text.startsWith("/inbox ") ||
+      lowerText === "inbox" ||
+      lowerText === "unread emails" ||
+      lowerText === "check inbox" ||
+      lowerText === "check emails"
+    ) {
+      await sendTelegramChatAction(chatId, "typing");
+      try {
+        const triage = await triageUnreadInbox(5);
+        await sendTelegramMessage(chatId, triage.formattedSummary);
+      } catch (err) {
+        console.error("Failed to triage inbox:", err);
+        await sendTelegramMessage(
+          chatId,
+          "⚠️ Could not check Gmail inbox. Ensure Google API credentials have Gmail scopes enabled."
+        );
+      }
+      await markUpdateCompleted(updateId, "inbox_command");
       return Response.json({ ok: true });
     }
 
