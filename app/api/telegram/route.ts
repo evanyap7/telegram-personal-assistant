@@ -138,6 +138,12 @@ import {
 } from "@/lib/handlers/memory-handler";
 import { generateMonthlyCsvExport } from "@/lib/export";
 import { registerUndoAction, buildUndoInlineKeyboard } from "@/lib/undo";
+import {
+  listHabits,
+  createHabit,
+  logHabitDone,
+  formatHabitsSummary,
+} from "@/lib/habits";
 
 
 const financeAddSchema = z.object({
@@ -3435,6 +3441,40 @@ export async function POST(request: Request) {
         );
       }
       await markUpdateCompleted(updateId, "export_command");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/habits" ||
+      lowerText === "habits" ||
+      text.startsWith("/habit ") ||
+      lowerText.startsWith("habit ")
+    ) {
+      if (text.startsWith("/habit add ") || lowerText.startsWith("habit add ")) {
+        const habitName = text.replace(/^\/?habit\s+add\s+/i, "").trim();
+        if (!habitName) {
+          await sendTelegramMessage(chatId, "Usage: `/habit add <habit name>`");
+        } else {
+          const habit = await createHabit(habitName);
+          await sendTelegramMessage(
+            chatId,
+            `✨ Created habit: *${habit.name}*! Streak tracking started.`
+          );
+        }
+      } else if (text.startsWith("/habit done ") || lowerText.startsWith("habit done ")) {
+        const habitName = text.replace(/^\/?habit\s+done\s+/i, "").trim();
+        const res = await logHabitDone(habitName);
+        await sendTelegramMessage(chatId, res.message);
+      } else {
+        const habits = await listHabits();
+        const summary = formatHabitsSummary(habits);
+        await sendTelegramMessage(
+          chatId,
+          summary.text,
+          summary.buttons.length > 0 ? { inline_keyboard: summary.buttons } : undefined
+        );
+      }
+      await markUpdateCompleted(updateId, "habits_command");
       return Response.json({ ok: true });
     }
 
