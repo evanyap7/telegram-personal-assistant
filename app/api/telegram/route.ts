@@ -109,6 +109,7 @@ import {
   formatCalendarDate,
   formatSingaporeDateTime,
   formatCalendarEvent,
+  handleCalendarFreeSlotsAction,
 } from "@/lib/handlers/calendar-handler";
 import {
   formatFinanceTransaction,
@@ -2986,6 +2987,7 @@ export async function POST(request: Request) {
         { command: "todo", description: "View active to-do list" },
         { command: "todotoday", description: "View today's to-do list" },
         { command: "calendar", description: "Calendar commands & upcoming events" },
+        { command: "freeslots", description: "Find available free time windows" },
         { command: "finance", description: "Finance commands & summary" },
         { command: "budget", description: "View monthly budget status ($500 cap)" },
         { command: "finance_summary", description: "Monthly spending & breakdown" },
@@ -3300,6 +3302,26 @@ export async function POST(request: Request) {
     ) {
       await handleOwedCommand({ chatId, text });
       await markUpdateCompleted(updateId, "owed_command");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/freeslots" ||
+      text.startsWith("/freeslots ") ||
+      lowerText === "free slots" ||
+      lowerText === "when am i free"
+    ) {
+      const arg = text.replace("/freeslots", "").trim();
+      const timeframe = arg.toLowerCase().includes("tomorrow")
+        ? "tomorrow"
+        : "today";
+      await handleCalendarFreeSlotsAction({
+        chatId,
+        intent: {
+          timeframe,
+        },
+      });
+      await markUpdateCompleted(updateId, "freeslots_command");
       return Response.json({ ok: true });
     }
 

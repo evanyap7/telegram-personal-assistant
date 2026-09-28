@@ -2,6 +2,8 @@ import {
   getUpcomingSchedule,
   searchUpcomingCalendarEvents,
   rescheduleCalendarEvent,
+  findFreeCalendarSlots,
+  formatFreeSlotsMessage,
 } from "@/lib/calendar";
 import {
   formatScheduleAgendaView,
@@ -363,3 +365,57 @@ export async function handleCalendarRescheduleAction(params: {
 
   await sendTelegramMessage(chatId, lines.join("\n"));
 }
+
+export async function handleCalendarFreeSlotsAction(params: {
+  chatId: number;
+  intent: {
+    calendarName?: "personal" | "work" | "all";
+    date?: string;
+    timeframe?: "today" | "tomorrow" | "specific";
+    minDurationMinutes?: number;
+  };
+}): Promise<void> {
+  const { chatId, intent } = params;
+  let targetDate = intent.date;
+
+  if (!targetDate) {
+    const now = new Date();
+    if (intent.timeframe === "tomorrow") {
+      const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      targetDate = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Singapore",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(tomorrow);
+    } else {
+      targetDate = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Singapore",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(now);
+    }
+  }
+
+  const calendarNames: ("personal" | "work")[] =
+    intent.calendarName === "personal"
+      ? ["personal"]
+      : intent.calendarName === "work"
+      ? ["work"]
+      : ["personal", "work"];
+
+  const result = await findFreeCalendarSlots({
+    date: targetDate,
+    minDurationMinutes: intent.minDurationMinutes ?? 30,
+    calendarNames,
+  });
+
+  const message = formatFreeSlotsMessage(
+    result.date,
+    result.slots,
+    result.busyCount
+  );
+  await sendTelegramMessage(chatId, message);
+}
+
