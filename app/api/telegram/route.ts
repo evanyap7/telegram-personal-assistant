@@ -113,6 +113,14 @@ import {
   handleCalendarBatchAddAction,
   handleCalendarDeleteSearchAction,
 } from "@/lib/handlers/calendar-handler";
+import {
+  formatFinanceTransaction,
+  formatFinanceSummary,
+  resolveRepliedTransaction,
+  handleFinanceAddAction,
+  handleFinanceSummaryAction,
+  handleFinanceDeleteSearchAction,
+} from "@/lib/handlers/finance-handler";
 
 
 const financeAddSchema = z.object({
@@ -315,139 +323,6 @@ function truncateButtonText(value: string, maxLength = 58): string {
     : `${value.slice(0, maxLength - 1)}…`;
 }
 
-function formatFinanceTransaction(input: {
-  type: string;
-  amount: string;
-  currency: string;
-  category: string;
-  description: string;
-  transactionId?: string;
-  timestamp?: string;
-}): string {
-  return [
-    `${input.type || "unknown"}: ${input.amount || "?"} ${input.currency}`,
-    `Category: ${input.category || "Uncategorized"}`,
-    `Description: ${input.description || "No description"}`,
-    input.timestamp ? `Recorded: ${input.timestamp}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function resolveRepliedTransaction(
-  repliedMessage?: {
-    text?: string;
-    reply_markup?: { inline_keyboard?: Array<Array<{ callback_data?: string }>> };
-  } | null
-): Promise<FinanceTransaction | null> {
-  if (!repliedMessage) return null;
-
-  const text = repliedMessage.text || "";
-
-  // 1. Direct txn_ match in text (if present)
-  const textTxnMatch = text.match(/txn_[a-zA-Z0-9_-]+/);
-  if (textTxnMatch) {
-    const txn = await getTransactionById(textTxnMatch[0]);
-    if (txn) return txn;
-  }
-
-  // 2. Check inline keyboard callback data (Apple Pay & DBS PayLah cards contain transactionId in callback_data)
-  if (repliedMessage.reply_markup?.inline_keyboard) {
-    for (const row of repliedMessage.reply_markup.inline_keyboard) {
-      for (const btn of row) {
-        const btnMatch = btn.callback_data?.match(/txn_[a-zA-Z0-9_-]+/);
-        if (btnMatch) {
-          const txn = await getTransactionById(btnMatch[0]);
-          if (txn) return txn;
-        }
-      }
-    }
-  }
-
-  // 3. Match from Description / Item / Merchant / Source and Amount in text
-  const descMatch = text.match(/(?:Description|Merchant|Item|Source):\s*\*?([^\n*]+)/i);
-  const amtMatch = text.match(/Amount:\s*\*?(?:SGD\s*)?([0-9]+(?:\.[0-9]{2})?)/i);
-
-  if (descMatch) {
-    const query = descMatch[1].trim().split("@")[0].trim();
-    const matches = await searchActiveTransactions(query);
-    if (matches.length > 0) {
-      if (amtMatch) {
-        const amt = parseFloat(amtMatch[1]);
-        const exact = matches.find(
-          (m) => Math.abs(parseFloat(m.amount) - amt) < 0.01
-        );
-        if (exact) return exact;
-      }
-      return matches[0];
-    }
-  }
-
-  // 4. If the message text indicates a transaction confirmation or update, fallback to latest transaction
-  if (
-    text.includes("Transaction added") ||
-    text.includes("Expense Synced") ||
-    text.includes("Expense Logged") ||
-    text.includes("Transaction updated") ||
-    text.includes("Funds Received") ||
-    text.includes("GIRO Deduction Logged") ||
-    text.includes("Ride Logged")
-  ) {
-    return await getLatestTransaction();
-  }
-
-  return null;
-}
-
-function formatFinanceSummary(summary: FinanceSummary): string {
-  const periodTitles: Record<string, string> = {
-    today: "Today",
-    week: "Past 7 Days",
-    month: summary.targetMonth ? `This Month (${summary.targetMonth})` : "This Month",
-    all: "All Time",
-  };
-  const title = periodTitles[summary.period] ?? summary.period;
-  const netSign = summary.netSavings >= 0 ? "+" : "";
-
-  const lines = [
-    `📊 Finance Summary (${title})`,
-    "",
-    `💰 Total Income: $${summary.totalIncome.toFixed(2)} ${summary.currency}`,
-    `💸 Total Expenses: $${summary.totalExpense.toFixed(2)} ${summary.currency}`,
-    `📈 Net Balance: ${netSign}$${summary.netSavings.toFixed(2)} ${summary.currency}`,
-    `📝 Active Transactions: ${summary.transactionCount}`,
-  ];
-
-  if (summary.period === "month") {
-    const budget = Number(process.env.MONTHLY_BUDGET) || 500;
-    const targetMonth = summary.targetMonth || "";
-    if (isBudgetActiveForSheet(targetMonth)) {
-      const remaining = budget - summary.totalExpense;
-      const pct = budget > 0 ? (summary.totalExpense / budget) * 100 : 0;
-      lines.push(`🎯 Monthly Budget: $${budget.toFixed(2)} ${summary.currency}`);
-      if (remaining >= 0) {
-        lines.push(`💰 Remaining: $${remaining.toFixed(2)} / $${budget.toFixed(2)} (${(100 - pct).toFixed(1)}% remaining)`);
-      } else {
-        lines.push(`🚨 Budget Exceeded: -$${Math.abs(remaining).toFixed(2)} / $${budget.toFixed(2)}`);
-      }
-    } else {
-      lines.push(`🎯 Budget Notice: $${budget.toFixed(2)}/mo cap begins 1 Oct 2026`);
-    }
-  }
-
-  if (summary.categories.length > 0) {
-    lines.push("", "Spending Breakdown by Category:");
-    for (const cat of summary.categories) {
-      lines.push(
-        `• ${cat.category}: $${cat.amount.toFixed(2)} (${cat.percentage.toFixed(1)}%)`
-      );
-    }
-  } else {
-    lines.push("", "No recorded expenses in this period.");
-  }
-
-  return lines.join("\n");
-}
 
 async function removeAndSend(
   chatId: number,
@@ -3731,30 +3606,11 @@ export async function POST(request: Request) {
     });
 
     if (intent.action === "finance_add") {
-      const transaction = await addTransaction({
-        type: intent.type,
-        amount: intent.amount,
-        currency: intent.currency,
-        category: intent.category,
-        description: intent.description,
-        explicitDate: intent.explicitDate,
-        transactionTimestamp: messageDateObj,
+      await handleFinanceAddAction({
+        chatId,
+        intent,
+        messageDateObj,
       });
-
-      const responseLines = [
-        "Transaction added.",
-        `Type: ${intent.type}`,
-        `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
-        `Category: ${intent.category}`,
-        `Description: ${intent.description}`,
-        `Date & Time: ${transaction.timestamp} (SGT)`,
-      ];
-
-      if (transaction.budgetStatus?.hasBudget && intent.type === "expense") {
-        responseLines.push("", transaction.budgetStatus.formattedNotice);
-      }
-
-      await sendTelegramMessage(chatId, responseLines.join("\n"));
 
       await markUpdateCompleted(updateId, "finance_add_natural_language");
       return Response.json({ ok: true });
@@ -3773,8 +3629,10 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "finance_summary") {
-      const summary = await getFinanceSummary(intent.period);
-      await sendTelegramMessage(chatId, formatFinanceSummary(summary));
+      await handleFinanceSummaryAction({
+        chatId,
+        period: intent.period,
+      });
 
       await markUpdateCompleted(updateId, "finance_summary");
       return Response.json({ ok: true });
@@ -3811,91 +3669,23 @@ export async function POST(request: Request) {
           ? targetTransaction?.transactionId
           : undefined);
 
-      if (resolvedTxnId) {
-        const transaction = await getTransactionById(resolvedTxnId);
-        if (transaction) {
-          const confirmationToken = await savePendingFinanceDeleteAction({
-            userId: message.from.id,
-            payload: { transactionId: transaction.transactionId },
-          });
-
-          await sendTelegramMessage(
-            chatId,
-            [
-              "Delete this finance transaction?",
-              "",
-              formatFinanceTransaction(transaction),
-              "",
-              "This will mark the row as deleted in Google Sheets.",
-            ].join("\n"),
-            {
-              inline_keyboard: [
-                [
-                  {
-                    text: "🗑️ Yes, delete",
-                    callback_data: `finance_delete_yes:${confirmationToken}`,
-                  },
-                  {
-                    text: "❌ No, keep it",
-                    callback_data: `finance_delete_no:${confirmationToken}`,
-                  },
-                ],
-              ],
-            }
-          );
-
-          await markUpdateCompleted(
-            updateId,
-            "finance_delete_direct_confirmation_sent"
-          );
-          return Response.json({ ok: true });
-        }
-      }
-
-      const query = intent.query || text;
-      const matches = await searchActiveTransactions(query);
-
-      if (matches.length === 0) {
-        await sendTelegramMessage(
-          chatId,
-          `No active finance transactions matched “${query}”.`
-        );
-
-        await markUpdateCompleted(updateId, "finance_delete_search_empty");
-        return Response.json({ ok: true });
-      }
-
-      const limitedMatches = matches.slice(0, 5);
-
-      const selectionToken = await savePendingFinanceSelection({
+      const status = await handleFinanceDeleteSearchAction({
+        chatId,
         userId: message.from.id,
-        transactionIds: limitedMatches.map(
-          (transaction) => transaction.transactionId
-        ),
+        resolvedTxnId,
+        query: intent.query || text,
       });
 
-      await sendTelegramMessage(
-        chatId,
-        [
-          `Found ${limitedMatches.length} active finance match${
-            limitedMatches.length === 1 ? "" : "es"
-          } for “${query}”.`,
-          "",
-          "Choose the exact transaction to delete:",
-        ].join("\n"),
-        {
-          inline_keyboard: limitedMatches.map((transaction, index) => [
-            {
-              text: truncateButtonText(
-                `${transaction.type}: ${transaction.amount} ${transaction.currency} — ${transaction.description}`
-              ),
-              callback_data: `finance_select:${selectionToken}:${index}`,
-            },
-          ]),
-        }
-      );
-
-      await markUpdateCompleted(updateId, "finance_delete_search_found");
+      if (status === "confirmed") {
+        await markUpdateCompleted(
+          updateId,
+          "finance_delete_direct_confirmation_sent"
+        );
+      } else if (status === "empty") {
+        await markUpdateCompleted(updateId, "finance_delete_search_empty");
+      } else {
+        await markUpdateCompleted(updateId, "finance_delete_search_found");
+      }
       return Response.json({ ok: true });
     }
 
