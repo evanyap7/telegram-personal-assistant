@@ -89,6 +89,13 @@ const intentSchema = z.union([
     durationMinutes: z.number().int().positive().optional(),
   }),
   z.object({
+    action: z.literal("calendar_free_slots"),
+    calendarName: z.enum(["personal", "work", "all"]).default("all"),
+    date: z.string().date().optional(),
+    timeframe: z.enum(["today", "tomorrow", "specific"]).default("today"),
+    minDurationMinutes: z.number().int().positive().default(30),
+  }),
+  z.object({
     action: z.literal("finance_summary"),
     period: z.enum(["today", "week", "month", "all"]).default("month"),
   }),
@@ -678,6 +685,10 @@ Calendar view rules:
 Calendar reschedule rules:
 - If the user asks to move, reschedule, postpone, push, delay, or shift an existing calendar event (e.g. "move gym tomorrow to 5pm", "reschedule dental appointment to Friday 3pm", "push team sync by 1 hour", "postpone lunch with Alex to 1:30pm"), return calendar_reschedule.
 - Extract query (the event name/keyword), newDate (if moving date), newStartTime (HH:mm 24-hr format), newEndTime, and durationMinutes.
+
+Calendar free slots rules:
+- If the user asks when they are free, asks for open or available slots, or wants to check free time (e.g. "when am I free today?", "find free slots tomorrow", "do I have 1 hour free on Friday?", "open slots today"), return calendar_free_slots.
+- Extract timeframe ("today", "tomorrow", "specific"), date, and minDurationMinutes (default 30).
 
 Finance summary rules:
 - If the user asks for general spending summary, expense total, how much they spent, or budget overview, return finance_summary.

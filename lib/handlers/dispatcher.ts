@@ -12,6 +12,7 @@ import {
   handleCalendarBatchAddAction,
   handleCalendarDeleteSearchAction,
   handleCalendarRescheduleAction,
+  handleCalendarFreeSlotsAction,
 } from "./calendar-handler";
 import {
   handleTodoAddAction,
@@ -201,6 +202,13 @@ defaultRegistry
       intent,
     });
     return { completionStatus: "calendar_reschedule" };
+  })
+  .registerIntent("calendar_free_slots", async (ctx, intent) => {
+    await handleCalendarFreeSlotsAction({
+      chatId: ctx.chatId,
+      intent,
+    });
+    return { completionStatus: "calendar_free_slots" };
   })
   .registerIntent("todo_add", async (ctx, intent) => {
     await handleTodoAddAction({
