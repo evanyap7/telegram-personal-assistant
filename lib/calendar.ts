@@ -782,6 +782,69 @@ export interface FindFreeSlotsInput {
   calendarNames?: ("personal" | "work")[];
 }
 
+export function calculateFreeSlotsFromIntervals(
+  busyIntervals: { start: number; end: number }[],
+  dayStartMs: number,
+  dayEndMs: number,
+  minDurationMinutes: number = 30
+): FreeSlot[] {
+  // Sort and merge overlapping intervals
+  const sorted = [...busyIntervals].sort((a, b) => a.start - b.start);
+  const mergedBusy: { start: number; end: number }[] = [];
+
+  for (const interval of sorted) {
+    if (mergedBusy.length === 0) {
+      mergedBusy.push({ ...interval });
+    } else {
+      const prev = mergedBusy[mergedBusy.length - 1];
+      if (interval.start <= prev.end) {
+        prev.end = Math.max(prev.end, interval.end);
+      } else {
+        mergedBusy.push({ ...interval });
+      }
+    }
+  }
+
+  // Find free intervals between mergedBusy
+  const freeSlots: FreeSlot[] = [];
+  let currentCursor = dayStartMs;
+
+  for (const busy of mergedBusy) {
+    if (busy.start > currentCursor) {
+      const durationMs = busy.start - currentCursor;
+      const durationMinutes = Math.round(durationMs / (60 * 1000));
+      if (durationMinutes >= minDurationMinutes) {
+        const startDate = new Date(currentCursor);
+        const endDate = new Date(busy.start);
+        freeSlots.push({
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+          durationMinutes,
+          formattedTime: formatSlotTime(startDate, endDate, durationMinutes),
+        });
+      }
+    }
+    currentCursor = Math.max(currentCursor, busy.end);
+  }
+
+  if (currentCursor < dayEndMs) {
+    const durationMs = dayEndMs - currentCursor;
+    const durationMinutes = Math.round(durationMs / (60 * 1000));
+    if (durationMinutes >= minDurationMinutes) {
+      const startDate = new Date(currentCursor);
+      const endDate = new Date(dayEndMs);
+      freeSlots.push({
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        durationMinutes,
+        formattedTime: formatSlotTime(startDate, endDate, durationMinutes),
+      });
+    }
+  }
+
+  return freeSlots;
+}
+
 export async function findFreeCalendarSlots(
   input?: FindFreeSlotsInput
 ): Promise<{
@@ -841,58 +904,12 @@ export async function findFreeCalendarSlots(
   }
 
   // Sort and merge overlapping intervals
-  busyIntervals.sort((a, b) => a.start - b.start);
-  const mergedBusy: { start: number; end: number }[] = [];
-
-  for (const interval of busyIntervals) {
-    if (mergedBusy.length === 0) {
-      mergedBusy.push(interval);
-    } else {
-      const prev = mergedBusy[mergedBusy.length - 1];
-      if (interval.start <= prev.end) {
-        prev.end = Math.max(prev.end, interval.end);
-      } else {
-        mergedBusy.push(interval);
-      }
-    }
-  }
-
-  // Find free intervals between mergedBusy
-  const freeSlots: FreeSlot[] = [];
-  let currentCursor = dayStartMs;
-
-  for (const busy of mergedBusy) {
-    if (busy.start > currentCursor) {
-      const durationMs = busy.start - currentCursor;
-      const durationMinutes = Math.round(durationMs / (60 * 1000));
-      if (durationMinutes >= minDuration) {
-        const startDate = new Date(currentCursor);
-        const endDate = new Date(busy.start);
-        freeSlots.push({
-          start: startDate.toISOString(),
-          end: endDate.toISOString(),
-          durationMinutes,
-          formattedTime: formatSlotTime(startDate, endDate, durationMinutes),
-        });
-      }
-    }
-    currentCursor = Math.max(currentCursor, busy.end);
-  }
-
-  if (currentCursor < dayEndMs) {
-    const durationMs = dayEndMs - currentCursor;
-    const durationMinutes = Math.round(durationMs / (60 * 1000));
-    if (durationMinutes >= minDuration) {
-      const startDate = new Date(currentCursor);
-      const endDate = new Date(dayEndMs);
-      freeSlots.push({
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
-        durationMinutes,
-        formattedTime: formatSlotTime(startDate, endDate, durationMinutes),
-      });
-    }
-  }
+  const freeSlots = calculateFreeSlotsFromIntervals(
+    busyIntervals,
+    dayStartMs,
+    dayEndMs,
+    minDuration
+  );
 
   return {
     date: targetDateStr,
