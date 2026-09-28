@@ -1,7 +1,7 @@
 import { getSheetsClient, withExponentialBackoff } from "./google";
 import { maskSensitiveFinancialData } from "./security";
 import { parseSingaporeDate } from "./date-parser";
-import { getMonthlyBudgetStatus, MonthlyBudgetStatus } from "./budget";
+import { getMonthlyBudgetStatus, type MonthlyBudgetStatus } from "./budget";
 
 export { getMonthlyBudgetStatus, type MonthlyBudgetStatus };
 

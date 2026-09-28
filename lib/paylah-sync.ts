@@ -357,21 +357,57 @@ function parseEmailTransactionRegex(
     }
   }
 
-  // 8. DBS Card Alert
-  const cardMatch = text.match(
-    /(?:transaction of|charged)\s*(?:SGD|S\$)?\s*([0-9]+(?:\.[0-9]{2})?)\s*(?:was made on your DBS Card|on your card).*?at\s*(.+?)(?:\s+on|\.|$)/i
-  );
-  if (cardMatch) {
-    const amount = parseFloat(cardMatch[1]);
-    const merchant = cardMatch[2].trim();
-    if (amount && amount > 0) {
+  // 8. Card Alert (DBS/POSB, UOB, OCBC, Citi, Apple Pay email or SMS)
+  const amtMatch =
+    text.match(/(?:SGD|S\$|\$)\s*([0-9]+(?:\.[0-9]{2})?)/i) ||
+    text.match(/(?:amount|transaction of|charged|total|paid)\s*(?:SGD|S\$|\$)?\s*([0-9]+(?:\.[0-9]{2})?)/i);
+
+  if (amtMatch) {
+    const amount = parseFloat(amtMatch[1]);
+
+    // Extract merchant via "at <Merchant>" or "to <Merchant>"
+    let rawMerchant: string | undefined;
+    const atMatch = text.match(
+      /\bat\s+([A-Za-z0-9\s&'._-]+?)(?:\s+(?:on|dated|ref|via|with|using|\d{1,2}\/\d{1,2}|\d{1,2}\s+[A-Za-z]{3})|[.,;\n]|$)/i
+    );
+    if (atMatch) {
+      rawMerchant = atMatch[1].trim();
+    } else {
+      const toMatch = text.match(
+        /\bto\s+([A-Za-z0-9\s&'._-]+?)(?:\s+(?:was successful|is successful|on|dated|ref|via|with|using|\d{1,2}\/\d{1,2}|\d{1,2}\s+[A-Za-z]{3})|[.,;\n]|$)/i
+      );
+      if (toMatch) {
+        rawMerchant = toMatch[1].trim();
+      }
+    }
+
+    if (rawMerchant && amount && amount > 0) {
+      const cleanMerchant = rawMerchant
+        .replace(/^(?:your|the)\s+/i, "")
+        .replace(/\s+(?:was successful|is successful).*$/i, "")
+        .trim();
+
+      let paymentMethod = "Credit/Debit Card";
+      const textLower = `${subject} ${text}`.toLowerCase();
+      if (textLower.includes("dbs") || textLower.includes("posb")) {
+        paymentMethod = "DBS Card";
+      } else if (textLower.includes("uob")) {
+        paymentMethod = "UOB Card";
+      } else if (textLower.includes("ocbc")) {
+        paymentMethod = "OCBC Card";
+      } else if (textLower.includes("citi")) {
+        paymentMethod = "Citi Card";
+      } else if (textLower.includes("apple pay")) {
+        paymentMethod = "Apple Pay";
+      }
+
       return {
         isTransaction: true,
         type: "expense",
         amount,
         currency: "SGD",
-        merchant: merchant || "DBS Card Merchant",
-        paymentMethod: "DBS Card",
+        merchant: cleanMerchant || "Card Merchant",
+        paymentMethod,
       };
     }
   }
@@ -538,7 +574,7 @@ If this email is a shipping, dispatch, tracking, or delivery-status update (e.g.
 ${SECURITY_SYSTEM_GUARDRAIL}`;
 }
 
-async function parseEmailTransaction(
+export async function parseEmailTransaction(
   subject: string,
   cleanBody: string
 ): Promise<EmailTransactionParsedResult> {
