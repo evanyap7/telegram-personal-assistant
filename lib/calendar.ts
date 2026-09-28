@@ -766,3 +766,184 @@ export async function checkAndSendEventReminders(): Promise<ReminderCheckResult>
 
   return { eventsChecked, remindersSent, sentEvents };
 }
+
+export interface FreeSlot {
+  start: string;
+  end: string;
+  durationMinutes: number;
+  formattedTime: string;
+}
+
+export interface FindFreeSlotsInput {
+  date?: string;
+  minDurationMinutes?: number;
+  dayStartHour?: number;
+  dayEndHour?: number;
+  calendarNames?: ("personal" | "work")[];
+}
+
+export async function findFreeCalendarSlots(
+  input?: FindFreeSlotsInput
+): Promise<{
+  date: string;
+  slots: FreeSlot[];
+  busyCount: number;
+}> {
+  const minDuration = input?.minDurationMinutes ?? 30;
+  const startHour = input?.dayStartHour ?? 9;
+  const endHour = input?.dayEndHour ?? 21;
+  const cals = input?.calendarNames ?? ["personal", "work"];
+
+  const targetDateStr =
+    input?.date ||
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+  const timeMin = `${targetDateStr}T00:00:00+08:00`;
+  const timeMax = `${targetDateStr}T23:59:59+08:00`;
+
+  const events = await getUpcomingSchedule({
+    timeMin,
+    timeMax,
+    calendarName: cals.length === 1 ? cals[0] : "all",
+    maxResults: 50,
+  });
+
+  const dayStartMs = new Date(
+    `${targetDateStr}T${String(startHour).padStart(2, "0")}:00:00+08:00`
+  ).getTime();
+  const dayEndMs = new Date(
+    `${targetDateStr}T${String(endHour).padStart(2, "0")}:00:00+08:00`
+  ).getTime();
+
+  // Collect busy intervals
+  const busyIntervals: { start: number; end: number }[] = [];
+
+  for (const ev of events) {
+    if (ev.isAllDay) {
+      continue;
+    }
+    const s = new Date(ev.start).getTime();
+    const e = new Date(ev.end).getTime();
+    if (isNaN(s) || isNaN(e)) continue;
+
+    // Intersect with day window
+    const clampedStart = Math.max(s, dayStartMs);
+    const clampedEnd = Math.min(e, dayEndMs);
+
+    if (clampedEnd > clampedStart) {
+      busyIntervals.push({ start: clampedStart, end: clampedEnd });
+    }
+  }
+
+  // Sort and merge overlapping intervals
+  busyIntervals.sort((a, b) => a.start - b.start);
+  const mergedBusy: { start: number; end: number }[] = [];
+
+  for (const interval of busyIntervals) {
+    if (mergedBusy.length === 0) {
+      mergedBusy.push(interval);
+    } else {
+      const prev = mergedBusy[mergedBusy.length - 1];
+      if (interval.start <= prev.end) {
+        prev.end = Math.max(prev.end, interval.end);
+      } else {
+        mergedBusy.push(interval);
+      }
+    }
+  }
+
+  // Find free intervals between mergedBusy
+  const freeSlots: FreeSlot[] = [];
+  let currentCursor = dayStartMs;
+
+  for (const busy of mergedBusy) {
+    if (busy.start > currentCursor) {
+      const durationMs = busy.start - currentCursor;
+      const durationMinutes = Math.round(durationMs / (60 * 1000));
+      if (durationMinutes >= minDuration) {
+        const startDate = new Date(currentCursor);
+        const endDate = new Date(busy.start);
+        freeSlots.push({
+          start: startDate.toISOString(),
+          end: endDate.toISOString(),
+          durationMinutes,
+          formattedTime: formatSlotTime(startDate, endDate, durationMinutes),
+        });
+      }
+    }
+    currentCursor = Math.max(currentCursor, busy.end);
+  }
+
+  if (currentCursor < dayEndMs) {
+    const durationMs = dayEndMs - currentCursor;
+    const durationMinutes = Math.round(durationMs / (60 * 1000));
+    if (durationMinutes >= minDuration) {
+      const startDate = new Date(currentCursor);
+      const endDate = new Date(dayEndMs);
+      freeSlots.push({
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        durationMinutes,
+        formattedTime: formatSlotTime(startDate, endDate, durationMinutes),
+      });
+    }
+  }
+
+  return {
+    date: targetDateStr,
+    slots: freeSlots,
+    busyCount: events.length,
+  };
+}
+
+function formatSlotTime(start: Date, end: Date, durationMinutes: number): string {
+  const timeFormat = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  const durStr =
+    durationMinutes >= 60
+      ? `${(durationMinutes / 60).toFixed(
+          durationMinutes % 60 === 0 ? 0 : 1
+        )} hr${durationMinutes > 60 ? "s" : ""}`
+      : `${durationMinutes} mins`;
+  return `${timeFormat.format(start)} – ${timeFormat.format(end)} (${durStr})`;
+}
+
+export function formatFreeSlotsMessage(
+  dateStr: string,
+  slots: FreeSlot[],
+  busyCount: number
+): string {
+  const dateFormatted = new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${dateStr}T12:00:00+08:00`));
+
+  if (slots.length === 0) {
+    return `📅 *Free Slots on ${dateFormatted}*\n\n🚫 No free slots available between 9:00 AM and 9:00 PM (${busyCount} scheduled events).`;
+  }
+
+  const lines = [
+    `📅 *Available Free Slots on ${dateFormatted}*:`,
+    `_(Found ${slots.length} available window${
+      slots.length === 1 ? "" : "s"
+    } between 9 AM and 9 PM)_`,
+    "",
+  ];
+
+  for (const slot of slots) {
+    lines.push(`🟢 *${slot.formattedTime}*`);
+  }
+
+  return lines.join("\n");
+}
