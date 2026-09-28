@@ -121,6 +121,13 @@ import {
   handleFinanceSummaryAction,
   handleFinanceDeleteSearchAction,
 } from "@/lib/handlers/finance-handler";
+import {
+  formatTodoListMessage,
+  handleTodoAddAction,
+  handleTodoViewAction,
+  handleTodoCompleteAction,
+  handleTodoDeleteSearchAction,
+} from "@/lib/handlers/todo-handler";
 
 
 const financeAddSchema = z.object({
@@ -217,41 +224,6 @@ function helpText() {
   ].join("\n");
 }
 
-function formatTodoListMessage(
-  todos: TodoItem[],
-  title: string
-): {
-  text: string;
-  replyMarkup?: { inline_keyboard: { text: string; callback_data: string }[][] };
-} {
-  if (todos.length === 0) {
-    return {
-      text: `📝 ${title}\n\n🎉 No pending tasks found! You're all caught up.`,
-    };
-  }
-
-  const lines = [`📝 ${title} (${todos.length}):`, ""];
-  const buttons: { text: string; callback_data: string }[][] = [];
-
-  todos.forEach((todo, idx) => {
-    const priorityIcon =
-      todo.priority === "high" ? "🔴 " : todo.priority === "low" ? "🟢 " : "";
-    const dueStr = todo.dueDate ? ` (📅 ${formatCalendarDate(todo.dueDate)})` : "";
-    lines.push(`${idx + 1}. ${priorityIcon}${todo.task}${dueStr}`);
-
-    buttons.push([
-      {
-        text: `✅ Done: ${truncateButtonText(todo.task, 32)}`,
-        callback_data: `todo_done:${todo.taskId}`,
-      },
-    ]);
-  });
-
-  return {
-    text: lines.join("\n"),
-    replyMarkup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
-  };
-}
 
 function formatEmailDraftPreview(input: {
   to: string;
@@ -3783,158 +3755,52 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "todo_add") {
-      const todo = await addTodo({
+      await handleTodoAddAction({
+        chatId,
         task: intent.task,
         dueDate: intent.dueDate,
         priority: intent.priority,
         remindIntervalMinutes: intent.remindIntervalMinutes,
-        chatId,
       });
-
-      const dueStr = todo.dueDate
-        ? `\n📅 Due: ${formatCalendarDate(todo.dueDate)}`
-        : "";
-      const remindStr = todo.remindIntervalMinutes
-        ? `\n🔔 Reminder: Every ${todo.remindIntervalMinutes} mins until marked done`
-        : "";
-
-      const buttons = [
-        {
-          text: "✅ Mark Done",
-          callback_data: `todo_done:${todo.taskId}`,
-        },
-      ];
-      if (todo.remindIntervalMinutes) {
-        buttons.push({
-          text: "🔕 Mute",
-          callback_data: `todo_mute:${todo.taskId}`,
-        });
-      }
-
-      await sendTelegramMessage(
-        chatId,
-        `✅ Added to your to-do list:\n• ${todo.task}${dueStr}${remindStr}`,
-        {
-          inline_keyboard: [buttons],
-        }
-      );
 
       await markUpdateCompleted(updateId, "todo_add_natural_language");
       return Response.json({ ok: true });
     }
 
     if (intent.action === "todo_view") {
-      const isToday = intent.timeframe === "today";
-      const todos = await listTodos({
-        date: isToday ? "today" : undefined,
-        status: "active",
+      await handleTodoViewAction({
+        chatId,
+        timeframe: intent.timeframe,
       });
-
-      const title = isToday ? "Today's To-Do List" : "Active To-Do List";
-      const formatted = formatTodoListMessage(todos, title);
-      await sendTelegramMessage(chatId, formatted.text, formatted.replyMarkup);
 
       await markUpdateCompleted(updateId, "todo_view_natural_language");
       return Response.json({ ok: true });
     }
 
     if (intent.action === "todo_complete") {
-      const matches = await searchActiveTodos(intent.query);
-      if (matches.length === 0) {
-        await sendTelegramMessage(
-          chatId,
-          `I couldn't find any active tasks matching “${intent.query}”.`
-        );
-      } else if (matches.length === 1) {
-        await completeTodo(matches[0].taskId);
-        await sendTelegramMessage(
-          chatId,
-          `✅ Marked as done: “${matches[0].task}”! 🎉`
-        );
-      } else {
-        await sendTelegramMessage(
-          chatId,
-          `Found ${matches.length} tasks matching “${intent.query}”. Tap which one you finished:`,
-          {
-            inline_keyboard: matches.map((m) => [
-              {
-                text: `✅ ${truncateButtonText(m.task, 40)}`,
-                callback_data: `todo_done:${m.taskId}`,
-              },
-            ]),
-          }
-        );
-      }
+      await handleTodoCompleteAction({
+        chatId,
+        query: intent.query,
+      });
 
       await markUpdateCompleted(updateId, "todo_complete_natural_language");
       return Response.json({ ok: true });
     }
 
     if (intent.action === "todo_delete_search") {
-      const matches = await searchActiveTodos(intent.query);
-      if (matches.length === 0) {
-        await sendTelegramMessage(
-          chatId,
-          `I couldn't find any active tasks matching “${intent.query}” to remove.`
-        );
-        await markUpdateCompleted(updateId, "todo_delete_search_empty");
-        return Response.json({ ok: true });
-      }
-
-      if (matches.length === 1) {
-        const match = matches[0];
-        const token = await savePendingTodoDeleteAction({
-          userId: message.from.id,
-          payload: {
-            taskId: match.taskId,
-            task: match.task,
-          },
-        });
-
-        await sendTelegramMessage(
-          chatId,
-          `Remove this task from your to-do list?\n\n• ${match.task}`,
-          {
-            inline_keyboard: [
-              [
-                {
-                  text: "🗑️ Yes, remove",
-                  callback_data: `todo_del_yes:${token}`,
-                },
-                {
-                  text: "❌ No, keep",
-                  callback_data: `todo_del_no:${token}`,
-                },
-              ],
-            ],
-          }
-        );
-
-        await markUpdateCompleted(updateId, "todo_delete_prompt");
-        return Response.json({ ok: true });
-      }
-
-      const token = await savePendingTodoSelection({
+      const status = await handleTodoDeleteSearchAction({
+        chatId,
         userId: message.from.id,
-        payload: {
-          todos: matches.map((m) => ({ taskId: m.taskId, task: m.task })),
-        },
+        query: intent.query,
       });
 
-      await sendTelegramMessage(
-        chatId,
-        `Found ${matches.length} tasks matching “${intent.query}”. Which one would you like to remove?`,
-        {
-          inline_keyboard: matches.map((m, idx) => [
-            {
-              text: `🗑️ ${truncateButtonText(m.task, 40)}`,
-              callback_data: `todo_del_select:${token}:${idx}`,
-            },
-          ]),
-        }
-      );
-
-      await markUpdateCompleted(updateId, "todo_delete_selection_prompt");
+      if (status === "empty") {
+        await markUpdateCompleted(updateId, "todo_delete_search_empty");
+      } else if (status === "prompt") {
+        await markUpdateCompleted(updateId, "todo_delete_prompt");
+      } else {
+        await markUpdateCompleted(updateId, "todo_delete_selection_prompt");
+      }
       return Response.json({ ok: true });
     }
 
