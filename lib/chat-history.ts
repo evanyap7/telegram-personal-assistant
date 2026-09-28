@@ -162,3 +162,62 @@ export async function getRecentChatHistory(
     return [];
   }
 }
+
+export async function pruneOldChatHistory(
+  daysToKeep = 30
+): Promise<{ prunedCount: number; remainingCount: number }> {
+  try {
+    await ensureChatHistorySheetExists();
+
+    const sheets = getSheetsClient();
+    const spreadsheetId = getSpreadsheetId();
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${CHAT_HISTORY_SHEET}!A2:G`,
+    });
+
+    const rows = res.data.values ?? [];
+    if (rows.length === 0) {
+      return { prunedCount: 0, remainingCount: 0 };
+    }
+
+    const cutoffMs = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+    const keepRows: string[][] = [];
+    let prunedCount = 0;
+
+    for (const row of rows) {
+      const timestampStr = row[1];
+      const timeMs = new Date(timestampStr).getTime();
+
+      if (!Number.isNaN(timeMs) && timeMs < cutoffMs) {
+        prunedCount++;
+      } else {
+        keepRows.push(row);
+      }
+    }
+
+    if (prunedCount > 0) {
+      await sheets.spreadsheets.values.clear({
+        spreadsheetId,
+        range: `${CHAT_HISTORY_SHEET}!A2:G`,
+      });
+
+      if (keepRows.length > 0) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${CHAT_HISTORY_SHEET}!A2:G${keepRows.length + 1}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: keepRows,
+          },
+        });
+      }
+    }
+
+    return { prunedCount, remainingCount: keepRows.length };
+  } catch (error) {
+    console.error("Failed to prune chat history in Google Sheets:", error);
+    return { prunedCount: 0, remainingCount: 0 };
+  }
+}
