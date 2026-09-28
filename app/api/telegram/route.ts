@@ -101,6 +101,7 @@ import {
   removeTelegramInlineKeyboard,
   sendTelegramChatAction,
   sendTelegramMessage,
+  sendTelegramDocument,
   setTelegramBotCommands,
 } from "@/lib/telegram";
 import { safeCompare } from "@/lib/security";
@@ -135,6 +136,7 @@ import {
   handleRememberCommand,
   handleRecallCommand,
 } from "@/lib/handlers/memory-handler";
+import { generateMonthlyCsvExport } from "@/lib/export";
 
 
 const financeAddSchema = z.object({
@@ -2998,6 +3000,7 @@ export async function POST(request: Request) {
         { command: "budget", description: "View monthly budget status ($500 cap)" },
         { command: "finance_summary", description: "Monthly spending & breakdown" },
         { command: "finance_list", description: "Recent active transactions" },
+        { command: "export", description: "Export monthly transactions CSV file" },
         { command: "split", description: "Split bill (e.g. /split 80 Alex Ben)" },
         { command: "owed", description: "View who owes you and IOU balances" },
         { command: "inbox", description: "Triage unread Gmail inbox" },
@@ -3371,6 +3374,49 @@ export async function POST(request: Request) {
     if (text === "/recall" || text.startsWith("/recall ")) {
       await handleRecallCommand({ chatId, text });
       await markUpdateCompleted(updateId, "recall_command");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/export" ||
+      text.startsWith("/export ") ||
+      lowerText === "export" ||
+      lowerText === "export csv"
+    ) {
+      const monthArg = text.replace("/export", "").trim() || undefined;
+      await sendTelegramChatAction(chatId, "upload_document" as any);
+      try {
+        const result = await generateMonthlyCsvExport(monthArg);
+        if (result.rowCount === 0) {
+          await sendTelegramMessage(
+            chatId,
+            `ℹ️ No transactions found for ${result.monthName} to export.`
+          );
+        } else {
+          const caption = [
+            `📊 *Transaction Export (${result.monthName})*`,
+            `💰 Total Income: $${result.totalIncome.toFixed(2)} SGD`,
+            `💸 Total Expenses: $${result.totalExpense.toFixed(2)} SGD`,
+            `📈 Net Balance: ${
+              result.netSavings >= 0 ? "+" : ""
+            }$${result.netSavings.toFixed(2)} SGD`,
+            `📝 Records: ${result.rowCount}`,
+          ].join("\n");
+          await sendTelegramDocument(
+            chatId,
+            result.csvContent,
+            result.filename,
+            caption
+          );
+        }
+      } catch (err) {
+        console.error("Export failed:", err);
+        await sendTelegramMessage(
+          chatId,
+          "⚠️ Could not export transactions. Check that Google Sheets is configured."
+        );
+      }
+      await markUpdateCompleted(updateId, "export_command");
       return Response.json({ ok: true });
     }
 
