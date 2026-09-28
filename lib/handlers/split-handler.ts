@@ -12,6 +12,7 @@ import {
   answerTelegramCallback,
   type InlineKeyboardMarkup,
 } from "@/lib/telegram";
+import { addTransaction } from "@/lib/finance";
 
 export async function handleSplitBillAction(params: {
   chatId: number;
@@ -51,6 +52,43 @@ export async function handleSplitBillAction(params: {
   const description = intent.description || "Bill split";
   const baseMessage = formatSplitBillMessage(result, description);
 
+  const isPayerMe =
+    !intent.payer ||
+    intent.payer.toLowerCase() === "me" ||
+    intent.payer.toLowerCase() === "i";
+  let personalExpenseLoggedNote = "";
+
+  if (isPayerMe) {
+    const myShare =
+      result.shares.find(
+        (s) => s.name.toLowerCase() === "me" || s.name.toLowerCase() === "i"
+      )?.amount ?? result.perPersonShare;
+
+    if (myShare > 0) {
+      try {
+        const addedTxn = await addTransaction({
+          type: "expense",
+          amount: myShare,
+          currency: "SGD",
+          category: "Dining / Shared",
+          description: `${description} (My share of $${result.totalAmount.toFixed(2)})`,
+        });
+        personalExpenseLoggedNote = `\n💳 *Recorded your share ($${myShare.toFixed(2)} SGD) to personal expenses.*`;
+
+        if (addedTxn.budgetStatus?.hasBudget) {
+          personalExpenseLoggedNote += `\n${addedTxn.budgetStatus.formattedNotice}`;
+          if (addedTxn.budgetStatus.isOverBudget) {
+            personalExpenseLoggedNote += `\n🚨 Alert: You have exceeded 100% of your monthly budget!`;
+          } else if (addedTxn.budgetStatus.thresholdCrossed === 80) {
+            personalExpenseLoggedNote += `\n⚠️ Alert: You have reached 80% of your monthly budget!`;
+          }
+        }
+      } catch (err) {
+        console.error("Failed to log personal split share to finance:", err);
+      }
+    }
+  }
+
   // Filter debtors (everyone other than "Me")
   const debtors = result.shares.filter(
     (s) => s.name.toLowerCase() !== "me" && s.name.toLowerCase() !== "i"
@@ -78,15 +116,21 @@ export async function handleSplitBillAction(params: {
 
       await sendTelegramMessage(
         chatId,
-        `${baseMessage}\n\n📝 *Logged ${debtors.length} IOU(s) to debt ledger.*`,
+        `${baseMessage}${personalExpenseLoggedNote}\n\n📝 *Logged ${debtors.length} IOU(s) to debt ledger.*`,
         keyboard
       );
     } catch (err) {
       console.error("Failed to record IOUs:", err);
-      await sendTelegramMessage(chatId, baseMessage);
+      await sendTelegramMessage(
+        chatId,
+        `${baseMessage}${personalExpenseLoggedNote}`
+      );
     }
   } else {
-    await sendTelegramMessage(chatId, baseMessage);
+    await sendTelegramMessage(
+      chatId,
+      `${baseMessage}${personalExpenseLoggedNote}`
+    );
   }
 }
 
