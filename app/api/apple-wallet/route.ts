@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addTransaction, formatSingaporeTimestamp } from "@/lib/finance";
+import {
+  addTransaction,
+  findRecentDuplicateTransaction,
+  formatSingaporeTimestamp,
+} from "@/lib/finance";
+import { parseEmailTransaction } from "@/lib/paylah-sync";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { safeCompare } from "@/lib/security";
 import { parseSingaporeDate } from "@/lib/date-parser";
@@ -322,7 +327,47 @@ async function processWalletTransaction(rawPayload: Record<string, unknown>) {
     "transactionamount",
     "cost",
   ]);
-  const amount = normalizeAmount(rawAmount);
+  let amount = normalizeAmount(rawAmount);
+
+  // If structured amount is not found, check if unstructured text was passed (e.g. Bank SMS or receipt)
+  if (!amount) {
+    const rawText = getField(payload, [
+      "text",
+      "message",
+      "sms",
+      "body",
+      "content",
+      "rawText",
+      "raw",
+      "shortcutInput",
+      "shortcut_input",
+    ]);
+
+    if (rawText && typeof rawText === "string" && rawText.trim()) {
+      const parsed = await parseEmailTransaction("Payment Alert", rawText.trim());
+      if (parsed && parsed.isTransaction && parsed.amount) {
+        amount = parsed.amount;
+        if (!payload.merchant && parsed.merchant) {
+          payload.merchant = parsed.merchant;
+        }
+        if (!payload.currency && parsed.currency) {
+          payload.currency = parsed.currency;
+        }
+        if (!payload.category && parsed.category) {
+          payload.category = parsed.category;
+        }
+        if (!payload.card && parsed.paymentMethod) {
+          payload.card = parsed.paymentMethod;
+        }
+        if (!payload.date && parsed.date) {
+          payload.date = parsed.date;
+        }
+        if (!payload.item && parsed.item) {
+          payload.item = parsed.item;
+        }
+      }
+    }
+  }
 
   if (!amount) {
     return NextResponse.json(
@@ -413,6 +458,24 @@ async function processWalletTransaction(rawPayload: Record<string, unknown>) {
     ? `${merchant} (Apple Pay - ${card})`
     : `${merchant} (Apple Pay)`;
 
+  // Prevent duplicate logging if this purchase was already recorded (e.g. by Gmail push sync or tap within 15 mins)
+  if (!payload.force && !payload.allowDuplicate) {
+    const duplicate = await findRecentDuplicateTransaction(
+      merchant,
+      amount,
+      "expense",
+      15 / (24 * 60) // 15 minute window
+    );
+    if (duplicate) {
+      return NextResponse.json({
+        success: true,
+        duplicate: true,
+        message: `Transaction for ${merchant} (${currency} ${amount.toFixed(2)}) was already logged recently.`,
+        transactionId: duplicate.transactionId,
+      });
+    }
+  }
+
   try {
     // 1. Add transaction to Google Sheets
     const result = await addTransaction({
@@ -489,8 +552,14 @@ async function processWalletTransaction(rawPayload: Record<string, unknown>) {
 export async function GET(req: NextRequest) {
   const isAuthed = verifyAuth(req);
 
-  // If query params include amount and request is authenticated, allow recording via GET
-  if (isAuthed && req.nextUrl.searchParams.has("amount")) {
+  // If query params include amount or text and request is authenticated, allow recording via GET
+  if (
+    isAuthed &&
+    (req.nextUrl.searchParams.has("amount") ||
+      req.nextUrl.searchParams.has("text") ||
+      req.nextUrl.searchParams.has("message") ||
+      req.nextUrl.searchParams.has("sms"))
+  ) {
     const queryPayload: Record<string, unknown> = {};
     for (const [k, v] of req.nextUrl.searchParams.entries()) {
       queryPayload[k] = v;
@@ -524,6 +593,8 @@ export async function POST(req: NextRequest) {
         }
         if (Object.keys(parsed).length > 0) {
           body = parsed;
+        } else {
+          body = { text: textBody.trim() };
         }
       }
     }
