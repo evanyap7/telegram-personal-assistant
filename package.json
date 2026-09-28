@@ -18,7 +18,8 @@
     "test:split": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-split.ts",
     "test:calendar": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-calendar-slots.ts",
     "test:memory": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-memory.ts",
-    "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts"
+    "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts",
+    "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.58",
