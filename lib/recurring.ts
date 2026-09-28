@@ -1,4 +1,7 @@
 import { getSheetsClient } from "./google";
+import { addTransaction } from "./finance";
+import { addTodo } from "./todos";
+import { sendTelegramMessage } from "./telegram";
 
 const RECURRING_SHEET = "RecurringSchedules";
 
@@ -314,4 +317,97 @@ export async function toggleRecurringSchedule(
   });
 
   return true;
+}
+
+export interface ProcessRecurringResult {
+  processedCount: number;
+  subscriptionsLogged: number;
+  tasksCreated: number;
+  items: Array<{
+    id: string;
+    title: string;
+    type: RecurringType;
+    nextRunDate: string;
+  }>;
+}
+
+export async function processDueRecurringSchedules(): Promise<ProcessRecurringResult> {
+  const activeSchedules = await listRecurringSchedules({ activeOnly: true });
+  const sgToday = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  const due = activeSchedules.filter((s) => s.nextRunDate && s.nextRunDate <= sgToday);
+  const result: ProcessRecurringResult = {
+    processedCount: 0,
+    subscriptionsLogged: 0,
+    tasksCreated: 0,
+    items: [],
+  };
+
+  const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
+
+  for (const schedule of due) {
+    try {
+      if (schedule.type === "subscription" && schedule.amount) {
+        await addTransaction({
+          type: "expense",
+          amount: schedule.amount,
+          currency: schedule.currency || "SGD",
+          category: schedule.category || "Subscriptions",
+          description: `${schedule.title} (Recurring)`,
+          explicitDate: sgToday,
+        });
+
+        result.subscriptionsLogged++;
+
+        if (allowedUserId) {
+          await sendTelegramMessage(
+            allowedUserId,
+            `🔄 *Recurring Subscription Logged*\n\n• ${schedule.title}: $${schedule.amount.toFixed(2)} ${schedule.currency || "SGD"}\n• Category: ${schedule.category || "Subscriptions"}`
+          ).catch(() => {});
+        }
+      } else if (schedule.type === "recurring_task") {
+        await addTodo({
+          task: schedule.title,
+          dueDate: sgToday,
+          priority: "medium",
+          chatId: allowedUserId || undefined,
+        });
+
+        result.tasksCreated++;
+
+        if (allowedUserId) {
+          await sendTelegramMessage(
+            allowedUserId,
+            `🔄 *Recurring Task Created*\n\n• ${schedule.title}\n📅 Due: ${sgToday}`
+          ).catch(() => {});
+        }
+      }
+
+      const nextDate = computeNextRunDate(
+        schedule.frequency,
+        schedule.dayOfMonth,
+        schedule.dayOfWeek,
+        new Date()
+      );
+
+      await updateRecurringScheduleRun(schedule.id, sgToday, nextDate);
+
+      result.processedCount++;
+      result.items.push({
+        id: schedule.id,
+        title: schedule.title,
+        type: schedule.type,
+        nextRunDate: nextDate,
+      });
+    } catch (err) {
+      console.error(`Failed to process recurring schedule ${schedule.id}:`, err);
+    }
+  }
+
+  return result;
 }
