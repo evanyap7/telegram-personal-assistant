@@ -202,3 +202,33 @@ export async function setTelegramBotCommands(
     commands,
   });
 }
+
+export async function sendTelegramDocument(
+  chatId: number,
+  fileContent: string,
+  filename: string,
+  caption?: string
+): Promise<void> {
+  const token = getTelegramToken();
+  const formData = new FormData();
+  formData.append("chat_id", String(chatId));
+  const blob = new Blob([fileContent], { type: "text/csv;charset=utf-8" });
+  formData.append("document", blob, filename);
+  if (caption) {
+    formData.append("caption", caption);
+    formData.append("parse_mode", "Markdown");
+  }
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("sendTelegramDocument failed:", errText);
+    if (fileContent.length < 3500) {
+      await sendTelegramMessage(chatId, `\`\`\`csv\n${fileContent}\n\`\`\``);
+    }
+  }
+}
