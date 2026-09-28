@@ -122,6 +122,7 @@ import {
   handleVoiceNoteAction,
 } from "@/lib/handlers/draft-handler";
 import { defaultRegistry } from "@/lib/handlers/dispatcher";
+import { answerWithSearch } from "@/lib/search";
 
 
 const financeAddSchema = z.object({
@@ -3713,17 +3714,22 @@ export async function POST(request: Request) {
         return Response.json({ ok: true });
       }
 
-      const replyMsg = `${intent.message}\n\nTry /help for examples.`;
+      const searchRes = await answerWithSearch(text);
+      const replyMsg =
+        searchRes.source === "fallback"
+          ? `${intent.message || searchRes.answer}\n\nTry /help for examples.`
+          : searchRes.answer;
+
       await sendTelegramMessage(chatId, replyMsg);
 
       logChatMessage({
         userId: message.from.id,
         role: "assistant",
         text: replyMsg,
-        actionType: "unknown",
+        actionType: `search_${searchRes.source}`,
       }).catch(() => {});
 
-      await markUpdateCompleted(updateId, "unknown");
+      await markUpdateCompleted(updateId, `search_${searchRes.source}`);
       return Response.json({ ok: true });
     }
 
