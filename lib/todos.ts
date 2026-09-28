@@ -414,9 +414,23 @@ export async function muteTodoReminder(taskId: string): Promise<boolean> {
   return true;
 }
 
+export function isQuietHours(date: Date = new Date()): boolean {
+  const sgHour = Number(
+    new Intl.DateTimeFormat("en-SG", {
+      timeZone: "Asia/Singapore",
+      hour: "numeric",
+      hour12: false,
+    }).format(date)
+  );
+
+  // Quiet hours between 11:00 PM and 8:00 AM SGT (23:00 - 08:00)
+  return sgHour >= 23 || sgHour < 8;
+}
+
 export type TodoReminderCheckResult = {
   todosChecked: number;
   remindersSent: number;
+  skippedQuietHours?: boolean;
   sentTodos: Array<{
     taskId: string;
     task: string;
@@ -425,10 +439,19 @@ export type TodoReminderCheckResult = {
 };
 
 export async function checkAndSendTodoReminders(): Promise<TodoReminderCheckResult> {
+  const now = new Date();
+  if (isQuietHours(now)) {
+    return {
+      todosChecked: 0,
+      remindersSent: 0,
+      skippedQuietHours: true,
+      sentTodos: [],
+    };
+  }
+
   const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
   const activeTodos = await listTodos({ status: "active" });
 
-  const now = new Date();
   let todosChecked = 0;
   let remindersSent = 0;
   const sentTodos: TodoReminderCheckResult["sentTodos"] = [];
