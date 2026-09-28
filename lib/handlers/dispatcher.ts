@@ -29,6 +29,10 @@ import {
   handleIOUSummaryAction,
   handleIOUSettleCallback,
 } from "./split-handler";
+import {
+  handleMemorySaveAction,
+  handleMemoryRecallAction,
+} from "./memory-handler";
 
 import type { UserCalendarContext } from "../pending-actions";
 
@@ -279,6 +283,20 @@ defaultRegistry
       person: intent.person,
     });
     return { completionStatus: "iou_summary" };
+  })
+  .registerIntent("memory_save", async (ctx, intent) => {
+    await handleMemorySaveAction({
+      chatId: ctx.chatId,
+      intent,
+    });
+    return { completionStatus: "memory_save" };
+  })
+  .registerIntent("memory_recall", async (ctx, intent) => {
+    await handleMemoryRecallAction({
+      chatId: ctx.chatId,
+      intent,
+    });
+    return { completionStatus: "memory_recall" };
   })
   .registerCallback("iou_settle", async (ctx) => {
     return await handleIOUSettleCallback({

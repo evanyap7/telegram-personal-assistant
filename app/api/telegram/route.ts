@@ -131,6 +131,10 @@ import {
 } from "@/lib/handlers/split-handler";
 import { checkAndSendLeaveNowAlerts } from "@/lib/travel";
 import { triageUnreadInbox } from "@/lib/inbox-triage";
+import {
+  handleRememberCommand,
+  handleRecallCommand,
+} from "@/lib/handlers/memory-handler";
 
 
 const financeAddSchema = z.object({
@@ -2997,6 +3001,8 @@ export async function POST(request: Request) {
         { command: "split", description: "Split bill (e.g. /split 80 Alex Ben)" },
         { command: "owed", description: "View who owes you and IOU balances" },
         { command: "inbox", description: "Triage unread Gmail inbox" },
+        { command: "remember", description: "Save note or fact (e.g. /remember locker: 1234)" },
+        { command: "recall", description: "Recall note or fact (e.g. /recall locker)" },
         { command: "sync", description: "Sync recent DBS & Grab transactions" },
         { command: "help", description: "Show help and full guide" },
       ]);
@@ -3353,6 +3359,18 @@ export async function POST(request: Request) {
         );
       }
       await markUpdateCompleted(updateId, "inbox_command");
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/remember" || text.startsWith("/remember ")) {
+      await handleRememberCommand({ chatId, text });
+      await markUpdateCompleted(updateId, "remember_command");
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/recall" || text.startsWith("/recall ")) {
+      await handleRecallCommand({ chatId, text });
+      await markUpdateCompleted(updateId, "recall_command");
       return Response.json({ ok: true });
     }
 
