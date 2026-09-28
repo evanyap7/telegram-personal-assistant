@@ -87,6 +87,7 @@ import {
   deleteTodo,
   listTodos,
   muteTodoReminder,
+  snoozeTodoReminder,
   searchActiveTodos,
   TodoItem,
 } from "@/lib/todos";
@@ -1643,6 +1644,30 @@ async function handleCallback(input: {
       "🔕 Recurring reminders paused for this task. It remains in your active to-do list."
     );
     await markUpdateCompleted(input.updateId, "todo_mute_callback");
+    return;
+  }
+
+  if (action === "todo_snooze") {
+    const duration = parts[1] as "1h" | "tonight" | "tomorrow";
+    const taskId = parts[2];
+    if (!taskId || !duration) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    const res = await snoozeTodoReminder(taskId, duration);
+    if (!res.success) {
+      await answerTelegramCallback(input.callbackId, "Task not found or already completed.");
+      return;
+    }
+
+    await answerTelegramCallback(input.callbackId, `⏰ Snoozed for ${res.description}!`);
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+    await sendTelegramMessage(
+      input.chatId,
+      `⏰ Reminder snoozed until ${res.description}.`
+    );
+    await markUpdateCompleted(input.updateId, "todo_snooze_callback");
     return;
   }
 
