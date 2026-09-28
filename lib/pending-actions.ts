@@ -884,3 +884,69 @@ export async function cancelActivePendingCalendarAction(
   await setPendingStatus(context.activePending.rowNumber, "cancelled");
   return true;
 }
+
+export async function pruneExpiredPendingActions(
+  hoursToKeep = 24
+): Promise<{ prunedCount: number; remainingCount: number }> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+  if (rows.length === 0) {
+    return { prunedCount: 0, remainingCount: 0 };
+  }
+
+  const cutoffMs = Date.now() - hoursToKeep * 60 * 60 * 1000;
+  const keepRows: string[][] = [];
+  let prunedCount = 0;
+
+  for (const row of rows) {
+    const expiresAtStr = row[4];
+    const status = row[5];
+    const expiresAtMs = new Date(expiresAtStr).getTime();
+
+    // If active pending and not expired yet, always keep
+    if (
+      status === "pending" &&
+      !Number.isNaN(expiresAtMs) &&
+      expiresAtMs > Date.now()
+    ) {
+      keepRows.push(row);
+      continue;
+    }
+
+    // If older than cutoff, prune
+    if (!Number.isNaN(expiresAtMs) && expiresAtMs < cutoffMs) {
+      prunedCount++;
+      continue;
+    }
+
+    // Keep recent expired/consumed for context
+    keepRows.push(row);
+  }
+
+  if (prunedCount > 0) {
+    await sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `${SHEET_NAME}!A2:F`,
+    });
+
+    if (keepRows.length > 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${SHEET_NAME}!A2:F${keepRows.length + 1}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: keepRows,
+        },
+      });
+    }
+  }
+
+  return { prunedCount, remainingCount: keepRows.length };
+}
