@@ -269,6 +269,136 @@ export async function deleteCalendarEvent(input: {
   });
 }
 
+export type RescheduleCalendarEventInput = {
+  calendarName?: "personal" | "work" | "all";
+  query: string;
+  newDate?: string;
+  newStartTime?: string;
+  newEndTime?: string;
+  durationMinutes?: number;
+  eventId?: string;
+};
+
+export async function rescheduleCalendarEvent(input: RescheduleCalendarEventInput): Promise<{
+  success: boolean;
+  event?: {
+    eventId: string;
+    title: string;
+    start: string;
+    end: string;
+    calendarName: "personal" | "work";
+    htmlLink: string | null;
+  };
+  error?: string;
+}> {
+  const calendar = getCalendarClient();
+  const calsToSearch: ("personal" | "work")[] =
+    input.calendarName === "personal"
+      ? ["personal"]
+      : input.calendarName === "work"
+      ? ["work"]
+      : ["personal", "work"];
+
+  let targetEvent: {
+    calendarName: "personal" | "work";
+    eventId: string;
+    title: string;
+    start: string;
+    end: string;
+  } | null = null;
+
+  for (const cal of calsToSearch) {
+    const matches = await searchUpcomingCalendarEvents({
+      calendarName: cal,
+      query: input.query,
+    });
+    if (matches.length > 0) {
+      targetEvent = matches[0];
+      break;
+    }
+  }
+
+  if (!targetEvent) {
+    return {
+      success: false,
+      error: `No upcoming event matched “${input.query}”.`,
+    };
+  }
+
+  const calendarId = getCalendarId(targetEvent.calendarName);
+  const origStart = new Date(targetEvent.start);
+  const origEnd = new Date(targetEvent.end);
+  const origDurationMs =
+    !isNaN(origEnd.getTime()) && !isNaN(origStart.getTime())
+      ? origEnd.getTime() - origStart.getTime()
+      : 60 * 60 * 1000;
+
+  // Compute new date in Asia/Singapore
+  let datePart: string;
+  if (input.newDate) {
+    datePart = input.newDate;
+  } else {
+    datePart = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(origStart);
+  }
+
+  let timePart: string;
+  if (input.newStartTime) {
+    timePart = input.newStartTime;
+  } else {
+    timePart = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Singapore",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(origStart);
+  }
+
+  const newStartIso = `${datePart}T${timePart}:00+08:00`;
+  let newEndIso: string;
+
+  if (input.newEndTime) {
+    newEndIso = `${datePart}T${input.newEndTime}:00+08:00`;
+  } else if (input.durationMinutes) {
+    const startMs = new Date(newStartIso).getTime();
+    newEndIso = new Date(startMs + input.durationMinutes * 60 * 1000).toISOString();
+  } else {
+    const startMs = new Date(newStartIso).getTime();
+    newEndIso = new Date(startMs + origDurationMs).toISOString();
+  }
+
+  const patched = await calendar.events.patch({
+    calendarId,
+    eventId: targetEvent.eventId,
+    requestBody: {
+      start: {
+        dateTime: newStartIso,
+        timeZone: "Asia/Singapore",
+      },
+      end: {
+        dateTime: newEndIso,
+        timeZone: "Asia/Singapore",
+      },
+    },
+  });
+
+  return {
+    success: true,
+    event: {
+      eventId: targetEvent.eventId,
+      title: patched.data.summary || targetEvent.title,
+      start: patched.data.start?.dateTime || newStartIso,
+      end: patched.data.end?.dateTime || newEndIso,
+      calendarName: targetEvent.calendarName,
+      htmlLink: patched.data.htmlLink || null,
+    },
+  };
+}
+
 export type MoveCalendarEventInput = {
   fromCalendar: "personal" | "work";
   toCalendar: "personal" | "work";
