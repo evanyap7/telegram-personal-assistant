@@ -15,6 +15,11 @@ import {
   savePendingFinanceSelection,
 } from "@/lib/pending-actions";
 import { sendTelegramMessage } from "@/lib/telegram";
+import {
+  convertCurrencyToSgd,
+  formatCurrencyConversion,
+  isSgd,
+} from "@/lib/currency";
 
 export function formatFinanceTransaction(input: {
   type: string;
@@ -163,12 +168,29 @@ export async function handleFinanceAddAction(params: {
   messageDateObj?: Date;
 }): Promise<void> {
   const { chatId, intent, messageDateObj } = params;
+
+  let effectiveAmount = intent.amount;
+  let effectiveCurrency = intent.currency;
+  let effectiveDescription = intent.description;
+  let conversionNotice = "";
+
+  if (intent.currency && !isSgd(intent.currency)) {
+    const conversion = await convertCurrencyToSgd(
+      intent.amount,
+      intent.currency
+    );
+    effectiveAmount = conversion.sgdAmount;
+    effectiveCurrency = "SGD";
+    effectiveDescription = `${intent.description} (${formatCurrencyConversion(conversion)})`;
+    conversionNotice = `💱 Converted: ${formatCurrencyConversion(conversion)}`;
+  }
+
   const transaction = await addTransaction({
     type: intent.type,
-    amount: intent.amount,
-    currency: intent.currency,
+    amount: effectiveAmount,
+    currency: effectiveCurrency,
     category: intent.category,
-    description: intent.description,
+    description: effectiveDescription,
     explicitDate: intent.explicitDate,
     transactionTimestamp: messageDateObj,
   });
@@ -176,11 +198,12 @@ export async function handleFinanceAddAction(params: {
   const responseLines = [
     "Transaction added.",
     `Type: ${intent.type}`,
-    `Amount: ${intent.amount.toFixed(2)} ${intent.currency}`,
+    `Amount: ${effectiveAmount.toFixed(2)} ${effectiveCurrency}`,
+    conversionNotice,
     `Category: ${intent.category}`,
-    `Description: ${intent.description}`,
+    `Description: ${effectiveDescription}`,
     `Date & Time: ${transaction.timestamp} (SGT)`,
-  ];
+  ].filter(Boolean);
 
   if (transaction.budgetStatus?.hasBudget && intent.type === "expense") {
     responseLines.push("", transaction.budgetStatus.formattedNotice);
