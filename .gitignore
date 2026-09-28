@@ -47,3 +47,6 @@ next-env.d.ts
 perfect-stock-*.json
 service-account*.json
 *credentials*.json
+
+skills-lock.json
+
