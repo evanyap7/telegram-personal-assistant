@@ -1,6 +1,7 @@
 import {
   listTransactionsFromSheet,
   resolveMonthSheetName,
+  type FinanceTransaction,
 } from "./finance";
 
 export interface MonthlyCsvExportResult {
@@ -13,7 +14,7 @@ export interface MonthlyCsvExportResult {
   netSavings: number;
 }
 
-function escapeCsvField(field: string): string {
+export function escapeCsvField(field: string): string {
   if (field.includes(",") || field.includes('"') || field.includes("\n")) {
     return `"${field.replace(/"/g, '""')}"`;
   }
@@ -21,14 +22,12 @@ function escapeCsvField(field: string): string {
 }
 
 /**
- * Exports all finance transactions for a given month as CSV.
+ * Builds CSV string and calculates aggregates from transaction records.
  */
-export async function generateMonthlyCsvExport(
-  monthArg?: string
-): Promise<MonthlyCsvExportResult> {
-  const targetMonthSheet = await resolveMonthSheetName(monthArg);
-  const transactions = await listTransactionsFromSheet(targetMonthSheet);
-
+export function buildCsvFromTransactions(
+  transactions: FinanceTransaction[],
+  targetMonthSheet: string
+): MonthlyCsvExportResult {
   let totalIncome = 0;
   let totalExpense = 0;
 
@@ -78,4 +77,15 @@ export async function generateMonthlyCsvExport(
     totalExpense: Math.round(totalExpense * 100) / 100,
     netSavings: Math.round(netSavings * 100) / 100,
   };
+}
+
+/**
+ * Exports all finance transactions for a given month as CSV.
+ */
+export async function generateMonthlyCsvExport(
+  monthArg?: string
+): Promise<MonthlyCsvExportResult> {
+  const targetMonthSheet = await resolveMonthSheetName(monthArg);
+  const transactions = await listTransactionsFromSheet(targetMonthSheet);
+  return buildCsvFromTransactions(transactions, targetMonthSheet);
 }
