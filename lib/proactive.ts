@@ -11,6 +11,7 @@ import {
 } from "./finance";
 import { sendTelegramMessage } from "./telegram";
 import { formatCalendarDate } from "./handlers/calendar-handler";
+import { triageUnreadInbox, type InboxTriageSummary } from "./inbox-triage";
 
 function getSingaporeDayBounds(): {
   startIso: string;
@@ -102,12 +103,13 @@ export interface MorningBriefData {
   budgetStatus: MonthlyBudgetStatus;
   daysRemainingInMonth: number;
   monthName: string;
+  inboxTriage?: InboxTriageSummary;
 }
 
 export async function aggregateMorningBrief(): Promise<MorningBriefData> {
   const { startIso, endIso, todayStr, daysRemainingInMonth, monthName } = getSingaporeDayBounds();
 
-  const [events, allTodos, budgetStatus] = await Promise.all([
+  const [events, allTodos, budgetStatus, inboxTriage] = await Promise.all([
     getUpcomingSchedule({
       timeMin: startIso,
       timeMax: endIso,
@@ -127,6 +129,7 @@ export async function aggregateMorningBrief(): Promise<MorningBriefData> {
           currency: "SGD",
         } as MonthlyBudgetStatus)
     ),
+    triageUnreadInbox(3).catch(() => undefined),
   ]);
 
   const todosDueToday: TodoItem[] = [];
@@ -148,6 +151,7 @@ export async function aggregateMorningBrief(): Promise<MorningBriefData> {
     budgetStatus,
     daysRemainingInMonth,
     monthName,
+    inboxTriage,
   };
 }
 
@@ -203,6 +207,21 @@ export function formatMorningBrief(data: MorningBriefData): string {
         } in ${data.monthName})`
       );
     }
+  }
+
+  // 4. Inbox
+  if (data.inboxTriage && data.inboxTriage.actionableCount > 0) {
+    lines.push(
+      "",
+      `📬 Inbox (${data.inboxTriage.actionableCount} actionable email${
+        data.inboxTriage.actionableCount === 1 ? "" : "s"
+      }):`
+    );
+    for (const em of data.inboxTriage.emails.slice(0, 2)) {
+      lines.push(`  • ${em.fromName}: "${em.subject}"`);
+    }
+  } else if (data.inboxTriage && data.inboxTriage.totalUnread === 0) {
+    lines.push("", "📬 Inbox: Zero unread emails!");
   }
 
   return lines.join("\n").trim();
