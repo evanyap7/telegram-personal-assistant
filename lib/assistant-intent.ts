@@ -91,6 +91,20 @@ const intentSchema = z.union([
     type: z.enum(["income", "expense"]).optional(),
   }),
   z.object({
+    action: z.literal("split_bill"),
+    total: z.number().positive().optional(),
+    subtotal: z.number().positive().optional(),
+    people: z.array(z.string()).default([]),
+    tipPercent: z.number().optional(),
+    taxPercent: z.number().optional(),
+    description: z.string().optional(),
+    payer: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("iou_summary"),
+    person: z.string().optional(),
+  }),
+  z.object({
     action: z.literal("finance_delete_search"),
     query: z.string().max(200).optional(),
     transactionId: z.string().optional(),
@@ -665,6 +679,11 @@ Finance query rules:
 - "how much on Grab in September" -> finance_query with merchant "Grab", month "September".
 - "what did I spend on Uniqlo" -> finance_query with merchant "Uniqlo".
 - "how much did I spend on food last month" -> finance_query with category "food", month "last month", type "expense".
+
+Bill split and IOU rules:
+- If the user asks to split a bill, dinner, meal, or shared expense (e.g. "split $80 dinner with Alex and Ben", "paid $120 for lunch, split among 4 people", "split $60 with Sarah"), return split_bill.
+- Extract total, list of people (names or 'Me' plus friends), tipPercent, taxPercent, and description.
+- If the user asks who owes them, what they owe, debts, or IOU balance (e.g. "who owes me money?", "what do I owe Alex?", "show my debts", "IOU summary"), return iou_summary.
 
 To-do rules:
 - If the user asks to add something to their to-do list, tasks, reminder, or "todo: ...", return todo_add.
