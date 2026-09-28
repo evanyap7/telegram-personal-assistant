@@ -12,6 +12,7 @@ import { createEmailDraft, sendGmailDraft } from "../gmail";
 import { downloadTelegramAudio } from "../telegram-files";
 import { transcribeTelegramVoiceNote } from "../voice-transcribe";
 import { markUpdateCompleted, markUpdateFailed } from "../finance";
+import { resolveContact } from "@/lib/memory";
 
 export function formatEmailDraftPreview(input: {
   to: string;
@@ -54,13 +55,40 @@ export async function handleEmailDraftAction(params: {
 }): Promise<string> {
   const { chatId, userId, intent } = params;
 
+  let resolvedTo = intent.to;
+  let resolvedCc = intent.cc;
+  let resolveNotice = "";
+
+  if (!intent.to.includes("@")) {
+    try {
+      const contact = await resolveContact(intent.to);
+      if (contact?.email) {
+        resolvedTo = contact.email;
+        resolveNotice = `👤 _Resolved "${intent.to}" ➔ ${contact.name} (${contact.email})_\n\n`;
+      }
+    } catch (err) {
+      console.warn("Contact lookup failed:", err);
+    }
+  }
+
+  if (intent.cc && !intent.cc.includes("@")) {
+    try {
+      const contact = await resolveContact(intent.cc);
+      if (contact?.email) {
+        resolvedCc = contact.email;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const token = await savePendingEmailDraftAction({
     userId,
     payload: {
-      to: intent.to,
+      to: resolvedTo,
       subject: intent.subject,
       body: intent.body,
-      cc: intent.cc,
+      cc: resolvedCc,
       bcc: intent.bcc,
     },
   });
@@ -68,13 +96,13 @@ export async function handleEmailDraftAction(params: {
   await sendTelegramMessage(
     chatId,
     [
-      "Create this draft in your Gmail (evanyap7@gmail.com)?",
+      `${resolveNotice}Create this draft in your Gmail (evanyap7@gmail.com)?`,
       "",
       formatEmailDraftPreview({
-        to: intent.to,
+        to: resolvedTo,
         subject: intent.subject,
         body: intent.body,
-        cc: intent.cc,
+        cc: resolvedCc,
         bcc: intent.bcc,
       }),
     ].join("\n"),
