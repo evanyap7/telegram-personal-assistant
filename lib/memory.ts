@@ -253,3 +253,148 @@ export async function deleteMemory(keyOrId: string): Promise<boolean> {
 
   return true;
 }
+
+/**
+ * Searches memories using multi-factor token relevance scoring.
+ */
+export async function searchMemories(
+  query: string,
+  options?: { category?: MemoryCategory; limit?: number }
+): Promise<MemoryRecord[]> {
+  const all = await listAllMemories();
+  const tokens = query
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.replace(/[^a-z0-9]/gi, ""))
+    .filter((t) => t.length > 1);
+
+  if (tokens.length === 0) return [];
+
+  const targetCategory = options?.category;
+  const limit = options?.limit ?? 5;
+
+  const scored: { record: MemoryRecord; score: number }[] = [];
+
+  for (const record of all) {
+    if (targetCategory && record.category !== targetCategory) {
+      continue;
+    }
+
+    const keyLower = record.key.toLowerCase();
+    const valLower = record.value.toLowerCase();
+    const tagsLower = record.tags.map((t) => t.toLowerCase());
+
+    let score = 0;
+
+    for (const token of tokens) {
+      if (keyLower === token) {
+        score += 100;
+      } else if (keyLower.includes(token)) {
+        score += 60;
+      }
+
+      if (valLower.includes(token)) {
+        score += 40;
+      }
+
+      if (tagsLower.some((t) => t.includes(token))) {
+        score += 30;
+      }
+    }
+
+    if (score > 0) {
+      scored.push({ record, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((s) => s.record);
+}
+
+export interface ResolvedContact {
+  name: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+}
+
+/**
+ * Looks up a contact from memory records by nickname or name.
+ */
+export async function resolveContact(
+  name: string
+): Promise<ResolvedContact | null> {
+  const cleanName = name.trim().toLowerCase();
+  const contacts = await searchMemories(cleanName, {
+    category: "contact",
+    limit: 3,
+  });
+
+  if (contacts.length === 0) {
+    const all = await searchMemories(cleanName, { limit: 3 });
+    const match = all.find(
+      (m) => m.category === "contact" || m.tags.includes("contact")
+    );
+    if (!match) return null;
+    return parseContactRecord(match);
+  }
+
+  return parseContactRecord(contacts[0]);
+}
+
+function parseContactRecord(record: MemoryRecord): ResolvedContact {
+  const val = record.value;
+  const emailMatch = val.match(
+    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
+  );
+  const phoneMatch = val.match(/(?:\+65\s*)?[89]\d{7}/);
+
+  return {
+    name: record.key,
+    email: emailMatch ? emailMatch[0] : undefined,
+    phone: phoneMatch ? phoneMatch[0] : undefined,
+    notes: val,
+  };
+}
+
+/**
+ * Formats memory search matches for Telegram output.
+ */
+export function formatMemorySearchResult(
+  query: string,
+  matches: MemoryRecord[]
+): string {
+  if (matches.length === 0) {
+    return `🔍 No memories or notes found for “${query}”.`;
+  }
+
+  if (matches.length === 1) {
+    const item = matches[0];
+    const catBadge =
+      item.category === "contact"
+        ? "👤"
+        : item.category === "credential"
+        ? "🔐"
+        : item.category === "preference"
+        ? "⭐"
+        : "🧠";
+    return `${catBadge} *${item.key}*\n${item.value}`;
+  }
+
+  const lines = [`🧠 *Found ${matches.length} matching memories*:`, ""];
+
+  for (const item of matches) {
+    const catBadge =
+      item.category === "contact"
+        ? "👤"
+        : item.category === "credential"
+        ? "🔐"
+        : item.category === "preference"
+        ? "⭐"
+        : "📝";
+    lines.push(`${catBadge} *${item.key}*: ${item.value}`);
+  }
+
+  return lines.join("\n");
+}
+
