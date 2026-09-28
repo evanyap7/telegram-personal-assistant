@@ -336,6 +336,39 @@ export async function completeTodo(
   };
 }
 
+export async function uncompleteTodo(
+  taskId: string
+): Promise<{ success: boolean; todo?: TodoItem }> {
+  await ensureTodosSheetExists();
+
+  const todo = await getTodoById(taskId);
+  if (!todo) {
+    return { success: false };
+  }
+
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  // Reset status to active and clear completedAt
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${TODOS_SHEET}!F${todo.rowNumber}:G${todo.rowNumber}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: [["active", ""]],
+    },
+  });
+
+  return {
+    success: true,
+    todo: {
+      ...todo,
+      status: "active",
+      completedAt: "",
+    },
+  };
+}
+
 export async function deleteTodo(
   taskId: string
 ): Promise<{ success: boolean; todo?: TodoItem }> {
