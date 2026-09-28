@@ -19,6 +19,13 @@ export const INTENT_TEST_MESSAGES: string[] = [
   "I'm done with buy groceries",
   "Draft an email to alex@example.com about project update",
   "delete gym tomorrow from personal",
+  "split $60 bill with Alice and Bob",
+  "who owes me money?",
+  "when am I free tomorrow?",
+  "move my gym session to 5pm tomorrow",
+  "remember that Alice's birthday is June 15",
+  "what is Alice's birthday?",
+  "how much did I spend on Grab this month?",
 ];
 
 export const RECEIPT_EMAIL_FIXTURES: Array<{ subject: string; body: string }> = [
