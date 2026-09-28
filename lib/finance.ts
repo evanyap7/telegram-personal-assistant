@@ -685,7 +685,7 @@ export type FinanceSummary = {
   categories: CategorySpending[];
 };
 
-function parseSingaporeTimestamp(str: string): Date | null {
+export function parseSingaporeTimestamp(str: string): Date | null {
   if (!str) return null;
   const trimmed = str.trim();
 
