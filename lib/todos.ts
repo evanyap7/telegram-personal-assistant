@@ -427,6 +427,74 @@ export function isQuietHours(date: Date = new Date()): boolean {
   return sgHour >= 23 || sgHour < 8;
 }
 
+export type SnoozeDuration = "1h" | "tonight" | "tomorrow";
+
+export async function snoozeTodoReminder(
+  taskId: string,
+  duration: SnoozeDuration
+): Promise<{ success: boolean; snoozedUntil: Date; description: string }> {
+  await ensureTodosSheetExists();
+  const todo = await getTodoById(taskId);
+  if (!todo) {
+    return {
+      success: false,
+      snoozedUntil: new Date(),
+      description: "Task not found",
+    };
+  }
+
+  const now = new Date();
+  let snoozedUntil: Date;
+  let description: string;
+
+  if (duration === "1h") {
+    snoozedUntil = new Date(now.getTime() + 60 * 60 * 1000);
+    description = "1 hour";
+  } else if (duration === "tonight") {
+    // 8:00 PM (20:00) SGT today
+    const sgParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "numeric",
+      hour12: false,
+    }).formatToParts(now);
+
+    const year = Number(sgParts.find((p) => p.type === "year")?.value);
+    const month = Number(sgParts.find((p) => p.type === "month")?.value);
+    const day = Number(sgParts.find((p) => p.type === "day")?.value);
+    const hour = Number(sgParts.find((p) => p.type === "hour")?.value);
+
+    if (hour >= 20) {
+      snoozedUntil = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+      description = "tonight (2 hours)";
+    } else {
+      snoozedUntil = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+      description = "tonight (8:00 PM)";
+    }
+  } else {
+    // "tomorrow" at 9:00 AM SGT (01:00 UTC)
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const sgParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(tomorrow);
+
+    const year = Number(sgParts.find((p) => p.type === "year")?.value);
+    const month = Number(sgParts.find((p) => p.type === "month")?.value);
+    const day = Number(sgParts.find((p) => p.type === "day")?.value);
+
+    snoozedUntil = new Date(Date.UTC(year, month - 1, day, 1, 0, 0, 0));
+    description = "tomorrow morning (9:00 AM)";
+  }
+
+  await updateTodoLastRemindedAt(taskId, snoozedUntil.toISOString());
+  return { success: true, snoozedUntil, description };
+}
+
 export type TodoReminderCheckResult = {
   todosChecked: number;
   remindersSent: number;
@@ -471,6 +539,11 @@ export async function checkAndSendTodoReminders(): Promise<TodoReminderCheckResu
       lastTime = Number.isNaN(parsed) ? 0 : parsed;
     }
 
+    // If snoozed until a future time, skip
+    if (lastTime > now.getTime()) {
+      continue;
+    }
+
     const timeSinceLastRemindedMs = now.getTime() - lastTime;
     // If lastTime is set, require intervalMs to have elapsed
     if (lastTime > 0 && timeSinceLastRemindedMs < intervalMs) {
@@ -502,8 +575,22 @@ export async function checkAndSendTodoReminders(): Promise<TodoReminderCheckResu
               callback_data: `todo_done:${todo.taskId}`,
             },
             {
-              text: "🔕 Mute Reminder",
+              text: "🔕 Mute",
               callback_data: `todo_mute:${todo.taskId}`,
+            },
+          ],
+          [
+            {
+              text: "⏰ 1h",
+              callback_data: `todo_snooze:1h:${todo.taskId}`,
+            },
+            {
+              text: "🌙 Tonight",
+              callback_data: `todo_snooze:tonight:${todo.taskId}`,
+            },
+            {
+              text: "📅 Tomorrow",
+              callback_data: `todo_snooze:tomorrow:${todo.taskId}`,
             },
           ],
         ],
