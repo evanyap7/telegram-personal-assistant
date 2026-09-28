@@ -20,7 +20,10 @@ import {
   handleTodoCompleteAction,
   handleTodoDeleteSearchAction,
 } from "./todo-handler";
-import { handleEmailDraftAction } from "./draft-handler";
+import {
+  handleEmailDraftAction,
+  handleEmailSendCallback,
+} from "./draft-handler";
 import {
   handleSplitBillAction,
   handleIOUSummaryAction,
@@ -282,5 +285,13 @@ defaultRegistry
       callbackId: ctx.callbackId,
       callbackData: ctx.callbackData,
       chatId: ctx.chatId,
+    });
+  })
+  .registerCallback("email_send", async (ctx) => {
+    return await handleEmailSendCallback({
+      callbackId: ctx.callbackId,
+      callbackData: ctx.callbackData,
+      chatId: ctx.chatId,
+      messageId: ctx.messageId,
     });
   });

@@ -8,7 +8,7 @@ import {
   savePendingEmailDraftAction,
   takePendingEmailDraftAction,
 } from "../pending-actions";
-import { createEmailDraft } from "../gmail";
+import { createEmailDraft, sendGmailDraft } from "../gmail";
 import { downloadTelegramAudio } from "../telegram-files";
 import { transcribeTelegramVoiceNote } from "../voice-transcribe";
 import { markUpdateCompleted, markUpdateFailed } from "../finance";
@@ -169,7 +169,17 @@ export async function handleEmailDraftCallback(input: {
         `Subject: ${draft.subject}`,
         "",
         `🔗 Open Gmail Drafts: ${draft.gmailUrl}`,
-      ].join("\n")
+      ].join("\n"),
+      {
+        inline_keyboard: [
+          [
+            {
+              text: "📤 Send Now",
+              callback_data: `email_send:${draft.draftId}`,
+            },
+          ],
+        ],
+      }
     );
 
     await markUpdateCompleted(input.updateId, "email_draft_created");
@@ -182,6 +192,40 @@ export async function handleEmailDraftCallback(input: {
     );
 
     await markUpdateFailed(input.updateId, errorMessage);
+  }
+}
+
+export async function handleEmailSendCallback(params: {
+  callbackId: string;
+  callbackData: string;
+  chatId: number;
+  messageId: number;
+}): Promise<boolean> {
+  const { callbackId, callbackData, chatId, messageId } = params;
+  const parts = callbackData.split(":");
+  const draftId = parts[1];
+
+  if (!draftId) {
+    await answerTelegramCallback(callbackId, "Invalid draft ID.");
+    return false;
+  }
+
+  await answerTelegramCallback(callbackId, "Sending email via Gmail...");
+  const result = await sendGmailDraft(draftId);
+
+  if (result.success) {
+    await removeTelegramInlineKeyboard(chatId, messageId);
+    await sendTelegramMessage(
+      chatId,
+      "🚀 *Email Sent!* Your message has been sent via Gmail."
+    );
+    return true;
+  } else {
+    await sendTelegramMessage(
+      chatId,
+      `⚠️ Could not send draft: ${result.error || "Unknown error"}. You can still send it manually from Gmail.`
+    );
+    return false;
   }
 }
 
