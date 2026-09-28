@@ -137,6 +137,7 @@ import {
   handleRecallCommand,
 } from "@/lib/handlers/memory-handler";
 import { generateMonthlyCsvExport } from "@/lib/export";
+import { registerUndoAction, buildUndoInlineKeyboard } from "@/lib/undo";
 
 
 const financeAddSchema = z.object({
@@ -364,6 +365,15 @@ async function handleCalendarCreateCallback(input: {
 
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
+  const undoToken = registerUndoAction(input.userId, {
+    type: "calendar_event_created",
+    description: pendingAction.payload.title,
+    data: {
+      calendarName: pendingAction.payload.calendarName,
+      eventId: event.id,
+    },
+  });
+
   await sendTelegramMessage(
     input.chatId,
     [
@@ -387,7 +397,8 @@ async function handleCalendarCreateCallback(input: {
       event.htmlLink ? `Link: ${event.htmlLink}` : "",
     ]
       .filter(Boolean)
-      .join("\n")
+      .join("\n"),
+    buildUndoInlineKeyboard(undoToken)
   );
 
   await markUpdateCompleted(input.updateId, "calendar_add");
@@ -1054,9 +1065,16 @@ async function handleTodoDoneCallback(input: {
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
   const reminderNote = result.todo.remindIntervalMinutes ? " (Reminders stopped)" : "";
+  const undoToken = registerUndoAction(input.userId, {
+    type: "todo_completed",
+    description: result.todo.task,
+    data: { taskId: result.todo.taskId },
+  });
+
   await sendTelegramMessage(
     input.chatId,
-    `✅ Completed: "${result.todo.task}"! 🎉${reminderNote}`
+    `✅ Completed: "${result.todo.task}"! 🎉${reminderNote}`,
+    buildUndoInlineKeyboard(undoToken)
   );
 
   await markUpdateCompleted(input.updateId, "todo_completed_callback");

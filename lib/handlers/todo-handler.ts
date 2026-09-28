@@ -11,6 +11,7 @@ import {
   savePendingTodoSelection,
 } from "../pending-actions";
 import { formatCalendarDate } from "./calendar-handler";
+import { registerUndoAction, buildUndoInlineKeyboard } from "../undo";
 
 function truncateButtonText(text: string, maxLength = 40): string {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
@@ -119,8 +120,9 @@ export async function handleTodoViewAction(params: {
 export async function handleTodoCompleteAction(params: {
   chatId: number;
   query: string;
+  userId?: number;
 }): Promise<"empty" | "single" | "multiple"> {
-  const { chatId, query } = params;
+  const { chatId, query, userId = params.chatId } = params;
   const matches = await searchActiveTodos(query);
 
   if (matches.length === 0) {
@@ -133,9 +135,15 @@ export async function handleTodoCompleteAction(params: {
 
   if (matches.length === 1) {
     await completeTodo(matches[0].taskId);
+    const undoToken = registerUndoAction(userId, {
+      type: "todo_completed",
+      description: matches[0].task,
+      data: { taskId: matches[0].taskId },
+    });
     await sendTelegramMessage(
       chatId,
-      `✅ Marked as done: “${matches[0].task}”! 🎉`
+      `✅ Marked as done: “${matches[0].task}”! 🎉`,
+      buildUndoInlineKeyboard(undoToken)
     );
     return "single";
   }

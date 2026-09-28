@@ -33,6 +33,12 @@ import {
   handleMemorySaveAction,
   handleMemoryRecallAction,
 } from "./memory-handler";
+import { executeUndo } from "../undo";
+import {
+  answerTelegramCallback,
+  removeTelegramInlineKeyboard,
+  sendTelegramMessage,
+} from "../telegram";
 
 import type { UserCalendarContext } from "../pending-actions";
 
@@ -312,4 +318,23 @@ defaultRegistry
       chatId: ctx.chatId,
       messageId: ctx.messageId,
     });
+  })
+  .registerCallback("undo", async (ctx) => {
+    const parts = ctx.callbackData.split(":");
+    const token = parts[1];
+    if (!token) {
+      await answerTelegramCallback(ctx.callbackId, "Invalid undo request.");
+      return true;
+    }
+    const result = await executeUndo(token, ctx.userId);
+    await answerTelegramCallback(
+      ctx.callbackId,
+      result.success ? "Action undone!" : "Could not undo."
+    );
+    if (result.success) {
+      await removeTelegramInlineKeyboard(ctx.chatId, ctx.messageId);
+    }
+    await sendTelegramMessage(ctx.chatId, result.message);
+    return true;
   });
+
