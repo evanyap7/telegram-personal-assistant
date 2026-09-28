@@ -133,6 +133,25 @@ const intentSchema = z.union([
     query: z.string().min(1).max(200),
   }),
   z.object({
+    action: z.literal("recurring_add"),
+    type: z.enum(["subscription", "recurring_task"]),
+    title: z.string().min(1).max(200),
+    frequency: z.enum(["daily", "weekly", "monthly", "yearly"]),
+    amount: z.number().positive().optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    category: z.string().min(1).max(50).optional(),
+    dayOfMonth: z.number().int().min(1).max(31).optional(),
+    dayOfWeek: z.number().int().min(0).max(6).optional(),
+  }),
+  z.object({
+    action: z.literal("recurring_view"),
+  }),
+  z.object({
+    action: z.literal("budget_set"),
+    amount: z.number().positive(),
+    category: z.string().min(1).max(50).optional(),
+  }),
+  z.object({
     action: z.literal("finance_delete_search"),
     query: z.string().max(200).optional(),
     transactionId: z.string().optional(),
@@ -466,7 +485,17 @@ Supported actions:
 12. calendar_move
 13. finance_modify
 14. calendar_batch_add
-15. unknown
+15. calendar_reschedule
+16. calendar_free_slots
+17. finance_query
+18. split_bill
+19. iou_summary
+20. memory_save
+21. memory_recall
+22. recurring_add
+23. recurring_view
+24. budget_set
+25. unknown
 
 Finance entry:
 {
@@ -617,6 +646,91 @@ Calendar move or switch (ONLY for an existing event that has already been create
   "end": "YYYY-MM-DDTHH:mm:ss+08:00"
 }
 
+Reschedule an EXISTING calendar event (change its date and/or time):
+{
+  "action": "calendar_reschedule",
+  "calendarName": "personal", "work", or "all",
+  "query": "short event title keyword",
+  "newDate": "YYYY-MM-DD (only if the date changes)",
+  "newStartTime": "HH:mm (24-hour)",
+  "newEndTime": "HH:mm (24-hour, optional)",
+  "durationMinutes": optional positive integer
+}
+
+Find free time slots:
+{
+  "action": "calendar_free_slots",
+  "calendarName": "personal", "work", or "all",
+  "timeframe": "today", "tomorrow", or "specific",
+  "date": "YYYY-MM-DD (only when timeframe is specific)",
+  "minDurationMinutes": 30
+}
+
+Finance query about a specific merchant, category, or month:
+{
+  "action": "finance_query",
+  "merchant": "optional merchant name",
+  "category": "optional category",
+  "month": "optional month phrase, e.g. September, last month, this month",
+  "type": "income" or "expense" (optional)
+}
+
+Split a bill:
+{
+  "action": "split_bill",
+  "total": positive number,
+  "people": ["Me", "Alice", "Bob"],
+  "tipPercent": optional number,
+  "taxPercent": optional number,
+  "description": "optional short description",
+  "payer": "optional name of who paid (default Me)"
+}
+
+IOU / debt balances:
+{
+  "action": "iou_summary",
+  "person": "optional person name"
+}
+
+Save a personal memory / note:
+{
+  "action": "memory_save",
+  "key": "item name, e.g. locker code, Alice's birthday",
+  "value": "the detail to remember",
+  "category": "note", "contact", "fact", "preference", or "credential"
+}
+
+Recall a saved memory / note:
+{
+  "action": "memory_recall",
+  "query": "what to look up, e.g. locker code, Alice's birthday"
+}
+
+Create a recurring subscription expense or recurring task:
+{
+  "action": "recurring_add",
+  "type": "subscription" or "recurring_task",
+  "title": "e.g. Spotify, Pay rent",
+  "frequency": "daily", "weekly", "monthly", or "yearly",
+  "amount": positive number (subscriptions only),
+  "currency": "SGD",
+  "category": "optional category, e.g. Subscriptions, Utilities",
+  "dayOfMonth": 1-31 (monthly/yearly, optional),
+  "dayOfWeek": 0-6 where 0 is Sunday (weekly, optional)
+}
+
+View recurring schedules:
+{
+  "action": "recurring_view"
+}
+
+Set the monthly budget or a category spending cap:
+{
+  "action": "budget_set",
+  "amount": positive number,
+  "category": "optional category name; omit to set the overall monthly budget"
+}
+
 Unknown:
 {
   "action": "unknown",
@@ -697,10 +811,13 @@ Calendar view rules:
 Calendar reschedule rules:
 - If the user asks to move, reschedule, postpone, push, delay, or shift an existing calendar event (e.g. "move gym tomorrow to 5pm", "reschedule dental appointment to Friday 3pm", "push team sync by 1 hour", "postpone lunch with Alex to 1:30pm"), return calendar_reschedule.
 - Extract query (the event name/keyword), newDate (if moving date), newStartTime (HH:mm 24-hr format), newEndTime, and durationMinutes.
+- "move my gym session to 5pm tomorrow" -> calendar_reschedule with query "gym", newDate of tomorrow, newStartTime "17:00". It is NOT calendar_add: words like move/reschedule/push/postpone/shift refer to an event that already exists.
+- Exception: while an active pending calendar confirmation exists, adjustments to that pending draft stay calendar_add (see Contextual Reference Rules).
 
 Calendar free slots rules:
 - If the user asks when they are free, asks for open or available slots, or wants to check free time (e.g. "when am I free today?", "find free slots tomorrow", "do I have 1 hour free on Friday?", "open slots today"), return calendar_free_slots.
 - Extract timeframe ("today", "tomorrow", "specific"), date, and minDurationMinutes (default 30).
+- "when am I free tomorrow?" -> calendar_free_slots with timeframe "tomorrow". It is NOT calendar_view: calendar_view lists events, calendar_free_slots lists the gaps between them.
 
 Finance summary rules:
 - If the user asks for general spending summary, expense total, how much they spent, or budget overview, return finance_summary.
@@ -720,11 +837,27 @@ Bill split and IOU rules:
 - If the user asks to split a bill, dinner, meal, or shared expense (e.g. "split $80 dinner with Alex and Ben", "paid $120 for lunch, split among 4 people", "split $60 with Sarah"), return split_bill.
 - Extract total, list of people (names or 'Me' plus friends), tipPercent, taxPercent, and description.
 - If the user asks who owes them, what they owe, debts, or IOU balance (e.g. "who owes me money?", "what do I owe Alex?", "show my debts", "IOU summary"), return iou_summary.
+- "split $60 bill with Alice and Bob" -> split_bill with total 60, people ["Me", "Alice", "Bob"]. It is NOT finance_add and NOT unknown.
+- "who owes me money?" -> iou_summary with no person.
 
 Memory and personal notes rules:
 - If the user asks you to remember, save, or store a note, fact, contact, password/code, or preference (e.g. "remember that my locker code is 1234", "save note: wifi password is ...", "remember Alex's email is alex@gmail.com", "save contact Sarah: 91234567"), return memory_save.
 - Extract key (the item name/subject, e.g. "locker code", "wifi password", "Alex"), value (the secret or detail), and category ("credential", "contact", "preference", or "note").
 - If the user asks what they noted or asks to recall information (e.g. "what is my locker code?", "what did I note about wifi?", "recall Alex's contact", "show my notes about ..."), return memory_recall.
+- Questions about personal facts the user may have saved (e.g. "what is Alice's birthday?", "what's my wifi password?") are memory_recall, NOT unknown.
+- "remember that Alice's birthday is June 15" -> memory_save with key "Alice's birthday", value "June 15", category "fact".
+
+Recurring schedule rules:
+- If the user wants something to repeat on a schedule (words like "every month", "every week", "every day", "monthly", "weekly", "yearly", "on the 1st of each month", "every Monday"), return recurring_add, NOT todo_add or finance_add.
+- A repeating payment or subscription (e.g. "Spotify $11.98 every month", "log my phone bill $30 monthly on the 5th") is type "subscription" with amount.
+- A repeating chore or reminder (e.g. "remind me to pay rent on the 1st every month", "water the plants every Sunday") is type "recurring_task".
+- "remind me to pay rent on the 1st every month" -> recurring_add with type "recurring_task", title "Pay rent", frequency "monthly", dayOfMonth 1.
+- "show my subscriptions", "list recurring", "what recurring tasks do I have" -> recurring_view.
+
+Budget setting rules:
+- "set my budget to $600", "change monthly budget to 600", "my budget is $450 a month" -> budget_set with amount and no category.
+- "cap dining at $150", "set transport budget to $80", "limit shopping to $100 a month" -> budget_set with amount and category.
+- Asking to VIEW the budget is not budget_set.
 
 To-do rules:
 - If the user asks to add something to their to-do list, tasks, reminder, or "todo: ...", return todo_add.

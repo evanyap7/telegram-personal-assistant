@@ -1,5 +1,5 @@
 import { getUpcomingSchedule, type ScheduleEventItem } from "./calendar";
-import { listTodos, type TodoItem, getSingaporeTodayDate } from "./todos";
+import { listTodos, type TodoItem } from "./todos";
 import { getMonthlyBudgetStatus, type MonthlyBudgetStatus } from "./budget";
 import {
   getFinanceSummary,
@@ -67,11 +67,6 @@ function getSingaporeTomorrowBounds(): {
     month: "2-digit",
     day: "2-digit",
   });
-  const parts = sgFormatter.formatToParts(now);
-  const year = Number(parts.find((p) => p.type === "year")?.value);
-  const month = Number(parts.find((p) => p.type === "month")?.value);
-  const day = Number(parts.find((p) => p.type === "day")?.value);
-
   // Tomorrow
   const tParts = sgFormatter.formatToParts(new Date(now.getTime() + 24 * 60 * 60 * 1000));
   const tYear = Number(tParts.find((p) => p.type === "year")?.value);

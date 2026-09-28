@@ -5,6 +5,7 @@ import {
   type MemoryCategory,
 } from "@/lib/memory";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { isSecretBoxConfigured } from "@/lib/secret-box";
 
 export async function handleMemorySaveAction(params: {
   chatId: number;
@@ -31,10 +32,19 @@ export async function handleMemorySaveAction(params: {
         ? "⭐"
         : "🧠";
 
-    await sendTelegramMessage(
-      chatId,
-      `✅ *Saved to Memory!*\n\n${catBadge} *${record.key}*: ${record.value}`
-    );
+    const isCredential = record.category === "credential";
+    const lines = [
+      "✅ *Saved to Memory!*",
+      "",
+      `${catBadge} *${record.key}*: ${isCredential ? "••••" : record.value}`,
+    ];
+    if (isCredential && !isSecretBoxConfigured()) {
+      lines.push(
+        "",
+        "⚠️ Stored unencrypted: set `MEMORY_ENCRYPTION_KEY` in your environment to encrypt saved credentials."
+      );
+    }
+    await sendTelegramMessage(chatId, lines.join("\n"));
   } catch (err) {
     console.error("Failed to save memory:", err);
     await sendTelegramMessage(

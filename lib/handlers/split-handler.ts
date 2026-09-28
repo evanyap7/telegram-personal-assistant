@@ -77,7 +77,7 @@ export async function handleSplitBillAction(params: {
 
         if (addedTxn.budgetStatus?.hasBudget) {
           personalExpenseLoggedNote += `\n${addedTxn.budgetStatus.formattedNotice}`;
-          if (addedTxn.budgetStatus.isOverBudget) {
+          if (addedTxn.budgetStatus.thresholdCrossed === 100) {
             personalExpenseLoggedNote += `\n🚨 Alert: You have exceeded 100% of your monthly budget!`;
           } else if (addedTxn.budgetStatus.thresholdCrossed === 80) {
             personalExpenseLoggedNote += `\n⚠️ Alert: You have reached 80% of your monthly budget!`;

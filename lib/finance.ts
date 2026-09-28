@@ -1,4 +1,5 @@
 import { getSheetsClient, withExponentialBackoff } from "./google";
+import { deleteSheetRows } from "./sheet-rows";
 import { maskSensitiveFinancialData } from "./security";
 import { parseSingaporeDate } from "./date-parser";
 import { getMonthlyBudgetStatus, type MonthlyBudgetStatus } from "./budget";
@@ -468,7 +469,13 @@ export async function addTransaction(input: TransactionInput): Promise<{
 
   let budgetStatus: MonthlyBudgetStatus | undefined = undefined;
   try {
-    budgetStatus = await getMonthlyBudgetStatus(targetSheet, dateObj);
+    budgetStatus = await getMonthlyBudgetStatus(
+      targetSheet,
+      dateObj,
+      input.type === "expense"
+        ? { amount: Number(input.amount) || 0, category: input.category }
+        : undefined
+    );
   } catch (err) {
     console.warn("Could not calculate budget status after adding transaction:", err);
   }
@@ -532,7 +539,13 @@ export async function addTransactionsBatch(
 
     // Compute updated budget status for this sheet
     try {
-      const budgetStatus = await getMonthlyBudgetStatus(sheetName);
+      const addedExpense = rows.reduce(
+        (sum, row) => (row[2] === "expense" ? sum + (Number(row[3]) || 0) : sum),
+        0
+      );
+      const budgetStatus = await getMonthlyBudgetStatus(sheetName, undefined, {
+        amount: addedExpense,
+      });
       for (const res of results) {
         if (res.sheetName === sheetName) {
           res.budgetStatus = budgetStatus;
@@ -1151,6 +1164,50 @@ export async function markUpdateFailed(
     "",
     errorMessage.slice(0, 500),
   ]);
+}
+
+/**
+ * Prunes UpdateLog rows that only exist for short-term idempotency:
+ * numeric Telegram update IDs (Telegram stops retrying within a day) and
+ * leave-now notice keys. External receipt IDs (Gmail message IDs etc.) are
+ * kept forever because they prevent old receipts from being imported twice.
+ */
+export async function pruneUpdateLog(
+  daysToKeep = 7
+): Promise<{ prunedCount: number; remainingCount: number }> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A2:C`,
+    })
+  );
+
+  const rows = response.data.values ?? [];
+  const cutoffMs = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+  const pruneRowNumbers: number[] = [];
+
+  rows.forEach((row, index) => {
+    const id = String(row[0] ?? "");
+    const isShortLived = /^\d{1,12}$/.test(id) || id.startsWith("leave_now:");
+    const startedMs = new Date(row[2]).getTime();
+    if (isShortLived && !Number.isNaN(startedMs) && startedMs < cutoffMs) {
+      pruneRowNumbers.push(index + 2);
+    }
+  });
+
+  await deleteSheetRows({
+    spreadsheetId,
+    sheetTitle: UPDATE_LOG_SHEET,
+    rowNumbers: pruneRowNumbers,
+  });
+
+  return {
+    prunedCount: pruneRowNumbers.length,
+    remainingCount: rows.length - pruneRowNumbers.length,
+  };
 }
 
 export function parseSwipeReplyTransactionUpdate(

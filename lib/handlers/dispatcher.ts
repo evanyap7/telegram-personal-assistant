@@ -12,6 +12,7 @@ import {
   handleCalendarBatchAddAction,
   handleCalendarDeleteSearchAction,
   handleCalendarRescheduleAction,
+  handleCalendarRescheduleCallback,
   handleCalendarFreeSlotsAction,
 } from "./calendar-handler";
 import {
@@ -33,6 +34,12 @@ import {
   handleMemorySaveAction,
   handleMemoryRecallAction,
 } from "./memory-handler";
+import {
+  handleRecurringAddAction,
+  handleRecurringViewAction,
+  handleRecurringToggleCallback,
+} from "./recurring-handler";
+import { handleBudgetSetAction } from "./budget-handler";
 import { executeUndo } from "../undo";
 import { logHabitDone } from "../habits";
 import {
@@ -216,9 +223,10 @@ defaultRegistry
   .registerIntent("calendar_reschedule", async (ctx, intent) => {
     await handleCalendarRescheduleAction({
       chatId: ctx.chatId,
+      userId: ctx.userId,
       intent,
     });
-    return { completionStatus: "calendar_reschedule" };
+    return { completionStatus: "calendar_reschedule_prompt" };
   })
   .registerIntent("calendar_free_slots", async (ctx, intent) => {
     await handleCalendarFreeSlotsAction({
@@ -247,6 +255,7 @@ defaultRegistry
   .registerIntent("todo_complete", async (ctx, intent) => {
     await handleTodoCompleteAction({
       chatId: ctx.chatId,
+      userId: ctx.userId,
       query: intent.query,
     });
     return { completionStatus: "todo_complete_natural_language" };
@@ -308,6 +317,59 @@ defaultRegistry
     });
     return { completionStatus: "memory_recall" };
   })
+  .registerIntent("recurring_add", async (ctx, intent) => {
+    await handleRecurringAddAction({
+      chatId: ctx.chatId,
+      intent: {
+        type: intent.type,
+        title: intent.title,
+        frequency: intent.frequency,
+        amount: intent.amount,
+        currency: intent.currency,
+        category: intent.category,
+        dayOfMonth: intent.dayOfMonth,
+        dayOfWeek: intent.dayOfWeek,
+      },
+    });
+    return { completionStatus: "recurring_add" };
+  })
+  .registerIntent("recurring_view", async (ctx) => {
+    await handleRecurringViewAction({ chatId: ctx.chatId });
+    return { completionStatus: "recurring_view" };
+  })
+  .registerIntent("budget_set", async (ctx, intent) => {
+    await handleBudgetSetAction({
+      chatId: ctx.chatId,
+      intent: { amount: intent.amount, category: intent.category },
+    });
+    return { completionStatus: "budget_set" };
+  })
+  .registerCallback("cal_resched_yes", (ctx) =>
+    handleCalendarRescheduleCallback({
+      callbackId: ctx.callbackId,
+      callbackData: ctx.callbackData,
+      userId: ctx.userId,
+      chatId: ctx.chatId,
+      messageId: ctx.messageId,
+    })
+  )
+  .registerCallback("cal_resched_no", (ctx) =>
+    handleCalendarRescheduleCallback({
+      callbackId: ctx.callbackId,
+      callbackData: ctx.callbackData,
+      userId: ctx.userId,
+      chatId: ctx.chatId,
+      messageId: ctx.messageId,
+    })
+  )
+  .registerCallback("recurring_toggle", (ctx) =>
+    handleRecurringToggleCallback({
+      callbackId: ctx.callbackId,
+      callbackData: ctx.callbackData,
+      chatId: ctx.chatId,
+      messageId: ctx.messageId,
+    })
+  )
   .registerCallback("iou_settle", async (ctx) => {
     return await handleIOUSettleCallback({
       callbackId: ctx.callbackId,

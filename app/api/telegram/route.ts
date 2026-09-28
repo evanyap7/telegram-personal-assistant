@@ -1,9 +1,7 @@
 import { parseImageAssistantIntent } from "@/lib/image-intent";
 import {
-  downloadTelegramAudio,
   downloadTelegramPhoto,
 } from "@/lib/telegram-files";
-import { transcribeTelegramVoiceNote } from "@/lib/voice-transcribe";
 import { z } from "zod";
 
 import {
@@ -12,7 +10,6 @@ import {
   deleteCalendarEvent,
   getUpcomingSchedule,
   moveCalendarEvent,
-  searchUpcomingCalendarEvents,
 } from "@/lib/calendar";
 import {
   formatScheduleAgendaView,
@@ -22,7 +19,6 @@ import {
 import {
   addTransaction,
   addTransactionsBatch,
-  FinanceSummary,
   FinanceTransaction,
   getFinanceSummary,
   getLatestTransaction,
@@ -37,13 +33,12 @@ import {
   softDeleteTransaction,
   updateTransaction,
 } from "@/lib/finance";
-import { formatBudgetSummary, isBudgetActiveForSheet } from "@/lib/budget";
+import { formatBudgetSummary } from "@/lib/budget";
 import {
   cancelActivePendingCalendarAction,
   cancelPendingCalendarAction,
   cancelPendingCalendarBatchAction,
   cancelPendingCalendarDeleteAction,
-  cancelPendingEmailDraftAction,
   cancelPendingFinanceAddAction,
   cancelPendingFinanceBatchAction,
   cancelPendingFinanceDeleteAction,
@@ -55,20 +50,15 @@ import {
   savePendingCalendarAction,
   savePendingCalendarBatchAction,
   savePendingCalendarDeleteAction,
-  savePendingCalendarSelection,
-  savePendingEmailDraftAction,
   savePendingFinanceAddAction,
   savePendingFinanceBatchAction,
   savePendingFinanceDeleteAction,
-  savePendingFinanceSelection,
   savePendingImageAction,
   savePendingTodoDeleteAction,
-  savePendingTodoSelection,
   takePendingCalendarAction,
   takePendingCalendarBatchAction,
   takePendingCalendarDeleteAction,
   takePendingCalendarSelection,
-  takePendingEmailDraftAction,
   takePendingFinanceAddAction,
   takePendingFinanceBatchAction,
   takePendingFinanceDeleteAction,
@@ -89,9 +79,7 @@ import {
   muteTodoReminder,
   snoozeTodoReminder,
   searchActiveTodos,
-  TodoItem,
 } from "@/lib/todos";
-import { createEmailDraft } from "@/lib/gmail";
 import { syncPayLahTransactions } from "@/lib/paylah-sync";
 import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-intent";
 import {
@@ -105,7 +93,7 @@ import {
   setTelegramBotCommands,
 } from "@/lib/telegram";
 import { safeCompare } from "@/lib/security";
-import { telegramUpdateSchema, type TelegramUpdate } from "@/lib/telegram-types";
+import { telegramUpdateSchema } from "@/lib/telegram-types";
 import {
   formatCalendarDate,
   formatSingaporeDateTime,
@@ -144,6 +132,13 @@ import {
   logHabitDone,
   formatHabitsSummary,
 } from "@/lib/habits";
+import { tryHandleBudgetSetCommand } from "@/lib/handlers/budget-handler";
+import {
+  handleRecurringCommand,
+  buildRecurringListMessage,
+} from "@/lib/handlers/recurring-handler";
+import { handleIOUSummaryAction } from "@/lib/handlers/split-handler";
+import { listAllMemories } from "@/lib/memory";
 
 
 const financeAddSchema = z.object({
@@ -162,31 +157,72 @@ function getBotDashboardMarkup(): InlineKeyboardMarkup {
         { text: "📆 Upcoming Events", callback_data: "menu:calendar" },
       ],
       [
+        { text: "🕐 Free Slots Today", callback_data: "menu:freeslots" },
         { text: "🔔 Check Reminders", callback_data: "menu:reminders" },
+      ],
+      [
         { text: "📋 Active Tasks", callback_data: "menu:todos" },
-      ],
-      [
         { text: "📌 Today's Tasks", callback_data: "menu:todos_today" },
-        { text: "💰 Spending Summary", callback_data: "menu:finance_summary" },
       ],
       [
-        { text: "🎯 Monthly Budget", callback_data: "menu:budget" },
+        { text: "🔥 Habits", callback_data: "menu:habits" },
+        { text: "🔁 Recurring", callback_data: "menu:recurring" },
+      ],
+      [
+        { text: "💰 Spending Summary", callback_data: "menu:finance_summary" },
         { text: "💳 Recent Expenses", callback_data: "menu:finance_list" },
       ],
       [
+        { text: "🎯 Monthly Budget", callback_data: "menu:budget" },
+        { text: "🤝 IOUs", callback_data: "menu:owed" },
+      ],
+      [
+        { text: "📤 Export CSV", callback_data: "menu:export" },
         { text: "🔄 Sync DBS & Grab", callback_data: "menu:sync" },
+      ],
+      [
+        { text: "📬 Inbox Triage", callback_data: "menu:inbox" },
+        { text: "🧠 Memory", callback_data: "menu:memory" },
+      ],
+      [
         { text: "🎤 Voice Notes Guide", callback_data: "menu:guide_voice" },
-      ],
-      [
         { text: "📸 Photos & OCR Guide", callback_data: "menu:guide_image" },
-        { text: "📖 Full Guide & Tips", callback_data: "menu:guide_all" },
       ],
       [
+        { text: "📖 Full Guide & Tips", callback_data: "menu:guide_all" },
         { text: "⚙️ Sync Commands", callback_data: "menu:set_commands" },
       ],
     ],
   };
 }
+
+const BOT_COMMANDS: Array<{ command: string; description: string }> = [
+  { command: "menu", description: "Open interactive inline buttons dashboard" },
+  { command: "agenda", description: "View today's schedule" },
+  { command: "reminders", description: "Check upcoming event reminders" },
+  { command: "todo", description: "View active to-do list" },
+  { command: "todotoday", description: "View today's to-do list" },
+  { command: "calendar", description: "Calendar commands & upcoming events" },
+  { command: "freeslots", description: "Find available free time windows" },
+  { command: "finance", description: "Finance commands & summary" },
+  { command: "budget", description: "Budget status (/budget set 600, /budget cap dining 150)" },
+  { command: "finance_summary", description: "Monthly spending & breakdown" },
+  { command: "finance_list", description: "Recent active transactions" },
+  { command: "recurring", description: "Recurring subscriptions & tasks" },
+  { command: "habits", description: "Habit streaks (/habit add, /habit done)" },
+  { command: "export", description: "Export monthly transactions CSV file" },
+  { command: "split", description: "Split bill (e.g. /split 80 Alex Ben)" },
+  { command: "owed", description: "View who owes you and IOU balances" },
+  { command: "inbox", description: "Triage unread Gmail inbox" },
+  { command: "remember", description: "Save note or fact (e.g. /remember locker: 1234)" },
+  { command: "recall", description: "Recall note or fact (e.g. /recall locker)" },
+  { command: "sync", description: "Sync recent DBS & Grab transactions" },
+  { command: "help", description: "Show help and full guide" },
+];
+
+const BACK_TO_DASHBOARD: InlineKeyboardMarkup = {
+  inline_keyboard: [[{ text: "« Back to Dashboard", callback_data: "menu:home" }]],
+};
 
 function getBotDashboardText(): string {
   return [
@@ -194,10 +230,11 @@ function getBotDashboardText(): string {
     "",
     "Tap any button below to immediately run a function or view your data:",
     "",
-    "• 📅 *Calendar*: Daily agenda, 7-day schedule & reminder checks",
-    "• 📝 *To-Dos*: Interactive task list with 1-tap complete buttons",
-    "• 💰 *Finances*: Monthly spending breakdown & recent transaction log",
+    "• 📅 *Calendar*: Daily agenda, 7-day schedule, free slots & reminders",
+    "• 📝 *To-Dos & Habits*: Task list, habit streaks & recurring tasks",
+    "• 💰 *Finances*: Spending breakdown, budget, IOUs & CSV export",
     "• 🔄 *Receipt Sync*: Automatically sync DBS & Grab from Gmail",
+    "• 📬 *Inbox & Memory*: Gmail triage and your saved notes",
     "• 🎤 *Voice & OCR*: Speak voice notes or send screenshots anytime!",
   ].join("\n");
 }
@@ -218,6 +255,13 @@ function helpText() {
     "• how much did I spend this month?",
     "• delete my coffee expense",
     "• delete gym tomorrow from personal",
+    "• move my gym session to 5pm tomorrow",
+    "• when am I free tomorrow?",
+    "• split $60 bill with Alice and Bob",
+    "• who owes me money?",
+    "• remember that Alice's birthday is June 15",
+    "• remind me to pay rent on the 1st every month",
+    "• set my monthly budget to $600",
     "",
     "You can send a screenshot or photo with a caption:",
     "• [calendar screenshot] Add these dates to my personal calendar",
@@ -232,6 +276,14 @@ function helpText() {
     "• /todo today — View today's tasks",
     "• /finance summary — View monthly spending breakdown",
     "• /finance list — View last 10 transactions",
+    "• /budget set 600, /budget cap dining 150 — Set budget & category caps",
+    "• /recurring — Recurring subscriptions & tasks",
+    "• /habits — Habit streaks",
+    "• /freeslots — Free time today (or /freeslots tomorrow)",
+    "• /split, /owed — Split bills & IOU balances",
+    "• /remember, /recall — Personal memory notes",
+    "• /inbox — Triage unread Gmail",
+    "• /export — Monthly transactions CSV",
     "• /sync (or /grab, /dbs, /paylah) — Sync recent DBS & Grab receipts from Gmail",
     "• /setcommands — Update Telegram command menu",
     "• /help — Show this help message",
@@ -371,7 +423,7 @@ async function handleCalendarCreateCallback(input: {
 
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
-  const undoToken = registerUndoAction(input.userId, {
+  const undoToken = await registerUndoAction(input.userId, {
     type: "calendar_event_created",
     description: pendingAction.payload.title,
     data: {
@@ -1071,7 +1123,7 @@ async function handleTodoDoneCallback(input: {
   await removeTelegramInlineKeyboard(input.chatId, input.messageId);
 
   const reminderNote = result.todo.remindIntervalMinutes ? " (Reminders stopped)" : "";
-  const undoToken = registerUndoAction(input.userId, {
+  const undoToken = await registerUndoAction(input.userId, {
     type: "todo_completed",
     description: result.todo.task,
     data: { taskId: result.todo.taskId },
@@ -1222,6 +1274,47 @@ async function handleTodoSelectionCallback(input: {
   );
 
   await markUpdateCompleted(input.updateId, "todo_delete_confirmation_prompted");
+}
+
+async function sendMonthlyExport(
+  chatId: number,
+  monthArg?: string,
+  replyMarkup?: InlineKeyboardMarkup
+): Promise<void> {
+  await sendTelegramChatAction(chatId, "upload_document");
+  try {
+    const result = await generateMonthlyCsvExport(monthArg);
+    if (result.rowCount === 0) {
+      await sendTelegramMessage(
+        chatId,
+        `ℹ️ No transactions found for ${result.monthName} to export.`,
+        replyMarkup
+      );
+    } else {
+      const caption = [
+        `📊 *Transaction Export (${result.monthName})*`,
+        `💰 Total Income: $${result.totalIncome.toFixed(2)} SGD`,
+        `💸 Total Expenses: $${result.totalExpense.toFixed(2)} SGD`,
+        `📈 Net Balance: ${
+          result.netSavings >= 0 ? "+" : ""
+        }$${result.netSavings.toFixed(2)} SGD`,
+        `📝 Records: ${result.rowCount}`,
+      ].join("\n");
+      await sendTelegramDocument(
+        chatId,
+        result.csvContent,
+        result.filename,
+        caption
+      );
+    }
+  } catch (err) {
+    console.error("Export failed:", err);
+    await sendTelegramMessage(
+      chatId,
+      "⚠️ Could not export transactions. Check that Google Sheets is configured.",
+      replyMarkup
+    );
+  }
 }
 
 async function handleMenuCallback(input: {
@@ -1515,22 +1608,94 @@ async function handleMenuCallback(input: {
     return;
   }
 
+  if (subAction === "freeslots") {
+    await answerTelegramCallback(callbackId, "Finding free time...");
+    await handleCalendarFreeSlotsAction({ chatId, intent: { timeframe: "today" } });
+    await markUpdateCompleted(input.updateId, "menu_freeslots");
+    return;
+  }
+
+  if (subAction === "habits") {
+    await answerTelegramCallback(callbackId, "Loading habits...");
+    const summary = formatHabitsSummary(await listHabits());
+    await sendTelegramMessage(chatId, summary.text, {
+      inline_keyboard: [...summary.buttons, ...BACK_TO_DASHBOARD.inline_keyboard],
+    });
+    await markUpdateCompleted(input.updateId, "menu_habits");
+    return;
+  }
+
+  if (subAction === "recurring") {
+    await answerTelegramCallback(callbackId, "Loading recurring schedules...");
+    const { text, replyMarkup } = await buildRecurringListMessage();
+    await sendTelegramMessage(chatId, text, {
+      inline_keyboard: [
+        ...replyMarkup.inline_keyboard,
+        ...BACK_TO_DASHBOARD.inline_keyboard,
+      ],
+    });
+    await markUpdateCompleted(input.updateId, "menu_recurring");
+    return;
+  }
+
+  if (subAction === "owed") {
+    await answerTelegramCallback(callbackId, "Loading IOU balances...");
+    await handleIOUSummaryAction({ chatId });
+    await markUpdateCompleted(input.updateId, "menu_owed");
+    return;
+  }
+
+  if (subAction === "export") {
+    await answerTelegramCallback(callbackId, "Preparing CSV export...");
+    await sendMonthlyExport(chatId, undefined, BACK_TO_DASHBOARD);
+    await markUpdateCompleted(input.updateId, "menu_export");
+    return;
+  }
+
+  if (subAction === "inbox") {
+    await answerTelegramCallback(callbackId, "Checking Gmail inbox...");
+    try {
+      const triage = await triageUnreadInbox(5);
+      await sendTelegramMessage(chatId, triage.formattedSummary, BACK_TO_DASHBOARD);
+    } catch (err) {
+      console.error("Failed to triage inbox:", err);
+      await sendTelegramMessage(
+        chatId,
+        "⚠️ Could not check Gmail inbox. Ensure Google API credentials have Gmail scopes enabled.",
+        BACK_TO_DASHBOARD
+      );
+    }
+    await markUpdateCompleted(input.updateId, "menu_inbox");
+    return;
+  }
+
+  if (subAction === "memory") {
+    await answerTelegramCallback(callbackId, "Loading saved notes...");
+    const memories = await listAllMemories();
+    const lines =
+      memories.length === 0
+        ? [
+            "🧠 *Memory*",
+            "",
+            "Nothing saved yet. Try “remember that my locker code is 1234” or `/remember wifi: hunter2`.",
+          ]
+        : [
+            `🧠 *Memory* (${memories.length} saved)`,
+            "",
+            ...memories.slice(-20).reverse().map((m) =>
+              m.category === "credential"
+                ? `🔐 *${m.key}*: ••••  _(use /recall ${m.key})_`
+                : `• *${m.key}*: ${m.value}`
+            ),
+          ];
+    await sendTelegramMessage(chatId, lines.join("\n"), BACK_TO_DASHBOARD);
+    await markUpdateCompleted(input.updateId, "menu_memory");
+    return;
+  }
+
   if (subAction === "set_commands") {
     await answerTelegramCallback(callbackId, "Updating command menu...");
-    await setTelegramBotCommands([
-      { command: "menu", description: "Open interactive inline buttons dashboard" },
-      { command: "agenda", description: "View today's schedule" },
-      { command: "reminders", description: "Check upcoming event reminders" },
-      { command: "todo", description: "View active to-do list" },
-      { command: "todotoday", description: "View today's to-do list" },
-      { command: "calendar", description: "Calendar commands & upcoming events" },
-      { command: "finance", description: "Finance commands & summary" },
-      { command: "budget", description: "View monthly budget status ($500 cap)" },
-      { command: "finance_summary", description: "Monthly spending & breakdown" },
-      { command: "finance_list", description: "Recent active transactions" },
-      { command: "sync", description: "Sync recent DBS & Grab transactions" },
-      { command: "help", description: "Show help and full guide" },
-    ]);
+    await setTelegramBotCommands(BOT_COMMANDS);
     await sendTelegramMessage(
       chatId,
       "✅ Telegram bot command menu has been updated! Tap Menu or type / to see the commands.",
@@ -3012,27 +3177,7 @@ export async function POST(request: Request) {
     }
 
     if (text === "/setcommands") {
-      await setTelegramBotCommands([
-        { command: "menu", description: "Open interactive inline buttons dashboard" },
-        { command: "agenda", description: "View today's schedule" },
-        { command: "reminders", description: "Check upcoming event reminders" },
-        { command: "todo", description: "View active to-do list" },
-        { command: "todotoday", description: "View today's to-do list" },
-        { command: "calendar", description: "Calendar commands & upcoming events" },
-        { command: "freeslots", description: "Find available free time windows" },
-        { command: "finance", description: "Finance commands & summary" },
-        { command: "budget", description: "View monthly budget status ($500 cap)" },
-        { command: "finance_summary", description: "Monthly spending & breakdown" },
-        { command: "finance_list", description: "Recent active transactions" },
-        { command: "export", description: "Export monthly transactions CSV file" },
-        { command: "split", description: "Split bill (e.g. /split 80 Alex Ben)" },
-        { command: "owed", description: "View who owes you and IOU balances" },
-        { command: "inbox", description: "Triage unread Gmail inbox" },
-        { command: "remember", description: "Save note or fact (e.g. /remember locker: 1234)" },
-        { command: "recall", description: "Recall note or fact (e.g. /recall locker)" },
-        { command: "sync", description: "Sync recent DBS & Grab transactions" },
-        { command: "help", description: "Show help and full guide" },
-      ]);
+      await setTelegramBotCommands(BOT_COMMANDS);
 
       await sendTelegramMessage(
         chatId,
@@ -3315,6 +3460,11 @@ export async function POST(request: Request) {
       text === "/finance budget" ||
       text.startsWith("/finance budget ")
     ) {
+      if (await tryHandleBudgetSetCommand({ chatId, text })) {
+        await markUpdateCompleted(updateId, "budget_set_command");
+        return Response.json({ ok: true });
+      }
+
       const monthArg = text
         .replace("/finance budget", "")
         .replace("/budget", "")
@@ -3330,6 +3480,19 @@ export async function POST(request: Request) {
     if (text === "/split" || text.startsWith("/split ")) {
       await handleSplitCommand({ chatId, text });
       await markUpdateCompleted(updateId, "split_command");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/recurring" ||
+      text.startsWith("/recurring ") ||
+      text === "/subscriptions"
+    ) {
+      await handleRecurringCommand({
+        chatId,
+        text: text === "/subscriptions" ? "/recurring" : text,
+      });
+      await markUpdateCompleted(updateId, "recurring_command");
       return Response.json({ ok: true });
     }
 
@@ -3408,38 +3571,7 @@ export async function POST(request: Request) {
       lowerText === "export csv"
     ) {
       const monthArg = text.replace("/export", "").trim() || undefined;
-      await sendTelegramChatAction(chatId, "upload_document" as any);
-      try {
-        const result = await generateMonthlyCsvExport(monthArg);
-        if (result.rowCount === 0) {
-          await sendTelegramMessage(
-            chatId,
-            `ℹ️ No transactions found for ${result.monthName} to export.`
-          );
-        } else {
-          const caption = [
-            `📊 *Transaction Export (${result.monthName})*`,
-            `💰 Total Income: $${result.totalIncome.toFixed(2)} SGD`,
-            `💸 Total Expenses: $${result.totalExpense.toFixed(2)} SGD`,
-            `📈 Net Balance: ${
-              result.netSavings >= 0 ? "+" : ""
-            }$${result.netSavings.toFixed(2)} SGD`,
-            `📝 Records: ${result.rowCount}`,
-          ].join("\n");
-          await sendTelegramDocument(
-            chatId,
-            result.csvContent,
-            result.filename,
-            caption
-          );
-        }
-      } catch (err) {
-        console.error("Export failed:", err);
-        await sendTelegramMessage(
-          chatId,
-          "⚠️ Could not export transactions. Check that Google Sheets is configured."
-        );
-      }
+      await sendMonthlyExport(chatId, monthArg);
       await markUpdateCompleted(updateId, "export_command");
       return Response.json({ ok: true });
     }
@@ -3671,15 +3803,18 @@ export async function POST(request: Request) {
         : undefined,
     };
 
+    const intentStartAt = Date.now();
+    const intent = await parseAssistantIntent(text, conversationContext);
+
+    // Logged after parsing so saved credentials never reach the ChatHistory sheet.
+    const isCredentialSave =
+      intent.action === "memory_save" && intent.category === "credential";
     logChatMessage({
       messageId: message.message_id,
       userId: message.from.id,
       role: "user",
-      text,
+      text: isCredentialSave ? `[saved credential: ${intent.key}]` : text,
     }).catch(() => {});
-
-    const intentStartAt = Date.now();
-    const intent = await parseAssistantIntent(text, conversationContext);
 
     log("telegram.intent.parsed", {
       updateId,

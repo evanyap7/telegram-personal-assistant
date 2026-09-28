@@ -129,8 +129,17 @@ Configure your cron provider (e.g. Vercel Cron or [cron-job.org](https://cron-jo
 | `/api/cron/briefing?type=morning` | `0 0 * * *` (8:00 AM SGT) | Daily morning briefing (events, tasks, budget, emails) |
 | `/api/cron/briefing?type=evening` | `0 14 * * *` (10:00 PM SGT) | Daily evening recap (spending, open tasks, habits, next day event) |
 | `/api/cron/calendar-reminders` | `*/10 * * * *` | 30-min to-do nagging, upcoming event pings, leave-now travel alerts |
-| `/api/cron/recurring` | `0 1 * * *` (9:00 AM SGT) | Automatically logs due recurring subscriptions |
-| `/api/cron/cleanup` | `0 16 * * *` (12:00 AM SGT) | Prunes expired pending actions and ephemeral memory |
+| `/api/cron/recurring` | `0 1 * * *` (9:00 AM SGT) | Logs due recurring subscriptions and creates recurring tasks |
+| `/api/cron/cleanup` | `0 16 * * *` (12:00 AM SGT) | Prunes expired pending actions, old chat history, and old Telegram update IDs |
+
+`CRON_SECRET` is required: cron endpoints reject every request when it is unset.
+
+### Optional environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `MEMORY_ENCRYPTION_KEY` | Any random string (16+ chars). Encrypts `credential` memories (AES-256-GCM) before they are written to Google Sheets. Changing it makes previously saved credentials unreadable. |
+| `MONTHLY_BUDGET` | Fallback monthly budget when none is set via `/budget set`. |
 
 ---
 

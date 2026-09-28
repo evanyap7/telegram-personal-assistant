@@ -1,7 +1,8 @@
 import {
   getUpcomingSchedule,
   searchUpcomingCalendarEvents,
-  rescheduleCalendarEvent,
+  planCalendarReschedule,
+  applyCalendarReschedule,
   findFreeCalendarSlots,
   formatFreeSlotsMessage,
 } from "@/lib/calendar";
@@ -17,8 +18,15 @@ import {
   savePendingCalendarAction,
   savePendingCalendarBatchAction,
   savePendingCalendarSelection,
+  savePendingCalendarRescheduleAction,
+  takePendingCalendarRescheduleAction,
+  cancelPendingCalendarRescheduleAction,
 } from "@/lib/pending-actions";
-import { sendTelegramMessage } from "@/lib/telegram";
+import {
+  sendTelegramMessage,
+  answerTelegramCallback,
+  removeTelegramInlineKeyboard,
+} from "@/lib/telegram";
 
 export function formatSingaporeDateTime(value: string): string {
   const date = new Date(value);
@@ -324,6 +332,7 @@ export async function handleCalendarDeleteSearchAction(params: {
 
 export async function handleCalendarRescheduleAction(params: {
   chatId: number;
+  userId: number;
   intent: {
     calendarName?: "personal" | "work" | "all";
     query: string;
@@ -333,8 +342,8 @@ export async function handleCalendarRescheduleAction(params: {
     durationMinutes?: number;
   };
 }): Promise<void> {
-  const { chatId, intent } = params;
-  const result = await rescheduleCalendarEvent({
+  const { chatId, userId, intent } = params;
+  const planned = await planCalendarReschedule({
     calendarName: intent.calendarName,
     query: intent.query,
     newDate: intent.newDate,
@@ -343,27 +352,91 @@ export async function handleCalendarRescheduleAction(params: {
     durationMinutes: intent.durationMinutes,
   });
 
-  if (!result.success || !result.event) {
+  if (!planned.success || !planned.plan) {
     await sendTelegramMessage(
       chatId,
-      result.error || `Could not reschedule event matching “${intent.query}”.`
+      planned.error || `Could not reschedule event matching “${intent.query}”.`
     );
     return;
   }
 
-  const lines = [
-    `📅 *Event Rescheduled!*`,
-    "",
-    `📌 *${result.event.title}*`,
-    `🗓️ *New Time*: ${formatSingaporeDateTime(result.event.start)} – ${formatSingaporeDateTime(result.event.end)}`,
-    `📂 Calendar: ${result.event.calendarName}`,
-  ];
+  const plan = planned.plan;
+  const token = await savePendingCalendarRescheduleAction({ userId, payload: plan });
 
-  if (result.event.htmlLink) {
-    lines.push(`\n🔗 [Open in Google Calendar](${result.event.htmlLink})`);
+  await sendTelegramMessage(
+    chatId,
+    [
+      "📅 *Reschedule this event?*",
+      "",
+      `📌 *${plan.title}* (${plan.calendarName})`,
+      `🕐 From: ${formatSingaporeDateTime(plan.oldStart)} – ${formatSingaporeDateTime(plan.oldEnd)}`,
+      `➡️ To: ${formatSingaporeDateTime(plan.newStart)} – ${formatSingaporeDateTime(plan.newEnd)}`,
+    ].join("\n"),
+    {
+      inline_keyboard: [
+        [
+          { text: "✅ Reschedule", callback_data: `cal_resched_yes:${token}` },
+          { text: "❌ Cancel", callback_data: `cal_resched_no:${token}` },
+        ],
+      ],
+    }
+  );
+}
+
+export async function handleCalendarRescheduleCallback(params: {
+  callbackId: string;
+  callbackData: string;
+  userId: number;
+  chatId: number;
+  messageId: number;
+}): Promise<boolean> {
+  const [action, token] = params.callbackData.split(":");
+  if (!token) {
+    await answerTelegramCallback(params.callbackId, "This action is invalid.");
+    return true;
   }
 
-  await sendTelegramMessage(chatId, lines.join("\n"));
+  if (action === "cal_resched_no") {
+    await cancelPendingCalendarRescheduleAction(token, params.userId);
+    await answerTelegramCallback(params.callbackId, "Cancelled.");
+    await removeTelegramInlineKeyboard(params.chatId, params.messageId);
+    await sendTelegramMessage(params.chatId, "Okay, I left the event unchanged.");
+    return true;
+  }
+
+  const plan = await takePendingCalendarRescheduleAction(token, params.userId);
+  if (!plan) {
+    await answerTelegramCallback(
+      params.callbackId,
+      "This confirmation has expired or was already used."
+    );
+    return true;
+  }
+
+  await answerTelegramCallback(params.callbackId, "Rescheduling...");
+  await removeTelegramInlineKeyboard(params.chatId, params.messageId);
+
+  try {
+    const event = await applyCalendarReschedule(plan);
+    const lines = [
+      `📅 *Event Rescheduled!*`,
+      "",
+      `📌 *${event.title}*`,
+      `🗓️ *New Time*: ${formatSingaporeDateTime(event.start)} – ${formatSingaporeDateTime(event.end)}`,
+      `📂 Calendar: ${event.calendarName}`,
+    ];
+    if (event.htmlLink) {
+      lines.push(`\n🔗 [Open in Google Calendar](${event.htmlLink})`);
+    }
+    await sendTelegramMessage(params.chatId, lines.join("\n"));
+  } catch (err) {
+    console.error("Failed to reschedule calendar event:", err);
+    await sendTelegramMessage(
+      params.chatId,
+      "⚠️ Could not update the event in Google Calendar. Please try again."
+    );
+  }
+  return true;
 }
 
 export async function handleCalendarFreeSlotsAction(params: {

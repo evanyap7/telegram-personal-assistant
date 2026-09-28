@@ -274,9 +274,16 @@ export function isBudgetActiveForSheet(sheetName: string): boolean {
   return yearMonth >= BUDGET_START_MONTH;
 }
 
+/**
+ * @param justAdded The expense that was just recorded, if any. When given,
+ *   `thresholdCrossed` and `categoryCapAlerts` only report thresholds that this
+ *   expense pushed spending over, so alerts fire once instead of on every
+ *   later transaction.
+ */
 export async function getMonthlyBudgetStatus(
   sheetName?: string,
-  date?: Date | string | number | null
+  date?: Date | string | number | null,
+  justAdded?: { amount: number; category?: string }
 ): Promise<MonthlyBudgetStatus> {
   const targetSheet = sheetName || getMonthSheetNameFromDate(date);
   const hasBudget = isBudgetActiveForSheet(targetSheet);
@@ -327,10 +334,18 @@ export async function getMonthlyBudgetStatus(
   const percentUsed = budget > 0 ? (totalExpenses / budget) * 100 : 0;
   const isOverBudget = remaining < 0;
 
+  const addedAmount = justAdded?.amount ?? 0;
+  const previousPercentUsed =
+    budget > 0 ? ((totalExpenses - addedAmount) / budget) * 100 : 0;
+  const crossed = (threshold: number) =>
+    justAdded
+      ? previousPercentUsed < threshold && percentUsed >= threshold
+      : percentUsed >= threshold;
+
   let thresholdCrossed: 50 | 80 | 100 | undefined;
-  if (percentUsed >= 100) thresholdCrossed = 100;
-  else if (percentUsed >= 80) thresholdCrossed = 80;
-  else if (percentUsed >= 50) thresholdCrossed = 50;
+  if (crossed(100)) thresholdCrossed = 100;
+  else if (crossed(80)) thresholdCrossed = 80;
+  else if (crossed(50)) thresholdCrossed = 50;
 
   // Compute category caps status
   const categoryCaps: CategoryCapStatus[] = [];
@@ -352,11 +367,16 @@ export async function getMonthlyBudgetStatus(
       isOverCap,
     });
 
-    if (isOverCap) {
+    const justAddedToThisCategory =
+      justAdded?.category?.trim().toLowerCase() === catKey;
+    if (!justAddedToThisCategory) continue;
+    const prevCatPercent = cap > 0 ? ((spent - addedAmount) / cap) * 100 : 0;
+
+    if (isOverCap && prevCatPercent <= 100) {
       categoryCapAlerts.push(
         `🚨 Cap exceeded: ${prettyCat} $${spent.toFixed(2)} / $${cap.toFixed(2)}`
       );
-    } else if (catPercent >= 80) {
+    } else if (catPercent >= 80 && prevCatPercent < 80) {
       categoryCapAlerts.push(
         `⚠️ Near cap: ${prettyCat} at ${catPercent.toFixed(0)}% ($${spent.toFixed(2)} / $${cap.toFixed(2)})`
       );

@@ -279,19 +279,23 @@ export type RescheduleCalendarEventInput = {
   eventId?: string;
 };
 
-export async function rescheduleCalendarEvent(input: RescheduleCalendarEventInput): Promise<{
-  success: boolean;
-  event?: {
-    eventId: string;
-    title: string;
-    start: string;
-    end: string;
-    calendarName: "personal" | "work";
-    htmlLink: string | null;
-  };
-  error?: string;
-}> {
-  const calendar = getCalendarClient();
+export type CalendarReschedulePlan = {
+  calendarName: "personal" | "work";
+  eventId: string;
+  title: string;
+  oldStart: string;
+  oldEnd: string;
+  newStart: string;
+  newEnd: string;
+};
+
+/**
+ * Finds the event to reschedule and computes its new start/end without
+ * modifying anything, so the caller can ask the user to confirm first.
+ */
+export async function planCalendarReschedule(
+  input: RescheduleCalendarEventInput
+): Promise<{ success: boolean; plan?: CalendarReschedulePlan; error?: string }> {
   const calsToSearch: ("personal" | "work")[] =
     input.calendarName === "personal"
       ? ["personal"]
@@ -325,7 +329,6 @@ export async function rescheduleCalendarEvent(input: RescheduleCalendarEventInpu
     };
   }
 
-  const calendarId = getCalendarId(targetEvent.calendarName);
   const origStart = new Date(targetEvent.start);
   const origEnd = new Date(targetEvent.end);
   const origDurationMs =
@@ -371,32 +374,75 @@ export async function rescheduleCalendarEvent(input: RescheduleCalendarEventInpu
     newEndIso = new Date(startMs + origDurationMs).toISOString();
   }
 
+  if (new Date(newEndIso).getTime() <= new Date(newStartIso).getTime()) {
+    return {
+      success: false,
+      error: "The new end time must be after the new start time.",
+    };
+  }
+
+  return {
+    success: true,
+    plan: {
+      calendarName: targetEvent.calendarName,
+      eventId: targetEvent.eventId,
+      title: targetEvent.title,
+      oldStart: targetEvent.start,
+      oldEnd: targetEvent.end,
+      newStart: newStartIso,
+      newEnd: newEndIso,
+    },
+  };
+}
+
+export type RescheduledCalendarEvent = {
+  eventId: string;
+  title: string;
+  start: string;
+  end: string;
+  calendarName: "personal" | "work";
+  htmlLink: string | null;
+};
+
+export async function applyCalendarReschedule(
+  plan: CalendarReschedulePlan
+): Promise<RescheduledCalendarEvent> {
+  const calendar = getCalendarClient();
   const patched = await calendar.events.patch({
-    calendarId,
-    eventId: targetEvent.eventId,
+    calendarId: getCalendarId(plan.calendarName),
+    eventId: plan.eventId,
     requestBody: {
       start: {
-        dateTime: newStartIso,
+        dateTime: plan.newStart,
         timeZone: "Asia/Singapore",
       },
       end: {
-        dateTime: newEndIso,
+        dateTime: plan.newEnd,
         timeZone: "Asia/Singapore",
       },
     },
   });
 
   return {
-    success: true,
-    event: {
-      eventId: targetEvent.eventId,
-      title: patched.data.summary || targetEvent.title,
-      start: patched.data.start?.dateTime || newStartIso,
-      end: patched.data.end?.dateTime || newEndIso,
-      calendarName: targetEvent.calendarName,
-      htmlLink: patched.data.htmlLink || null,
-    },
+    eventId: plan.eventId,
+    title: patched.data.summary || plan.title,
+    start: patched.data.start?.dateTime || plan.newStart,
+    end: patched.data.end?.dateTime || plan.newEnd,
+    calendarName: plan.calendarName,
+    htmlLink: patched.data.htmlLink || null,
   };
+}
+
+export async function rescheduleCalendarEvent(input: RescheduleCalendarEventInput): Promise<{
+  success: boolean;
+  event?: RescheduledCalendarEvent;
+  error?: string;
+}> {
+  const planned = await planCalendarReschedule(input);
+  if (!planned.success || !planned.plan) {
+    return { success: false, error: planned.error };
+  }
+  return { success: true, event: await applyCalendarReschedule(planned.plan) };
 }
 
 export type MoveCalendarEventInput = {
