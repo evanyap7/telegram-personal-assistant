@@ -16,7 +16,8 @@
     "bench:all": "npm run bench:intent && npm run bench:cost && npm run bench:parallel",
     "test:intents": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-intents.ts",
     "test:split": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-split.ts",
-    "test:calendar": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-calendar-slots.ts"
+    "test:calendar": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-calendar-slots.ts",
+    "test:memory": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-memory.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.58",
