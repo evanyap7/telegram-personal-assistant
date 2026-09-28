@@ -6,7 +6,19 @@
     },
     {
       "path": "/api/cron/cleanup",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/briefing?type=morning",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/briefing?type=evening",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/briefing?type=weekly",
+      "schedule": "0 13 * * 0"
     }
   ]
 }
