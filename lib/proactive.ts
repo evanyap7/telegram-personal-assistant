@@ -12,6 +12,11 @@ import {
 import { sendTelegramMessage } from "./telegram";
 import { formatCalendarDate } from "./handlers/calendar-handler";
 import { triageUnreadInbox, type InboxTriageSummary } from "./inbox-triage";
+import {
+  listHabits,
+  type HabitItem,
+  getTodaySingaporeDate,
+} from "./habits";
 
 function getSingaporeDayBounds(): {
   startIso: string;
@@ -247,12 +252,13 @@ export interface EveningRecapData {
   financeSummary: FinanceSummary;
   openTodos: TodoItem[];
   tomorrowsFirstEvent?: ScheduleEventItem;
+  habits?: HabitItem[];
 }
 
 export async function aggregateEveningRecap(): Promise<EveningRecapData> {
   const { startIso, endIso } = getSingaporeTomorrowBounds();
 
-  const [financeSummary, openTodos, tomorrowsEvents] = await Promise.all([
+  const [financeSummary, openTodos, tomorrowsEvents, habits] = await Promise.all([
     getFinanceSummary("today").catch(
       () =>
         ({
@@ -272,12 +278,14 @@ export async function aggregateEveningRecap(): Promise<EveningRecapData> {
       calendarName: "all",
       maxResults: 1,
     }).catch(() => [] as ScheduleEventItem[]),
+    listHabits().catch(() => [] as HabitItem[]),
   ]);
 
   return {
     financeSummary,
     openTodos,
     tomorrowsFirstEvent: tomorrowsEvents[0],
+    habits,
   };
 }
 
@@ -332,6 +340,23 @@ export function formatEveningRecap(data: EveningRecapData): string {
     lines.push("  • Nothing scheduled yet for tomorrow morning.");
   }
 
+  // 4. Habits review
+  if (data.habits && data.habits.length > 0) {
+    lines.push("");
+    const today = getTodaySingaporeDate();
+    const completed = data.habits.filter((h) => h.lastCompletedDate === today);
+    const pending = data.habits.filter((h) => h.lastCompletedDate !== today);
+
+    lines.push(`🔥 Habits Today (${completed.length}/${data.habits.length} completed):`);
+    for (const h of completed) {
+      const streak = h.currentStreak > 0 ? ` (${h.currentStreak}d streak 🔥)` : "";
+      lines.push(`  • ✅ ${h.name}${streak}`);
+    }
+    for (const h of pending) {
+      lines.push(`  • ⬜ ${h.name}`);
+    }
+  }
+
   return lines.join("\n").trim();
 }
 
@@ -343,7 +368,24 @@ export async function sendEveningRecap(chatId?: number): Promise<string> {
 
   const data = await aggregateEveningRecap();
   const text = formatEveningRecap(data);
-  await sendTelegramMessage(targetChatId, text);
+
+  // If there are pending habits today, attach quick check-off buttons
+  const today = getTodaySingaporeDate();
+  const pendingHabits = (data.habits || []).filter((h) => h.lastCompletedDate !== today);
+
+  const replyMarkup =
+    pendingHabits.length > 0
+      ? {
+          inline_keyboard: pendingHabits.map((h) => [
+            {
+              text: `Check ${h.name.length > 25 ? h.name.slice(0, 24) + "…" : h.name}`,
+              callback_data: `habit_done:${h.habitId}`,
+            },
+          ]),
+        }
+      : undefined;
+
+  await sendTelegramMessage(targetChatId, text, replyMarkup);
   return text;
 }
 
