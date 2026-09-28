@@ -11,6 +11,7 @@ import {
   handleCalendarAddAction,
   handleCalendarBatchAddAction,
   handleCalendarDeleteSearchAction,
+  handleCalendarRescheduleAction,
 } from "./calendar-handler";
 import {
   handleTodoAddAction,
@@ -193,6 +194,13 @@ defaultRegistry
         ? "calendar_delete_search_found"
         : "calendar_delete_search_empty",
     };
+  })
+  .registerIntent("calendar_reschedule", async (ctx, intent) => {
+    await handleCalendarRescheduleAction({
+      chatId: ctx.chatId,
+      intent,
+    });
+    return { completionStatus: "calendar_reschedule" };
   })
   .registerIntent("todo_add", async (ctx, intent) => {
     await handleTodoAddAction({

@@ -80,6 +80,15 @@ const intentSchema = z.union([
     query: z.string().min(1).max(200),
   }),
   z.object({
+    action: z.literal("calendar_reschedule"),
+    calendarName: z.enum(["personal", "work", "all"]).default("all"),
+    query: z.string().min(1).max(200),
+    newDate: z.string().date().optional(),
+    newStartTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+    newEndTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+    durationMinutes: z.number().int().positive().optional(),
+  }),
+  z.object({
     action: z.literal("finance_summary"),
     period: z.enum(["today", "week", "month", "all"]).default("month"),
   }),
@@ -665,6 +674,10 @@ Calendar view rules:
 - "What's my schedule this week?", "agenda for the week" means calendar_view with timeframe "week".
 - "Show upcoming events", "upcoming schedule", "what's on my calendar" means calendar_view with timeframe "upcoming".
 - Use calendarName "all" unless user explicitly asks for personal or work only.
+
+Calendar reschedule rules:
+- If the user asks to move, reschedule, postpone, push, delay, or shift an existing calendar event (e.g. "move gym tomorrow to 5pm", "reschedule dental appointment to Friday 3pm", "push team sync by 1 hour", "postpone lunch with Alex to 1:30pm"), return calendar_reschedule.
+- Extract query (the event name/keyword), newDate (if moving date), newStartTime (HH:mm 24-hr format), newEndTime, and durationMinutes.
 
 Finance summary rules:
 - If the user asks for general spending summary, expense total, how much they spent, or budget overview, return finance_summary.

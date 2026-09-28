@@ -1,6 +1,7 @@
 import {
   getUpcomingSchedule,
   searchUpcomingCalendarEvents,
+  rescheduleCalendarEvent,
 } from "@/lib/calendar";
 import {
   formatScheduleAgendaView,
@@ -317,4 +318,48 @@ export async function handleCalendarDeleteSearchAction(params: {
   );
 
   return true;
+}
+
+export async function handleCalendarRescheduleAction(params: {
+  chatId: number;
+  intent: {
+    calendarName?: "personal" | "work" | "all";
+    query: string;
+    newDate?: string;
+    newStartTime?: string;
+    newEndTime?: string;
+    durationMinutes?: number;
+  };
+}): Promise<void> {
+  const { chatId, intent } = params;
+  const result = await rescheduleCalendarEvent({
+    calendarName: intent.calendarName,
+    query: intent.query,
+    newDate: intent.newDate,
+    newStartTime: intent.newStartTime,
+    newEndTime: intent.newEndTime,
+    durationMinutes: intent.durationMinutes,
+  });
+
+  if (!result.success || !result.event) {
+    await sendTelegramMessage(
+      chatId,
+      result.error || `Could not reschedule event matching “${intent.query}”.`
+    );
+    return;
+  }
+
+  const lines = [
+    `📅 *Event Rescheduled!*`,
+    "",
+    `📌 *${result.event.title}*`,
+    `🗓️ *New Time*: ${formatSingaporeDateTime(result.event.start)} – ${formatSingaporeDateTime(result.event.end)}`,
+    `📂 Calendar: ${result.event.calendarName}`,
+  ];
+
+  if (result.event.htmlLink) {
+    lines.push(`\n🔗 [Open in Google Calendar](${result.event.htmlLink})`);
+  }
+
+  await sendTelegramMessage(chatId, lines.join("\n"));
 }
