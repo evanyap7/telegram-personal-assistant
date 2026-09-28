@@ -118,10 +118,11 @@ export async function executeUndo(
       default:
         return { success: false, message: "Unknown undo action type." };
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errMessage = error instanceof Error ? error.message : "Unknown error";
     return {
       success: false,
-      message: `Failed to undo action: ${error?.message || "Unknown error"}`,
+      message: `Failed to undo action: ${errMessage}`,
     };
   }
 }
