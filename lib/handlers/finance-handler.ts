@@ -6,6 +6,8 @@ import {
   getLatestTransaction,
   getTransactionById,
   searchActiveTransactions,
+  queryFilteredTransactions,
+  formatFilteredFinanceSummary,
 } from "@/lib/finance";
 import { isBudgetActiveForSheet } from "@/lib/budget";
 import {
@@ -303,4 +305,18 @@ export async function handleFinanceDeleteSearchAction(params: {
   );
 
   return "found";
+}
+
+export async function handleFinanceQueryAction(params: {
+  chatId: number;
+  intent: {
+    merchant?: string;
+    category?: string;
+    month?: string;
+    type?: "income" | "expense";
+  };
+}): Promise<void> {
+  const { chatId, intent } = params;
+  const summary = await queryFilteredTransactions(intent);
+  await sendTelegramMessage(chatId, formatFilteredFinanceSummary(summary));
 }

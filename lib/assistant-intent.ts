@@ -84,6 +84,13 @@ const intentSchema = z.union([
     period: z.enum(["today", "week", "month", "all"]).default("month"),
   }),
   z.object({
+    action: z.literal("finance_query"),
+    merchant: z.string().optional(),
+    category: z.string().optional(),
+    month: z.string().optional(),
+    type: z.enum(["income", "expense"]).optional(),
+  }),
+  z.object({
     action: z.literal("finance_delete_search"),
     query: z.string().max(200).optional(),
     transactionId: z.string().optional(),
@@ -646,11 +653,18 @@ Calendar view rules:
 - Use calendarName "all" unless user explicitly asks for personal or work only.
 
 Finance summary rules:
-- If the user asks for spending summary, expense total, how much they spent, or budget overview, return finance_summary.
+- If the user asks for general spending summary, expense total, how much they spent, or budget overview, return finance_summary.
 - "How much did I spend this month?", "spending this month", "monthly breakdown", "finance summary" means finance_summary with period "month".
 - "How much did I spend today?", "today's spending" means finance_summary with period "today".
 - "How much did I spend this week?", "spending this week" means finance_summary with period "week".
 - "Total spending", "overall expenses", "all-time spending" means finance_summary with period "all".
+
+Finance query rules:
+- If the user asks about spending on a specific merchant, category, or specific month (e.g. "how much on Grab in September", "what did I spend on Uniqlo", "how much did I spend on food last month"), return finance_query.
+- Extract merchant (e.g. "Grab", "Uniqlo", "Shopee", "Toast Box"), category (e.g. "food", "transport", "shopping"), month (e.g. "September", "last month", "this month"), and type ("income" or "expense").
+- "how much on Grab in September" -> finance_query with merchant "Grab", month "September".
+- "what did I spend on Uniqlo" -> finance_query with merchant "Uniqlo".
+- "how much did I spend on food last month" -> finance_query with category "food", month "last month", type "expense".
 
 To-do rules:
 - If the user asks to add something to their to-do list, tasks, reminder, or "todo: ...", return todo_add.
