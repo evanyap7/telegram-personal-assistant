@@ -124,6 +124,10 @@ import {
 } from "@/lib/handlers/draft-handler";
 import { defaultRegistry } from "@/lib/handlers/dispatcher";
 import { answerWithSearch } from "@/lib/search";
+import {
+  handleSplitCommand,
+  handleOwedCommand,
+} from "@/lib/handlers/split-handler";
 
 
 const financeAddSchema = z.object({
@@ -1519,6 +1523,21 @@ async function handleCallback(input: {
 }) {
   const parts = input.callbackData.split(":");
   const action = parts[0];
+
+  const handledByRegistry = await defaultRegistry.dispatchCallback({
+    callbackId: input.callbackId,
+    callbackData: input.callbackData,
+    action,
+    parts,
+    userId: input.userId,
+    chatId: input.chatId,
+    messageId: input.messageId,
+    updateId: input.updateId,
+    startedAt: input.startedAt,
+  });
+  if (handledByRegistry) {
+    return;
+  }
 
   if (action === "menu") {
     const subAction = parts[1] || "home";
@@ -2971,6 +2990,8 @@ export async function POST(request: Request) {
         { command: "budget", description: "View monthly budget status ($500 cap)" },
         { command: "finance_summary", description: "Monthly spending & breakdown" },
         { command: "finance_list", description: "Recent active transactions" },
+        { command: "split", description: "Split bill (e.g. /split 80 Alex Ben)" },
+        { command: "owed", description: "View who owes you and IOU balances" },
         { command: "sync", description: "Sync recent DBS & Grab transactions" },
         { command: "help", description: "Show help and full guide" },
       ]);
@@ -3260,6 +3281,25 @@ export async function POST(request: Request) {
       await sendTelegramMessage(chatId, summaryText);
 
       await markUpdateCompleted(updateId, "budget_command");
+      return Response.json({ ok: true });
+    }
+
+    if (text === "/split" || text.startsWith("/split ")) {
+      await handleSplitCommand({ chatId, text });
+      await markUpdateCompleted(updateId, "split_command");
+      return Response.json({ ok: true });
+    }
+
+    if (
+      text === "/owed" ||
+      text.startsWith("/owed ") ||
+      lowerText === "owed" ||
+      lowerText === "who owes me" ||
+      lowerText === "iou" ||
+      lowerText === "ious"
+    ) {
+      await handleOwedCommand({ chatId, text });
+      await markUpdateCompleted(updateId, "owed_command");
       return Response.json({ ok: true });
     }
 

@@ -19,6 +19,11 @@ import {
   handleTodoDeleteSearchAction,
 } from "./todo-handler";
 import { handleEmailDraftAction } from "./draft-handler";
+import {
+  handleSplitBillAction,
+  handleIOUSummaryAction,
+  handleIOUSettleCallback,
+} from "./split-handler";
 
 import type { UserCalendarContext } from "../pending-actions";
 
@@ -241,4 +246,25 @@ defaultRegistry
       },
     });
     return { completionStatus: "email_draft_prompt" };
+  })
+  .registerIntent("split_bill", async (ctx, intent) => {
+    await handleSplitBillAction({
+      chatId: ctx.chatId,
+      intent,
+    });
+    return { completionStatus: "split_bill" };
+  })
+  .registerIntent("iou_summary", async (ctx, intent) => {
+    await handleIOUSummaryAction({
+      chatId: ctx.chatId,
+      person: intent.person,
+    });
+    return { completionStatus: "iou_summary" };
+  })
+  .registerCallback("iou_settle", async (ctx) => {
+    return await handleIOUSettleCallback({
+      callbackId: ctx.callbackId,
+      callbackData: ctx.callbackData,
+      chatId: ctx.chatId,
+    });
   });
