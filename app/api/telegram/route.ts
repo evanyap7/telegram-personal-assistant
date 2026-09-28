@@ -128,6 +128,12 @@ import {
   handleTodoCompleteAction,
   handleTodoDeleteSearchAction,
 } from "@/lib/handlers/todo-handler";
+import {
+  formatEmailDraftPreview,
+  handleEmailDraftAction,
+  handleEmailDraftCallback,
+  handleVoiceNoteAction,
+} from "@/lib/handlers/draft-handler";
 
 
 const financeAddSchema = z.object({
@@ -225,24 +231,6 @@ function helpText() {
 }
 
 
-function formatEmailDraftPreview(input: {
-  to: string;
-  subject: string;
-  body: string;
-  cc?: string;
-  bcc?: string;
-}): string {
-  const parts = [
-    "📧 Email Draft Preview:",
-    "",
-    `👤 To: ${input.to}`,
-    `📌 Subject: ${input.subject}`,
-  ];
-  if (input.cc) parts.push(`👥 Cc: ${input.cc}`);
-  if (input.bcc) parts.push(`🔒 Bcc: ${input.bcc}`);
-  parts.push("", "📝 Body:", input.body);
-  return parts.join("\n");
-}
 
 
 function sanitizeText(value: string): string {
@@ -1040,100 +1028,6 @@ async function handleCalendarDeleteCallback(input: {
   await markUpdateCompleted(input.updateId, "calendar_delete");
 }
 
-async function handleEmailDraftCallback(input: {
-  callbackId: string;
-  action: "email_draft_yes" | "email_draft_no";
-  token: string;
-  userId: number;
-  chatId: number;
-  messageId: number;
-  updateId: number;
-  startedAt: number;
-}) {
-  if (input.action === "email_draft_no") {
-    const cancelled = await cancelPendingEmailDraftAction(
-      input.token,
-      input.userId
-    );
-
-    await answerTelegramCallback(
-      input.callbackId,
-      cancelled ? "Draft cancelled." : "This request has expired."
-    );
-
-    await removeAndSend(
-      input.chatId,
-      input.messageId,
-      cancelled
-        ? "Email draft creation cancelled."
-        : "This email draft request has already expired or was handled."
-    );
-
-    await markUpdateCompleted(input.updateId, "email_draft_cancelled");
-    return;
-  }
-
-  const pendingAction = await takePendingEmailDraftAction(
-    input.token,
-    input.userId
-  );
-
-  if (!pendingAction) {
-    await answerTelegramCallback(
-      input.callbackId,
-      "This draft confirmation has expired or was already used."
-    );
-
-    await removeAndSend(
-      input.chatId,
-      input.messageId,
-      "This email draft request has expired or was already handled."
-    );
-
-    await markUpdateCompleted(
-      input.updateId,
-      "email_draft_confirmation_invalid"
-    );
-    return;
-  }
-
-  await answerTelegramCallback(input.callbackId, "Creating draft in Gmail...");
-
-  try {
-    const draft = await createEmailDraft(pendingAction);
-
-    await removeTelegramInlineKeyboard(input.chatId, input.messageId);
-
-    await sendTelegramMessage(
-      input.chatId,
-      [
-        "✉️ Draft created in Gmail!",
-        "",
-        `To: ${draft.to}`,
-        `Subject: ${draft.subject}`,
-        "",
-        `🔗 Open Gmail Drafts: ${draft.gmailUrl}`,
-      ].join("\n")
-    );
-
-    await markUpdateCompleted(input.updateId, "email_draft_created");
-  } catch (error) {
-    log("telegram.email_draft.failed", {
-      updateId: input.updateId,
-      error: errorText(error),
-    });
-
-    await removeAndSend(
-      input.chatId,
-      input.messageId,
-      `Failed to create draft in Gmail: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-
-    await markUpdateFailed(input.updateId, errorText(error));
-  }
-}
 
 async function handleTodoDoneCallback(input: {
   callbackId: string;
@@ -2898,37 +2792,24 @@ export async function POST(request: Request) {
     if (!text && (message.voice || message.audio)) {
       const audioObj = message.voice || message.audio;
       if (audioObj) {
-        await sendTelegramMessage(chatId, "🎧 Listening to your voice note...");
         try {
-          const downloaded = await downloadTelegramAudio(
-            audioObj.file_id,
-            audioObj.mime_type
-          );
-          const transcription = await transcribeTelegramVoiceNote({
-            audio: downloaded.data,
-            mediaType: downloaded.mediaType,
+          const transcription = await handleVoiceNoteAction({
+            chatId,
+            fileId: audioObj.file_id,
+            mimeType: audioObj.mime_type,
           });
 
           if (!transcription) {
-            await sendTelegramMessage(
-              chatId,
-              "I couldn't hear any words in that voice note. Please try again."
-            );
             await markUpdateCompleted(updateId, "voice_empty");
             return Response.json({ ok: true });
           }
 
-          await sendTelegramMessage(chatId, `🎤 Heard: “${transcription}”`);
           text = transcription;
         } catch (voiceError) {
           log("telegram.voice_transcribe.failed", {
             updateId,
             error: errorText(voiceError),
           });
-          await sendTelegramMessage(
-            chatId,
-            "Sorry, I had trouble processing that voice note. Please try typing your message."
-          );
           await markUpdateFailed(updateId, errorText(voiceError));
           return Response.json({ ok: true });
         }
@@ -3805,9 +3686,10 @@ export async function POST(request: Request) {
     }
 
     if (intent.action === "email_draft") {
-      const token = await savePendingEmailDraftAction({
+      await handleEmailDraftAction({
+        chatId,
         userId: message.from.id,
-        payload: {
+        intent: {
           to: intent.to,
           subject: intent.subject,
           body: intent.body,
@@ -3815,35 +3697,6 @@ export async function POST(request: Request) {
           bcc: intent.bcc,
         },
       });
-
-      await sendTelegramMessage(
-        chatId,
-        [
-          "Create this draft in your Gmail (evanyap7@gmail.com)?",
-          "",
-          formatEmailDraftPreview({
-            to: intent.to,
-            subject: intent.subject,
-            body: intent.body,
-            cc: intent.cc,
-            bcc: intent.bcc,
-          }),
-        ].join("\n"),
-        {
-          inline_keyboard: [
-            [
-              {
-                text: "📝 Create Draft in Gmail",
-                callback_data: `email_draft_yes:${token}`,
-              },
-              {
-                text: "❌ Cancel",
-                callback_data: `email_draft_no:${token}`,
-              },
-            ],
-          ],
-        }
-      );
 
       await markUpdateCompleted(updateId, "email_draft_prompt");
       return Response.json({ ok: true });
