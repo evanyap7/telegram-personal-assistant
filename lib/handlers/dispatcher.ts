@@ -74,14 +74,17 @@ export type IntentHandlerFn<T = AssistantIntent> = (
 export type CallbackHandlerFn = (ctx: CallbackContext) => Promise<boolean>;
 
 export class HandlerRegistry {
-  private intentHandlers = new Map<string, IntentHandlerFn<any>>();
+  private intentHandlers = new Map<string, IntentHandlerFn<AssistantIntent>>();
   private callbackHandlers = new Map<string, CallbackHandlerFn>();
 
   registerIntent<K extends AssistantIntent["action"]>(
     action: K,
     handler: IntentHandlerFn<Extract<AssistantIntent, { action: K }>>
   ): this {
-    this.intentHandlers.set(action, handler as IntentHandlerFn<any>);
+    this.intentHandlers.set(
+      action,
+      handler as unknown as IntentHandlerFn<AssistantIntent>
+    );
     return this;
   }
 
