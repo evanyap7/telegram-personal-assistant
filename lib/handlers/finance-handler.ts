@@ -182,6 +182,28 @@ export async function handleFinanceAddAction(params: {
 
   if (transaction.budgetStatus?.hasBudget && intent.type === "expense") {
     responseLines.push("", transaction.budgetStatus.formattedNotice);
+
+    // Threshold breach alerts
+    if (transaction.budgetStatus.isOverBudget) {
+      responseLines.push("🚨 Alert: You have exceeded 100% of your monthly budget!");
+    } else if (transaction.budgetStatus.thresholdCrossed === 80) {
+      responseLines.push(
+        `⚠️ Alert: You have reached 80% of your monthly budget ($${transaction.budgetStatus.remaining.toFixed(2)} remaining).`
+      );
+    } else if (transaction.budgetStatus.thresholdCrossed === 50) {
+      responseLines.push("ℹ️ Note: You have reached 50% of your monthly budget.");
+    }
+
+    // Category cap alerts
+    if (
+      transaction.budgetStatus.categoryCapAlerts &&
+      transaction.budgetStatus.categoryCapAlerts.length > 0
+    ) {
+      responseLines.push("");
+      for (const capAlert of transaction.budgetStatus.categoryCapAlerts) {
+        responseLines.push(capAlert);
+      }
+    }
   }
 
   await sendTelegramMessage(chatId, responseLines.join("\n"));
