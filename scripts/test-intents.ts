@@ -34,6 +34,13 @@ export const TEST_CASES: IntentTestCase[] = [
   { message: "I'm done with buy groceries", expectedAction: "todo_complete", description: "Complete todo task" },
   { message: "Draft an email to alex@example.com about project update", expectedAction: "email_draft", description: "Compose email draft" },
   { message: "delete gym tomorrow from personal", expectedAction: "calendar_delete_search", description: "Calendar delete search" },
+  { message: "split $60 bill with Alice and Bob", expectedAction: "split_bill", description: "Bill splitting calculation" },
+  { message: "who owes me money?", expectedAction: "iou_summary", description: "IOU summary check" },
+  { message: "when am I free tomorrow?", expectedAction: "calendar_free_slots", description: "Free slot query" },
+  { message: "move my gym session to 5pm tomorrow", expectedAction: "calendar_reschedule", description: "Calendar event reschedule" },
+  { message: "remember that Alice's birthday is June 15", expectedAction: "memory_save", description: "Personal memory save" },
+  { message: "what is Alice's birthday?", expectedAction: "memory_recall", description: "Personal memory recall" },
+  { message: "how much did I spend on Grab this month?", expectedAction: "finance_query", description: "Natural language finance query" },
 ];
 
 async function run() {
