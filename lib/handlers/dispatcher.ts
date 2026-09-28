@@ -4,6 +4,7 @@ import {
   handleFinanceAddAction,
   handleFinanceSummaryAction,
   handleFinanceDeleteSearchAction,
+  handleFinanceQueryAction,
 } from "./finance-handler";
 import {
   handleCalendarViewAction,
@@ -127,6 +128,13 @@ defaultRegistry
       period: intent.period,
     });
     return { completionStatus: "finance_summary" };
+  })
+  .registerIntent("finance_query", async (ctx, intent) => {
+    await handleFinanceQueryAction({
+      chatId: ctx.chatId,
+      intent,
+    });
+    return { completionStatus: "finance_query" };
   })
   .registerIntent("calendar_add", async (ctx, intent) => {
     await handleCalendarAddAction({
