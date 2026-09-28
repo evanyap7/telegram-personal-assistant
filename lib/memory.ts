@@ -255,13 +255,13 @@ export async function deleteMemory(keyOrId: string): Promise<boolean> {
 }
 
 /**
- * Searches memories using multi-factor token relevance scoring.
+ * Multi-factor token relevance scoring over in-memory records.
  */
-export async function searchMemories(
+export function scoreMemories(
+  all: MemoryRecord[],
   query: string,
   options?: { category?: MemoryCategory; limit?: number }
-): Promise<MemoryRecord[]> {
-  const all = await listAllMemories();
+): MemoryRecord[] {
   const tokens = query
     .toLowerCase()
     .split(/\s+/)
@@ -311,6 +311,17 @@ export async function searchMemories(
   return scored.slice(0, limit).map((s) => s.record);
 }
 
+/**
+ * Searches memories using multi-factor token relevance scoring.
+ */
+export async function searchMemories(
+  query: string,
+  options?: { category?: MemoryCategory; limit?: number }
+): Promise<MemoryRecord[]> {
+  const all = await listAllMemories();
+  return scoreMemories(all, query, options);
+}
+
 export interface ResolvedContact {
   name: string;
   email?: string;
@@ -342,7 +353,7 @@ export async function resolveContact(
   return parseContactRecord(contacts[0]);
 }
 
-function parseContactRecord(record: MemoryRecord): ResolvedContact {
+export function parseContactRecord(record: MemoryRecord): ResolvedContact {
   const val = record.value;
   const emailMatch = val.match(
     /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
