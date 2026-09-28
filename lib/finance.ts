@@ -1264,3 +1264,141 @@ export function parseSwipeReplyTransactionUpdate(
     category,
   };
 }
+
+export interface FinanceQueryFilters {
+  merchant?: string;
+  category?: string;
+  month?: string;
+  type?: "income" | "expense";
+}
+
+export interface FilteredFinanceSummary {
+  totalAmount: number;
+  count: number;
+  average: number;
+  currency: string;
+  transactions: FinanceTransaction[];
+  filterDescription: string;
+}
+
+export async function queryFilteredTransactions(
+  filters: FinanceQueryFilters
+): Promise<FilteredFinanceSummary> {
+  const allSheets = await getAllTransactionSheetNames();
+  let targetSheets: string[] = [];
+
+  const now = new Date();
+  const currentSheet = await resolveMonthSheetName(now);
+
+  if (filters.month) {
+    const mLower = filters.month.trim().toLowerCase();
+    if (mLower === "this month" || mLower === "current") {
+      targetSheets = [currentSheet];
+    } else if (
+      mLower === "last month" ||
+      mLower === "prev" ||
+      mLower === "previous"
+    ) {
+      const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevSheet = await resolveMonthSheetName(prevDate);
+      targetSheets = [prevSheet];
+    } else {
+      const matched = allSheets.filter((s) => s.toLowerCase().includes(mLower));
+      targetSheets = matched.length > 0 ? matched : [currentSheet];
+    }
+  } else {
+    targetSheets = allSheets;
+  }
+
+  const transactions: FinanceTransaction[] = [];
+  for (const sheet of targetSheets) {
+    const txns = await listTransactionsFromSheet(sheet);
+    transactions.push(...txns);
+  }
+
+  const merchantLower = filters.merchant?.trim().toLowerCase();
+  const categoryLower = filters.category?.trim().toLowerCase();
+  const typeLower = filters.type?.trim().toLowerCase();
+
+  const filtered = transactions.filter((txn) => {
+    if (txn.status !== "active") return false;
+
+    if (typeLower && txn.type.toLowerCase() !== typeLower) {
+      return false;
+    }
+
+    if (categoryLower && !txn.category.toLowerCase().includes(categoryLower)) {
+      return false;
+    }
+
+    if (merchantLower) {
+      const descLower = txn.description.toLowerCase();
+      if (!descLower.includes(merchantLower)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  let totalAmount = 0;
+  let currency = "SGD";
+  for (const txn of filtered) {
+    totalAmount += parseFloat(txn.amount) || 0;
+    if (txn.currency) currency = txn.currency.toUpperCase();
+  }
+
+  const count = filtered.length;
+  const average = count > 0 ? totalAmount / count : 0;
+
+  const descParts: string[] = [];
+  if (filters.type) descParts.push(filters.type);
+  if (filters.merchant) descParts.push(`"${filters.merchant}"`);
+  if (filters.category) descParts.push(`category "${filters.category}"`);
+  if (filters.month) descParts.push(`in ${filters.month}`);
+
+  const filterDescription =
+    descParts.length > 0 ? descParts.join(" ") : "all transactions";
+
+  return {
+    totalAmount,
+    count,
+    average,
+    currency,
+    transactions: filtered,
+    filterDescription,
+  };
+}
+
+export function formatFilteredFinanceSummary(
+  summary: FilteredFinanceSummary
+): string {
+  if (summary.count === 0) {
+    return `🔍 No transactions found for ${summary.filterDescription}.`;
+  }
+
+  const lines: string[] = [
+    `🔍 *Finance Summary: ${summary.filterDescription}*`,
+    "",
+    `💰 *Total:* $${summary.totalAmount.toFixed(2)} ${summary.currency}`,
+    `🔢 *Transactions:* ${summary.count}`,
+    `📊 *Average:* $${summary.average.toFixed(2)} / transaction`,
+  ];
+
+  if (summary.transactions.length > 0) {
+    lines.push("", "📋 *Recent Matching Transactions:*");
+    const preview = summary.transactions.slice(0, 5);
+    for (const txn of preview) {
+      lines.push(
+        `• ${txn.timestamp.split("@")[0].trim()}: $${parseFloat(
+          txn.amount
+        ).toFixed(2)} — ${txn.description}`
+      );
+    }
+    if (summary.transactions.length > 5) {
+      lines.push(`...and ${summary.transactions.length - 5} more`);
+    }
+  }
+
+  return lines.join("\n");
+}
