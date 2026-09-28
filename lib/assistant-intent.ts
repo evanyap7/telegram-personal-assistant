@@ -121,6 +121,18 @@ const intentSchema = z.union([
     person: z.string().optional(),
   }),
   z.object({
+    action: z.literal("memory_save"),
+    key: z.string().min(1).max(100),
+    value: z.string().min(1).max(500),
+    category: z
+      .enum(["note", "contact", "fact", "preference", "credential"])
+      .default("note"),
+  }),
+  z.object({
+    action: z.literal("memory_recall"),
+    query: z.string().min(1).max(200),
+  }),
+  z.object({
     action: z.literal("finance_delete_search"),
     query: z.string().max(200).optional(),
     transactionId: z.string().optional(),
@@ -708,6 +720,11 @@ Bill split and IOU rules:
 - If the user asks to split a bill, dinner, meal, or shared expense (e.g. "split $80 dinner with Alex and Ben", "paid $120 for lunch, split among 4 people", "split $60 with Sarah"), return split_bill.
 - Extract total, list of people (names or 'Me' plus friends), tipPercent, taxPercent, and description.
 - If the user asks who owes them, what they owe, debts, or IOU balance (e.g. "who owes me money?", "what do I owe Alex?", "show my debts", "IOU summary"), return iou_summary.
+
+Memory and personal notes rules:
+- If the user asks you to remember, save, or store a note, fact, contact, password/code, or preference (e.g. "remember that my locker code is 1234", "save note: wifi password is ...", "remember Alex's email is alex@gmail.com", "save contact Sarah: 91234567"), return memory_save.
+- Extract key (the item name/subject, e.g. "locker code", "wifi password", "Alex"), value (the secret or detail), and category ("credential", "contact", "preference", or "note").
+- If the user asks what they noted or asks to recall information (e.g. "what is my locker code?", "what did I note about wifi?", "recall Alex's contact", "show my notes about ..."), return memory_recall.
 
 To-do rules:
 - If the user asks to add something to their to-do list, tasks, reminder, or "todo: ...", return todo_add.
