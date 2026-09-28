@@ -108,32 +108,20 @@ import {
   formatCalendarDate,
   formatSingaporeDateTime,
   formatCalendarEvent,
-  handleCalendarViewAction,
-  handleCalendarAddAction,
-  handleCalendarBatchAddAction,
-  handleCalendarDeleteSearchAction,
 } from "@/lib/handlers/calendar-handler";
 import {
   formatFinanceTransaction,
   formatFinanceSummary,
   resolveRepliedTransaction,
-  handleFinanceAddAction,
-  handleFinanceSummaryAction,
-  handleFinanceDeleteSearchAction,
 } from "@/lib/handlers/finance-handler";
 import {
   formatTodoListMessage,
-  handleTodoAddAction,
-  handleTodoViewAction,
-  handleTodoCompleteAction,
-  handleTodoDeleteSearchAction,
 } from "@/lib/handlers/todo-handler";
 import {
-  formatEmailDraftPreview,
-  handleEmailDraftAction,
   handleEmailDraftCallback,
   handleVoiceNoteAction,
 } from "@/lib/handlers/draft-handler";
+import { defaultRegistry } from "@/lib/handlers/dispatcher";
 
 
 const financeAddSchema = z.object({
@@ -3458,86 +3446,22 @@ export async function POST(request: Request) {
       durationMs: Date.now() - intentStartAt,
     });
 
-    if (intent.action === "finance_add") {
-      await handleFinanceAddAction({
+    const dispatched = await defaultRegistry.dispatchIntent(
+      {
         chatId,
-        intent,
-        messageDateObj,
-      });
-
-      await markUpdateCompleted(updateId, "finance_add_natural_language");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "calendar_view") {
-      await handleCalendarViewAction({
-        chatId,
-        calendarName: intent.calendarName,
-        timeframe: intent.timeframe,
+        userId: message.from.id,
+        updateId,
         text,
-      });
+        messageDateObj,
+        userCalendarContext,
+        targetTransaction,
+      },
+      intent
+    );
 
-      await markUpdateCompleted(updateId, "calendar_view");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "finance_summary") {
-      await handleFinanceSummaryAction({
-        chatId,
-        period: intent.period,
-      });
-
-      await markUpdateCompleted(updateId, "finance_summary");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "calendar_add") {
-      await handleCalendarAddAction({
-        chatId,
-        userId: message.from.id,
-        intent,
-        hasActivePending: Boolean(userCalendarContext.activePending),
-      });
-
-      await markUpdateCompleted(updateId, "calendar_add_pending");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "calendar_batch_add") {
-      await handleCalendarBatchAddAction({
-        chatId,
-        userId: message.from.id,
-        intent,
-        hasActivePending: Boolean(userCalendarContext.activePending),
-      });
-
-      await markUpdateCompleted(updateId, "calendar_batch_pending");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "finance_delete_search") {
-      const resolvedTxnId =
-        intent.transactionId ||
-        (message.reply_to_message || text.toLowerCase().includes("this") || text.toLowerCase().includes("that")
-          ? targetTransaction?.transactionId
-          : undefined);
-
-      const status = await handleFinanceDeleteSearchAction({
-        chatId,
-        userId: message.from.id,
-        resolvedTxnId,
-        query: intent.query || text,
-      });
-
-      if (status === "confirmed") {
-        await markUpdateCompleted(
-          updateId,
-          "finance_delete_direct_confirmation_sent"
-        );
-      } else if (status === "empty") {
-        await markUpdateCompleted(updateId, "finance_delete_search_empty");
-      } else {
-        await markUpdateCompleted(updateId, "finance_delete_search_found");
+    if (dispatched.handled) {
+      if (dispatched.completionStatus) {
+        await markUpdateCompleted(updateId, dispatched.completionStatus);
       }
       return Response.json({ ok: true });
     }
@@ -3621,86 +3545,6 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    if (intent.action === "calendar_delete_search") {
-      const found = await handleCalendarDeleteSearchAction({
-        chatId,
-        userId: message.from.id,
-        intent,
-      });
-
-      await markUpdateCompleted(
-        updateId,
-        found ? "calendar_delete_search_found" : "calendar_delete_search_empty"
-      );
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "todo_add") {
-      await handleTodoAddAction({
-        chatId,
-        task: intent.task,
-        dueDate: intent.dueDate,
-        priority: intent.priority,
-        remindIntervalMinutes: intent.remindIntervalMinutes,
-      });
-
-      await markUpdateCompleted(updateId, "todo_add_natural_language");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "todo_view") {
-      await handleTodoViewAction({
-        chatId,
-        timeframe: intent.timeframe,
-      });
-
-      await markUpdateCompleted(updateId, "todo_view_natural_language");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "todo_complete") {
-      await handleTodoCompleteAction({
-        chatId,
-        query: intent.query,
-      });
-
-      await markUpdateCompleted(updateId, "todo_complete_natural_language");
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "todo_delete_search") {
-      const status = await handleTodoDeleteSearchAction({
-        chatId,
-        userId: message.from.id,
-        query: intent.query,
-      });
-
-      if (status === "empty") {
-        await markUpdateCompleted(updateId, "todo_delete_search_empty");
-      } else if (status === "prompt") {
-        await markUpdateCompleted(updateId, "todo_delete_prompt");
-      } else {
-        await markUpdateCompleted(updateId, "todo_delete_selection_prompt");
-      }
-      return Response.json({ ok: true });
-    }
-
-    if (intent.action === "email_draft") {
-      await handleEmailDraftAction({
-        chatId,
-        userId: message.from.id,
-        intent: {
-          to: intent.to,
-          subject: intent.subject,
-          body: intent.body,
-          cc: intent.cc,
-          bcc: intent.bcc,
-        },
-      });
-
-      await markUpdateCompleted(updateId, "email_draft_prompt");
-      return Response.json({ ok: true });
-    }
 
     if (intent.action === "calendar_move") {
       const isReplyingToPending = Boolean(
@@ -3883,10 +3727,8 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    const exhaustiveIntentCheck: never = intent;
-
     throw new Error(
-      `Unhandled assistant intent: ${JSON.stringify(exhaustiveIntentCheck)}`
+      `Unhandled assistant intent: ${JSON.stringify(intent)}`
     );
   } catch (error) {
     const message = errorText(error);
