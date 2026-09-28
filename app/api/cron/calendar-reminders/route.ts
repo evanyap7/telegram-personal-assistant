@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkAndSendEventReminders } from "@/lib/calendar";
 import { checkAndSendTodoReminders } from "@/lib/todos";
+import { checkAndSendLeaveNowAlerts } from "@/lib/travel";
 import { safeCompare } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
@@ -18,9 +19,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [eventResult, todoResult] = await Promise.all([
+    const [eventResult, todoResult, leaveNowSent] = await Promise.all([
       checkAndSendEventReminders(),
       checkAndSendTodoReminders(),
+      checkAndSendLeaveNowAlerts(),
     ]);
 
     return NextResponse.json({
@@ -28,6 +30,7 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
       events: eventResult,
       todos: todoResult,
+      leaveNowSent,
     });
   } catch (error) {
     console.error("Cron calendar reminders check failed:", error);

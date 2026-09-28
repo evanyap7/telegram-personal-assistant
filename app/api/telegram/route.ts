@@ -129,6 +129,7 @@ import {
   handleSplitCommand,
   handleOwedCommand,
 } from "@/lib/handlers/split-handler";
+import { checkAndSendLeaveNowAlerts } from "@/lib/travel";
 
 
 const financeAddSchema = z.object({
@@ -3008,9 +3009,10 @@ export async function POST(request: Request) {
     }
 
     if (text === "/reminders" || text.toLowerCase() === "check reminders") {
-      const [eventResult, todoResult] = await Promise.all([
+      const [eventResult, todoResult, leaveNowSent] = await Promise.all([
         checkAndSendEventReminders(),
         checkAndSendTodoReminders(),
+        checkAndSendLeaveNowAlerts(chatId),
       ]);
 
       const lines: string[] = ["🔔 *Reminders Status*:"];
@@ -3024,6 +3026,10 @@ export async function POST(request: Request) {
         lines.push(`⏰ Dispatched ${todoResult.remindersSent} recurring task reminder(s)!`);
       } else {
         lines.push(`⏰ No to-do reminders due (${todoResult.todosChecked} active recurring task(s) checked).`);
+      }
+
+      if (leaveNowSent > 0) {
+        lines.push(`🚗 Dispatched ${leaveNowSent} leave-now transit departure alert(s)!`);
       }
 
       await sendTelegramMessage(chatId, lines.join("\n\n"));
