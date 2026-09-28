@@ -34,6 +34,7 @@ import {
   handleMemoryRecallAction,
 } from "./memory-handler";
 import { executeUndo } from "../undo";
+import { logHabitDone } from "../habits";
 import {
   answerTelegramCallback,
   removeTelegramInlineKeyboard,
@@ -336,5 +337,22 @@ defaultRegistry
     }
     await sendTelegramMessage(ctx.chatId, result.message);
     return true;
+  })
+  .registerCallback("habit_done", async (ctx) => {
+    const parts = ctx.callbackData.split(":");
+    const habitId = parts[1];
+    if (!habitId) {
+      await answerTelegramCallback(ctx.callbackId, "Invalid habit ID.");
+      return true;
+    }
+    const res = await logHabitDone(habitId);
+    await answerTelegramCallback(
+      ctx.callbackId,
+      res.alreadyDoneToday ? "Already checked today!" : "Habit checked!"
+    );
+    await removeTelegramInlineKeyboard(ctx.chatId, ctx.messageId);
+    await sendTelegramMessage(ctx.chatId, res.message);
+    return true;
   });
+
 
