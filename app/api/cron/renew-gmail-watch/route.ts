@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGmailClient } from "@/lib/google";
-import { safeCompare } from "@/lib/security";
+import { isAuthorizedCronRequest } from "@/lib/security";
 import { sendTelegramMessage } from "@/lib/telegram";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  // Verify Vercel Cron authorization or CRON_SECRET if configured
-  const cronSecret = process.env.CRON_SECRET;
-  const authHeader = req.headers.get("authorization");
-
-  if (cronSecret) {
-    const expected = `Bearer ${cronSecret}`;
-    if (!authHeader || !safeCompare(authHeader, expected)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!isAuthorizedCronRequest(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const topicName = process.env.GMAIL_PUBSUB_TOPIC;

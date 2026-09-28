@@ -235,7 +235,7 @@ export async function handleEmailSendCallback(params: {
 
   if (!draftId) {
     await answerTelegramCallback(callbackId, "Invalid draft ID.");
-    return false;
+    return true;
   }
 
   await answerTelegramCallback(callbackId, "Sending email via Gmail...");
@@ -253,7 +253,7 @@ export async function handleEmailSendCallback(params: {
       chatId,
       `⚠️ Could not send draft: ${result.error || "Unknown error"}. You can still send it manually from Gmail.`
     );
-    return false;
+    return true;
   }
 }
 

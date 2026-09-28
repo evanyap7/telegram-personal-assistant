@@ -209,7 +209,7 @@ export async function handleFinanceAddAction(params: {
     responseLines.push("", transaction.budgetStatus.formattedNotice);
 
     // Threshold breach alerts
-    if (transaction.budgetStatus.isOverBudget) {
+    if (transaction.budgetStatus.thresholdCrossed === 100) {
       responseLines.push("🚨 Alert: You have exceeded 100% of your monthly budget!");
     } else if (transaction.budgetStatus.thresholdCrossed === 80) {
       responseLines.push(

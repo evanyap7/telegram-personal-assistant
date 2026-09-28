@@ -119,7 +119,7 @@ async function callTelegram(
 
 export async function sendTelegramChatAction(
   chatId: number,
-  action: "typing" | "upload_photo" | "record_voice" = "typing"
+  action: "typing" | "upload_photo" | "record_voice" | "upload_document" = "typing"
 ): Promise<void> {
   try {
     await callTelegram("sendChatAction", {

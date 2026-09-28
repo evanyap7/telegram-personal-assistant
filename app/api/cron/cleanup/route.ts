@@ -1,27 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { safeCompare } from "@/lib/security";
+import { isAuthorizedCronRequest } from "@/lib/security";
 import { pruneExpiredPendingActions } from "@/lib/pending-actions";
 import { pruneOldChatHistory } from "@/lib/chat-history";
+import { pruneUpdateLog } from "@/lib/finance";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  // Verify Vercel Cron authorization or CRON_SECRET if configured
-  const cronSecret = process.env.CRON_SECRET;
-  const authHeader = req.headers.get("authorization");
-
-  if (cronSecret) {
-    const expected = `Bearer ${cronSecret}`;
-    if (!authHeader || !safeCompare(authHeader, expected)) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!isAuthorizedCronRequest(req.headers.get("authorization"))) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const [pendingRes, chatRes] = await Promise.all([
-      pruneExpiredPendingActions(24),
-      pruneOldChatHistory(30),
-    ]);
+    // Sequential: each prune issues a batchUpdate on the same spreadsheet.
+    const pendingRes = await pruneExpiredPendingActions(24);
+    const chatRes = await pruneOldChatHistory(30);
+    const updateLogRes = await pruneUpdateLog(7);
 
     return NextResponse.json({
       ok: true,
@@ -33,6 +27,10 @@ export async function GET(req: NextRequest) {
       chatHistory: {
         pruned: chatRes.prunedCount,
         remaining: chatRes.remainingCount,
+      },
+      updateLog: {
+        pruned: updateLogRes.prunedCount,
+        remaining: updateLogRes.remainingCount,
       },
     });
   } catch (error: unknown) {

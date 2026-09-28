@@ -11,6 +11,7 @@ import {
   formatMemorySearchResult,
   type MemoryRecord,
 } from "../lib/memory";
+import { encryptSecret, decryptSecret, isEncryptedValue } from "../lib/secret-box";
 
 let totalPassed = 0;
 let totalFailed = 0;
@@ -133,6 +134,28 @@ function runTests() {
     assert(multiMsg.includes("Found 2 matching memories"), "Formats multiple results header");
     assert(multiMsg.includes("Alice Tan"), "Includes Alice in list");
     assert(multiMsg.includes("Bob Lim"), "Includes Bob in list");
+  }
+
+  // Test 7: Credential encryption round-trip (AES-256-GCM)
+  {
+    const originalKey = process.env.MEMORY_ENCRYPTION_KEY;
+
+    delete process.env.MEMORY_ENCRYPTION_KEY;
+    assert(encryptSecret("1234") === null, "No encryption without MEMORY_ENCRYPTION_KEY");
+    assert(decryptSecret("plain value") === "plain value", "Plaintext passes through decrypt");
+
+    process.env.MEMORY_ENCRYPTION_KEY = "test-key-that-is-long-enough-123";
+    const sealed = encryptSecret("0123") ?? "";
+    assert(isEncryptedValue(sealed), "Encrypted value carries enc:v1 prefix");
+    assert(!sealed.includes("0123"), "Ciphertext does not contain plaintext");
+    assert(decryptSecret(sealed) === "0123", "Round-trip keeps leading zeros");
+    assert(encryptSecret("0123") !== sealed, "Random IV gives distinct ciphertexts");
+
+    process.env.MEMORY_ENCRYPTION_KEY = "a-different-key-that-is-long-456";
+    assert(decryptSecret(sealed) === null, "Wrong key fails authentication");
+
+    if (originalKey === undefined) delete process.env.MEMORY_ENCRYPTION_KEY;
+    else process.env.MEMORY_ENCRYPTION_KEY = originalKey;
   }
 
   console.log(`\nResults: ${totalPassed} passed, ${totalFailed} failed.`);

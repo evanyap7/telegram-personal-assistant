@@ -524,7 +524,13 @@ export async function snoozeTodoReminder(
     description = "tomorrow morning (9:00 AM)";
   }
 
-  await updateTodoLastRemindedAt(taskId, snoozedUntil.toISOString());
+  // The reminder loop fires once `intervalMinutes` have elapsed since
+  // lastRemindedAt, so back-date by one interval to fire exactly at snoozedUntil.
+  const intervalMs = (todo.remindIntervalMinutes || 0) * 60 * 1000;
+  await updateTodoLastRemindedAt(
+    taskId,
+    new Date(snoozedUntil.getTime() - intervalMs).toISOString()
+  );
   return { success: true, snoozedUntil, description };
 }
 
@@ -570,11 +576,6 @@ export async function checkAndSendTodoReminders(): Promise<TodoReminderCheckResu
     if (todo.lastRemindedAt) {
       const parsed = new Date(todo.lastRemindedAt).getTime();
       lastTime = Number.isNaN(parsed) ? 0 : parsed;
-    }
-
-    // If snoozed until a future time, skip
-    if (lastTime > now.getTime()) {
-      continue;
     }
 
     const timeSinceLastRemindedMs = now.getTime() - lastTime;

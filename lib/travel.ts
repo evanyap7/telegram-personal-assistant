@@ -1,14 +1,27 @@
 import { getUpcomingSchedule } from "./calendar";
 import { sendTelegramMessage } from "./telegram";
+import { getProcessedExternalIds, markExternalIdProcessed } from "./finance";
 
-const sentLeaveNowEventIds = new Set<string>();
-
-export function markLeaveNowNoticeSent(eventId: string): void {
-  sentLeaveNowEventIds.add(eventId);
+/**
+ * Sent notices are recorded in the UpdateLog ledger (not process memory) so a
+ * later cron run on a different serverless instance does not re-send them.
+ * The start time is part of the key so a rescheduled event alerts again.
+ */
+export function leaveNowNoticeKey(eventId: string, eventStart: string): string {
+  return `leave_now:${eventId}:${eventStart}`;
 }
 
-export function hasLeaveNowNoticeBeenSent(eventId: string): boolean {
-  return sentLeaveNowEventIds.has(eventId);
+const VIRTUAL_LOCATION_PATTERNS = [
+  /https?:\/\//,
+  /meet\.google\.com/,
+  /\bgoogle meet\b/,
+  /\b(online|virtual|zoom|webex|teams|hangouts?)\b/,
+  /\b(phone|video|conference) call\b/,
+];
+
+export function isVirtualLocation(location: string): boolean {
+  const clean = location.toLowerCase();
+  return VIRTUAL_LOCATION_PATTERNS.some((pattern) => pattern.test(clean));
 }
 
 export interface TravelEstimate {
@@ -41,14 +54,7 @@ export function estimateSingaporeTravelTime(location: string): TravelEstimate {
   let travelMinutes = 30; // default Singapore transit duration
   let transitMode: "transit" | "cab" | "walk" = "transit";
 
-  if (
-    clean.includes("online") ||
-    clean.includes("zoom") ||
-    clean.includes("meet") ||
-    clean.includes("teams") ||
-    clean.includes("call") ||
-    clean.includes("http")
-  ) {
+  if (isVirtualLocation(clean)) {
     return {
       location,
       travelMinutes: 0,
@@ -102,7 +108,8 @@ export function estimateSingaporeTravelTime(location: string): TravelEstimate {
  * Checks upcoming schedule for events requiring immediate departure notices.
  */
 export async function getUpcomingLeaveNowNotices(
-  now = new Date()
+  now = new Date(),
+  alreadySentKeys: Set<string> = new Set()
 ): Promise<LeaveNowNotice[]> {
   const nowMs = now.getTime();
   const lookaheadMs = 3 * 60 * 60 * 1000; // look ahead 3 hours
@@ -122,7 +129,7 @@ export async function getUpcomingLeaveNowNotices(
     if (
       event.isAllDay ||
       !event.location ||
-      hasLeaveNowNoticeBeenSent(event.eventId)
+      alreadySentKeys.has(leaveNowNoticeKey(event.eventId, event.start))
     ) {
       continue;
     }
@@ -200,12 +207,17 @@ export async function checkAndSendLeaveNowAlerts(
     targetChatId || Number(process.env.TELEGRAM_ALLOWED_USER_ID);
   if (!allowedUserId) return 0;
 
-  const notices = await getUpcomingLeaveNowNotices();
+  const alreadySentKeys = await getProcessedExternalIds();
+  const notices = await getUpcomingLeaveNowNotices(new Date(), alreadySentKeys);
   let sentCount = 0;
 
   for (const notice of notices) {
+    // Record first so an overlapping cron run cannot double-send.
+    await markExternalIdProcessed(
+      leaveNowNoticeKey(notice.eventId, notice.eventStartTime),
+      "leave_now_notice"
+    );
     await sendTelegramMessage(allowedUserId, notice.message);
-    markLeaveNowNoticeSent(notice.eventId);
     sentCount++;
   }
 

@@ -10,7 +10,6 @@
  */
 
 import { parseAssistantIntent } from "../lib/assistant-intent";
-import { INTENT_TEST_MESSAGES } from "./bench/fixtures";
 import { loadEnvLocal } from "./bench/util";
 
 export interface IntentTestCase {
@@ -41,6 +40,11 @@ export const TEST_CASES: IntentTestCase[] = [
   { message: "remember that Alice's birthday is June 15", expectedAction: "memory_save", description: "Personal memory save" },
   { message: "what is Alice's birthday?", expectedAction: "memory_recall", description: "Personal memory recall" },
   { message: "how much did I spend on Grab this month?", expectedAction: "finance_query", description: "Natural language finance query" },
+  { message: "remind me to pay rent on the 1st every month", expectedAction: "recurring_add", description: "Recurring monthly task" },
+  { message: "log Spotify $11.98 every month", expectedAction: "recurring_add", description: "Recurring subscription" },
+  { message: "show my subscriptions", expectedAction: "recurring_view", description: "View recurring schedules" },
+  { message: "set my monthly budget to $600", expectedAction: "budget_set", description: "Set overall budget" },
+  { message: "cap dining at $150 a month", expectedAction: "budget_set", description: "Set category cap" },
 ];
 
 async function run() {

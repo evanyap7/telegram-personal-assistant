@@ -9,7 +9,7 @@ import {
   calculateFreeSlotsFromIntervals,
   formatFreeSlotsMessage,
 } from "../lib/calendar";
-import { estimateSingaporeTravelTime } from "../lib/travel";
+import { estimateSingaporeTravelTime, isVirtualLocation } from "../lib/travel";
 
 let totalPassed = 0;
 let totalFailed = 0;
@@ -144,6 +144,18 @@ function runTests() {
     const walkEst = estimateSingaporeTravelTime("Nearby coffee shop down the block");
     assert(walkEst.travelMinutes === 10, "Nearby walk estimated at 10 minutes");
     assert(walkEst.transitMode === "walk", "Transit mode is walk");
+  }
+
+  // Test 8: Virtual location detection uses whole words
+  {
+    assert(!isVirtualLocation("Meeting Room 3, One-North"), "'Meeting Room' is a physical location");
+    assert(!isVirtualLocation("Callery Cafe"), "'Callery' is not a call");
+    assert(isVirtualLocation("Google Meet"), "Google Meet is virtual");
+    assert(isVirtualLocation("https://meet.google.com/abc-defg-hij"), "Meet link is virtual");
+    assert(isVirtualLocation("MS Teams"), "Teams is virtual");
+    assert(isVirtualLocation("Phone call with Alex"), "Phone call is virtual");
+    const roomEst = estimateSingaporeTravelTime("Meeting Room 3, One-North");
+    assert(roomEst.travelMinutes > 0, "Meeting room gets real travel time");
   }
 
   console.log(`\nResults: ${totalPassed} passed, ${totalFailed} failed.`);

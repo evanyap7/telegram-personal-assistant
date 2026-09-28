@@ -135,7 +135,7 @@ export async function handleTodoCompleteAction(params: {
 
   if (matches.length === 1) {
     await completeTodo(matches[0].taskId);
-    const undoToken = registerUndoAction(userId, {
+    const undoToken = await registerUndoAction(userId, {
       type: "todo_completed",
       description: matches[0].task,
       data: { taskId: matches[0].taskId },

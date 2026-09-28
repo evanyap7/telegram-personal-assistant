@@ -1,59 +1,30 @@
 import { deleteCalendarEvent } from "@/lib/calendar";
 import { uncompleteTodo, deleteTodo } from "@/lib/todos";
+import {
+  saveUndoAction,
+  takeUndoAction,
+  type UndoPayload,
+} from "@/lib/pending-actions";
 
-export type UndoActionType =
-  | "calendar_event_created"
-  | "todo_completed"
-  | "todo_created";
+export type UndoActionType = UndoPayload["type"];
 
-export interface UndoAction {
-  id: string;
-  userId: string;
-  type: UndoActionType;
-  description: string;
-  createdAt: number;
-  data: Record<string, any>;
-}
-
-// In-memory store for recent undoable actions (10 minute expiry)
-const undoStore = new Map<string, UndoAction>();
-const UNDO_TTL_MS = 10 * 60 * 1000;
-
-function cleanupExpired() {
-  const now = Date.now();
-  for (const [id, action] of undoStore.entries()) {
-    if (now - action.createdAt > UNDO_TTL_MS) {
-      undoStore.delete(id);
-    }
-  }
-}
-
-export function registerUndoAction(
+/**
+ * Registers an undoable action and returns its token. Tokens live in the
+ * PendingActions sheet (10 minute expiry, single use) so they survive
+ * serverless cold starts and cross-instance callbacks.
+ */
+export async function registerUndoAction(
   userId: number | string,
-  action: Omit<UndoAction, "id" | "userId" | "createdAt">
-): string {
-  cleanupExpired();
-  const id = `u_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  undoStore.set(id, {
-    ...action,
-    id,
-    userId: String(userId),
-    createdAt: Date.now(),
-  });
-  return id;
-}
-
-export function getUndoAction(token: string): UndoAction | undefined {
-  cleanupExpired();
-  return undoStore.get(token);
+  action: UndoPayload
+): Promise<string> {
+  return saveUndoAction({ userId: Number(userId), payload: action });
 }
 
 export async function executeUndo(
   token: string,
   userId: number | string
 ): Promise<{ success: boolean; message: string }> {
-  cleanupExpired();
-  const action = undoStore.get(token);
+  const action = await takeUndoAction(token, Number(userId));
 
   if (!action) {
     return {
@@ -61,15 +32,6 @@ export async function executeUndo(
       message: "⚠️ This undo action has expired or has already been used.",
     };
   }
-
-  if (action.userId !== String(userId)) {
-    return {
-      success: false,
-      message: "⚠️ You are not authorized to undo this action.",
-    };
-  }
-
-  undoStore.delete(token);
 
   try {
     switch (action.type) {

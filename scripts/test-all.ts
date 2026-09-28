@@ -27,7 +27,7 @@ const SUITES = [
   { name: "Calendar Free Slots & Travel Buffers", command: "npm run test:calendar" },
   { name: "Personal Memory & Contact Resolution", command: "npm run test:memory" },
   { name: "Currency Conversion & CSV Export", command: "npm run test:currency-export" },
-  { name: "Assistant Intent Classification Fixtures", command: "npm run test:intents -- --dry-run" },
+  { name: "Assistant Intent Classification Fixtures", command: "npm run test:intents" },
 ];
 
 function runMasterTest() {
@@ -52,7 +52,7 @@ function runMasterTest() {
         output,
         durationMs,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       const durationMs = Date.now() - start;
       console.log(`❌ FAILED (${durationMs}ms)`);
       allPassed = false;
@@ -60,7 +60,9 @@ function runMasterTest() {
         name: suite.name,
         command: suite.command,
         passed: false,
-        output: err.stdout || err.message,
+        output:
+          (err as { stdout?: string }).stdout ||
+          (err instanceof Error ? err.message : String(err)),
         durationMs,
       });
     }

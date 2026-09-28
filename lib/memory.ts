@@ -1,5 +1,6 @@
 import { getSheetsClient } from "./google";
 import { formatSingaporeTimestamp } from "./finance";
+import { encryptSecret, decryptSecret } from "./secret-box";
 
 const MEMORY_SHEET = "Memory";
 
@@ -122,7 +123,8 @@ export async function listAllMemories(): Promise<MemoryRecord[]> {
     const updatedAt = String(row[2] || "").trim();
     const category = (String(row[3] || "note").trim().toLowerCase() as MemoryCategory) || "note";
     const key = String(row[4] || "").trim();
-    const value = String(row[5] || "").trim();
+    const storedValue = String(row[5] || "").trim();
+    const value = decryptSecret(storedValue) ?? "🔒 (encrypted — MEMORY_ENCRYPTION_KEY missing or changed)";
     const tags = String(row[6] || "")
       .split(",")
       .map((t) => t.trim())
@@ -158,6 +160,10 @@ export async function saveMemory(input: SaveMemoryInput): Promise<MemoryRecord> 
   const tags = (input.tags || []).map((t) => t.trim()).filter(Boolean);
   const tagsStr = tags.join(", ");
 
+  // Credentials are encrypted at rest when MEMORY_ENCRYPTION_KEY is set.
+  const storedVal =
+    category === "credential" ? encryptSecret(cleanVal) ?? cleanVal : cleanVal;
+
   const existing = await listAllMemories();
   const match = existing.find(
     (m) =>
@@ -170,9 +176,9 @@ export async function saveMemory(input: SaveMemoryInput): Promise<MemoryRecord> 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${MEMORY_SHEET}!C${match.rowNumber}:G${match.rowNumber}`,
-      valueInputOption: "USER_ENTERED",
+      valueInputOption: "RAW",
       requestBody: {
-        values: [[nowStr, category, cleanKey, cleanVal, tagsStr]],
+        values: [[nowStr, category, cleanKey, storedVal, tagsStr]],
       },
     });
 
@@ -202,10 +208,10 @@ export async function saveMemory(input: SaveMemoryInput): Promise<MemoryRecord> 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${MEMORY_SHEET}!A:G`,
-    valueInputOption: "USER_ENTERED",
+    valueInputOption: "RAW",
     insertDataOption: "INSERT_ROWS",
     requestBody: {
-      values: [[memoryId, nowStr, nowStr, category, cleanKey, cleanVal, tagsStr]],
+      values: [[memoryId, nowStr, nowStr, category, cleanKey, storedVal, tagsStr]],
     },
   });
 
