@@ -5,7 +5,7 @@ import { processDueRecurringSchedules } from "@/lib/recurring";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorizedCronRequest(req.headers.get("authorization"))) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
