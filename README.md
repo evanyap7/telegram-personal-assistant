@@ -122,7 +122,9 @@ Automated scheduled summaries delivered to Telegram:
 
 ## ⏰ Cron Endpoints Setup
 
-Configure your cron provider (e.g. Vercel Cron or [cron-job.org](https://cron-job.org)) with header `Authorization: Bearer <CRON_SECRET>`:
+Configure your cron provider (e.g. Vercel Cron or [cron-job.org](https://cron-job.org)) with:
+- **Header**: `Authorization: Bearer <CRON_SECRET>`
+- **Or URL Query Param**: `?secret=<CRON_SECRET>` (e.g. `https://<app>.vercel.app/api/cron/calendar-reminders?secret=<CRON_SECRET>`)
 
 | Endpoint | Schedule | Purpose |
 | --- | --- | --- |
