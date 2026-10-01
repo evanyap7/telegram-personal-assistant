@@ -1,10 +1,12 @@
-import { deleteCalendarEvent } from "@/lib/calendar";
-import { uncompleteTodo, deleteTodo } from "@/lib/todos";
+import { deleteCalendarEvent } from "./calendar";
+import { uncompleteTodo, deleteTodo } from "./todos";
+import { softDeleteTransaction } from "./finance";
 import {
   saveUndoAction,
   takeUndoAction,
+  takeLatestUndoAction,
   type UndoPayload,
-} from "@/lib/pending-actions";
+} from "./pending-actions";
 
 export type UndoActionType = UndoPayload["type"];
 
@@ -20,19 +22,9 @@ export async function registerUndoAction(
   return saveUndoAction({ userId: Number(userId), payload: action });
 }
 
-export async function executeUndo(
-  token: string,
-  userId: number | string
+async function executeUndoPayload(
+  action: UndoPayload
 ): Promise<{ success: boolean; message: string }> {
-  const action = await takeUndoAction(token, Number(userId));
-
-  if (!action) {
-    return {
-      success: false,
-      message: "⚠️ This undo action has expired or has already been used.",
-    };
-  }
-
   try {
     switch (action.type) {
       case "calendar_event_created": {
@@ -46,7 +38,40 @@ export async function executeUndo(
         });
         return {
           success: true,
-          message: `↩️ Undone: Deleted created calendar event (${action.description}).`,
+          message: `↩️ Undone: Deleted calendar event (${action.description}).`,
+        };
+      }
+
+      case "calendar_batch_created": {
+        const calendarName = action.data.calendarName === "work" ? "work" : "personal";
+        const eventIds: string[] = JSON.parse(action.data.eventIds || "[]");
+        await Promise.all(
+          eventIds.map((eventId) => deleteCalendarEvent({ calendarName, eventId }))
+        );
+        return {
+          success: true,
+          message: `↩️ Undone: Deleted ${eventIds.length} created calendar events.`,
+        };
+      }
+
+      case "finance_transaction_created": {
+        const { transactionId } = action.data;
+        if (!transactionId) {
+          return { success: false, message: "Missing transaction ID for finance undo." };
+        }
+        await softDeleteTransaction(transactionId);
+        return {
+          success: true,
+          message: `↩️ Undone: Removed transaction (${action.description}).`,
+        };
+      }
+
+      case "finance_batch_created": {
+        const transactionIds: string[] = JSON.parse(action.data.transactionIds || "[]");
+        await Promise.all(transactionIds.map((id) => softDeleteTransaction(id)));
+        return {
+          success: true,
+          message: `↩️ Undone: Removed ${transactionIds.length} logged transactions.`,
         };
       }
 
@@ -73,7 +98,26 @@ export async function executeUndo(
         await deleteTodo(taskId);
         return {
           success: true,
-          message: `↩️ Undone: Removed newly created task (${action.description}).`,
+          message: `↩️ Undone: Removed task (${action.description}).`,
+        };
+      }
+
+      case "todo_batch_created": {
+        const taskIds: string[] = JSON.parse(action.data.taskIds || "[]");
+        await Promise.all(taskIds.map((id) => deleteTodo(id)));
+        return {
+          success: true,
+          message: `↩️ Undone: Removed ${taskIds.length} newly added tasks.`,
+        };
+      }
+
+      case "workout_logged": {
+        const { deleteWorkoutRows } = await import("./workout/workout-service");
+        const rowIds: string[] = JSON.parse(action.data.rowIds || "[]");
+        await deleteWorkoutRows(rowIds);
+        return {
+          success: true,
+          message: `↩️ Undone: Reverted logged workout (${action.description}).`,
         };
       }
 
@@ -87,6 +131,35 @@ export async function executeUndo(
       message: `Failed to undo action: ${errMessage}`,
     };
   }
+}
+
+export async function executeUndo(
+  token: string,
+  userId: number | string
+): Promise<{ success: boolean; message: string }> {
+  const action = await takeUndoAction(token, Number(userId));
+
+  if (!action) {
+    return {
+      success: false,
+      message: "⚠️ This undo action has expired or has already been used.",
+    };
+  }
+
+  return executeUndoPayload(action);
+}
+
+export async function executeLatestUndo(
+  userId: number | string
+): Promise<{ success: boolean; message: string }> {
+  const latest = await takeLatestUndoAction(Number(userId));
+  if (!latest) {
+    return {
+      success: false,
+      message: "⚠️ No recent actions found to undo (or action has expired).",
+    };
+  }
+  return executeUndoPayload(latest.payload);
 }
 
 export function buildUndoInlineKeyboard(undoToken: string) {

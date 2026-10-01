@@ -230,6 +230,83 @@ export async function addTodo(input: AddTodoInput): Promise<TodoItem> {
   };
 }
 
+export async function addTodosBatch(inputs: AddTodoInput[]): Promise<TodoItem[]> {
+  if (inputs.length === 0) return [];
+  if (inputs.length === 1) {
+    const single = await addTodo(inputs[0]);
+    return [single];
+  }
+
+  await ensureTodosSheetExists();
+
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const createdAt = formatSingaporeTimestamp();
+  const createdItems: TodoItem[] = [];
+  const rowsToAppend: string[][] = [];
+
+  for (const input of inputs) {
+    const taskId = createTaskId();
+    const dueDate = input.dueDate?.trim() ?? "";
+    const priority = input.priority ?? "medium";
+    const status = "active";
+    const completedAt = "";
+    const remindInterval =
+      input.remindIntervalMinutes && input.remindIntervalMinutes > 0
+        ? String(input.remindIntervalMinutes)
+        : "";
+    const lastRemindedAt = remindInterval ? new Date().toISOString() : "";
+    const chatIdStr = input.chatId ? String(input.chatId) : "";
+
+    rowsToAppend.push([
+      taskId,
+      createdAt,
+      input.task.trim(),
+      dueDate,
+      priority,
+      status,
+      completedAt,
+      remindInterval,
+      lastRemindedAt,
+      chatIdStr,
+    ]);
+
+    createdItems.push({
+      rowNumber: 0,
+      taskId,
+      createdAt,
+      task: input.task.trim(),
+      dueDate,
+      priority,
+      status,
+      completedAt,
+      remindIntervalMinutes: input.remindIntervalMinutes,
+      lastRemindedAt: lastRemindedAt || undefined,
+      chatId: input.chatId,
+    });
+  }
+
+  const response = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${TODOS_SHEET}!A:J`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: {
+      values: rowsToAppend,
+    },
+  });
+
+  const updatedRange = response.data.updates?.updatedRange ?? "";
+  const match = updatedRange.match(/!A(\d+):/);
+  const startRow = match ? Number(match[1]) : 2;
+
+  createdItems.forEach((item, index) => {
+    item.rowNumber = startRow + index;
+  });
+
+  return createdItems;
+}
+
 export async function listTodos(filter?: {
   date?: string; // YYYY-MM-DD or 'today'
   status?: "active" | "completed" | "all";

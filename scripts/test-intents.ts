@@ -45,6 +45,11 @@ export const TEST_CASES: IntentTestCase[] = [
   { message: "show my subscriptions", expectedAction: "recurring_view", description: "View recurring schedules" },
   { message: "set my monthly budget to $600", expectedAction: "budget_set", description: "Set overall budget" },
   { message: "cap dining at $150 a month", expectedAction: "budget_set", description: "Set category cap" },
+  { message: "I'm going to the gym", expectedAction: "workout_start", description: "Workout start greeting" },
+  { message: "going to school gym", expectedAction: "workout_start", description: "Workout start with location" },
+  { message: "show my workout stats", expectedAction: "workout_view", description: "Workout progression view" },
+  { message: "undo", expectedAction: "undo", description: "Conversational undo" },
+  { message: "add to my todo list: 1. buy milk 2. do laundry", expectedAction: "todo_add", description: "Multi-item todo batch add" },
 ];
 
 async function run() {

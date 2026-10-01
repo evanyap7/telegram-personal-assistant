@@ -108,7 +108,15 @@ export type CalendarReschedulePayload = {
 };
 
 export type UndoPayload = {
-  type: "calendar_event_created" | "todo_completed" | "todo_created";
+  type:
+    | "calendar_event_created"
+    | "calendar_batch_created"
+    | "finance_transaction_created"
+    | "finance_batch_created"
+    | "todo_completed"
+    | "todo_created"
+    | "todo_batch_created"
+    | "workout_logged";
   description: string;
   data: Record<string, string>;
 };
@@ -1009,4 +1017,47 @@ export async function takeUndoAction(
     nextStatus: "confirmed",
   });
   return result?.payload ?? null;
+}
+
+export async function takeLatestUndoAction(
+  userId: number
+): Promise<{ token: string; payload: UndoPayload } | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const token = row[0] ?? "";
+    const rowUserId = Number(row[1]);
+    const actionType = row[2] as PendingActionType;
+    const payloadJson = row[3] ?? "{}";
+    const expiresAt = row[4] ?? "";
+    const status = row[5] ?? "";
+
+    if (
+      rowUserId === userId &&
+      actionType === "undo" &&
+      status === "pending" &&
+      !isExpired(expiresAt)
+    ) {
+      await setPendingStatus(i + 2, "confirmed");
+      try {
+        return {
+          token,
+          payload: parsePayload<UndoPayload>(payloadJson),
+        };
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  return null;
 }
