@@ -1,5 +1,6 @@
 import {
   addTodo,
+  addTodosBatch,
   completeTodo,
   listTodos,
   searchActiveTodos,
@@ -55,51 +56,107 @@ export function formatTodoListMessage(
 
 export async function handleTodoAddAction(params: {
   chatId: number;
-  task: string;
+  userId?: number;
+  task?: string;
+  tasks?: string[];
   dueDate?: string;
   priority?: "low" | "medium" | "high";
   remindIntervalMinutes?: number;
-}): Promise<TodoItem> {
-  const { chatId, task, dueDate, priority, remindIntervalMinutes } = params;
-
-  const todo = await addTodo({
+}): Promise<TodoItem[]> {
+  const {
+    chatId,
+    userId = params.chatId,
     task,
+    tasks,
+    dueDate,
+    priority,
+    remindIntervalMinutes,
+  } = params;
+
+  const rawTasks =
+    tasks && tasks.length > 0 ? tasks : task ? [task] : [];
+
+  if (rawTasks.length === 0) {
+    await sendTelegramMessage(chatId, "⚠️ Please specify at least one task to add.");
+    return [];
+  }
+
+  if (rawTasks.length === 1) {
+    const singleTask = rawTasks[0].trim();
+    const todo = await addTodo({
+      task: singleTask,
+      dueDate,
+      priority,
+      remindIntervalMinutes,
+      chatId,
+    });
+
+    const dueStr = todo.dueDate
+      ? `\n📅 Due: ${formatCalendarDate(todo.dueDate)}`
+      : "";
+    const remindStr = todo.remindIntervalMinutes
+      ? `\n🔔 Reminder: Every ${todo.remindIntervalMinutes} mins until marked done`
+      : "";
+
+    const undoToken = await registerUndoAction(userId, {
+      type: "todo_created",
+      description: todo.task,
+      data: { taskId: todo.taskId },
+    });
+
+    const buttons = [
+      {
+        text: "✅ Mark Done",
+        callback_data: `todo_done:${todo.taskId}`,
+      },
+      {
+        text: "↩️ Undo",
+        callback_data: `undo:${undoToken}`,
+      },
+    ];
+
+    await sendTelegramMessage(
+      chatId,
+      `✅ Added to your to-do list:\n• ${todo.task}${dueStr}${remindStr}`,
+      {
+        inline_keyboard: [buttons],
+      }
+    );
+
+    return [todo];
+  }
+
+  // Multi-item to-do batch
+  const inputs = rawTasks.map((t) => ({
+    task: t.trim(),
     dueDate,
     priority,
     remindIntervalMinutes,
     chatId,
+  }));
+
+  const created = await addTodosBatch(inputs);
+
+  const undoToken = await registerUndoAction(userId, {
+    type: "todo_batch_created",
+    description: `${created.length} tasks`,
+    data: { taskIds: JSON.stringify(created.map((c) => c.taskId)) },
   });
 
-  const dueStr = todo.dueDate
-    ? `\n📅 Due: ${formatCalendarDate(todo.dueDate)}`
-    : "";
-  const remindStr = todo.remindIntervalMinutes
-    ? `\n🔔 Reminder: Every ${todo.remindIntervalMinutes} mins until marked done`
-    : "";
-
-  const buttons = [
-    {
-      text: "✅ Mark Done",
-      callback_data: `todo_done:${todo.taskId}`,
-    },
-  ];
-  if (todo.remindIntervalMinutes) {
-    buttons.push({
-      text: "🔕 Mute",
-      callback_data: `todo_mute:${todo.taskId}`,
-    });
-  }
+  const lines = [`✅ Added ${created.length} tasks to your to-do list:`];
+  created.forEach((t, i) => {
+    lines.push(`${i + 1}. ${t.task}`);
+  });
 
   await sendTelegramMessage(
     chatId,
-    `✅ Added to your to-do list:\n• ${todo.task}${dueStr}${remindStr}`,
-    {
-      inline_keyboard: [buttons],
-    }
+    lines.join("\n"),
+    buildUndoInlineKeyboard(undoToken)
   );
 
-  return todo;
+  return created;
 }
+
 
 export async function handleTodoViewAction(params: {
   chatId: number;

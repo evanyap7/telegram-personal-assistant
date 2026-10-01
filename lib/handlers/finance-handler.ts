@@ -1,5 +1,6 @@
 import {
   addTransaction,
+  addTransactionsBatch,
   FinanceSummary,
   FinanceTransaction,
   getFinanceSummary,
@@ -20,6 +21,7 @@ import {
   formatCurrencyConversion,
   isSgd,
 } from "@/lib/currency";
+import { registerUndoAction, buildUndoInlineKeyboard } from "@/lib/undo";
 
 export function formatFinanceTransaction(input: {
   type: string;
@@ -157,6 +159,7 @@ export async function resolveRepliedTransaction(
 
 export async function handleFinanceAddAction(params: {
   chatId: number;
+  userId?: number;
   intent: {
     type: "income" | "expense";
     amount: number;
@@ -167,7 +170,7 @@ export async function handleFinanceAddAction(params: {
   };
   messageDateObj?: Date;
 }): Promise<void> {
-  const { chatId, intent, messageDateObj } = params;
+  const { chatId, userId = params.chatId, intent, messageDateObj } = params;
 
   let effectiveAmount = intent.amount;
   let effectiveCurrency = intent.currency;
@@ -195,8 +198,14 @@ export async function handleFinanceAddAction(params: {
     transactionTimestamp: messageDateObj,
   });
 
+  const undoToken = await registerUndoAction(userId, {
+    type: "finance_transaction_created",
+    description: `${effectiveDescription} ($${effectiveAmount.toFixed(2)} ${effectiveCurrency})`,
+    data: { transactionId: transaction.transactionId },
+  });
+
   const responseLines = [
-    "Transaction added.",
+    "✅ Transaction added.",
     `Type: ${intent.type}`,
     `Amount: ${effectiveAmount.toFixed(2)} ${effectiveCurrency}`,
     conversionNotice,
@@ -231,8 +240,67 @@ export async function handleFinanceAddAction(params: {
     }
   }
 
-  await sendTelegramMessage(chatId, responseLines.join("\n"));
+  await sendTelegramMessage(
+    chatId,
+    responseLines.join("\n"),
+    buildUndoInlineKeyboard(undoToken)
+  );
 }
+
+export async function handleFinanceBatchAddAction(params: {
+  chatId: number;
+  userId?: number;
+  transactions: Array<{
+    type: "income" | "expense";
+    amount: number;
+    currency: string;
+    category: string;
+    description: string;
+    transactionDate?: string;
+  }>;
+}): Promise<void> {
+  const { chatId, userId = params.chatId, transactions } = params;
+
+  if (transactions.length === 0) {
+    await sendTelegramMessage(chatId, "No transactions found to log.");
+    return;
+  }
+
+  const added = await addTransactionsBatch(
+    transactions.map((t) => ({
+      type: t.type,
+      amount: t.amount,
+      currency: t.currency,
+      category: t.category,
+      description: t.description,
+      transactionDate: t.transactionDate,
+    }))
+  );
+
+  const undoToken = await registerUndoAction(userId, {
+    type: "finance_batch_created",
+    description: `${added.length} transactions`,
+    data: {
+      transactionIds: JSON.stringify(added.map((t) => t.transactionId)),
+    },
+  });
+
+  const total = transactions.reduce((acc, t) => acc + Number(t.amount), 0);
+  const previews = transactions.map((t, idx) => {
+    return `${idx + 1}. ${t.description} — $${Number(t.amount).toFixed(2)} ${t.currency} (${t.category})`;
+  });
+
+  await sendTelegramMessage(
+    chatId,
+    [
+      `✅ Logged ${added.length} transactions (Total: $${total.toFixed(2)}):`,
+      "",
+      previews.join("\n"),
+    ].join("\n"),
+    buildUndoInlineKeyboard(undoToken)
+  );
+}
+
 
 export async function handleFinanceSummaryAction(params: {
   chatId: number;

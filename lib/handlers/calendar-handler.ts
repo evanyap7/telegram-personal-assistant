@@ -1,4 +1,5 @@
 import {
+  createCalendarEvent,
   getUpcomingSchedule,
   searchUpcomingCalendarEvents,
   planCalendarReschedule,
@@ -11,6 +12,8 @@ import {
   formatSchedulePureTableView,
   ScheduleTimeframe,
 } from "@/lib/calendar-format";
+export { formatScheduleAgendaView, formatSchedulePureTableView };
+export type { ScheduleTimeframe };
 import {
   CalendarAddPayload,
   CalendarBatchAddPayload,
@@ -22,6 +25,7 @@ import {
   takePendingCalendarRescheduleAction,
   cancelPendingCalendarRescheduleAction,
 } from "@/lib/pending-actions";
+import { registerUndoAction, buildUndoInlineKeyboard } from "@/lib/undo";
 import {
   sendTelegramMessage,
   answerTelegramCallback,
@@ -195,28 +199,31 @@ export async function handleCalendarAddAction(params: {
     await cancelActivePendingCalendarAction(userId);
   }
 
-  const token = await savePendingCalendarAction({
-    userId,
-    payload: intent,
+  const created = await createCalendarEvent(intent);
+
+  const undoToken = await registerUndoAction(userId, {
+    type: "calendar_event_created",
+    description: intent.title,
+    data: {
+      calendarName: intent.calendarName,
+      eventId: created.id || "",
+    },
   });
+
+  const badge = intent.calendarName === "work" ? "💼 Work" : "🏠 Personal";
+  const lines = [
+    `✅ Event added to ${badge} Calendar:`,
+    "",
+    formatCalendarEvent(intent),
+  ];
+  if (created.htmlLink) {
+    lines.push(`Link: ${created.htmlLink}`);
+  }
 
   await sendTelegramMessage(
     chatId,
-    ["Create this calendar event?", "", formatCalendarEvent(intent)].join("\n"),
-    {
-      inline_keyboard: [
-        [
-          {
-            text: "✅ Yes, create",
-            callback_data: `calendar_yes:${token}`,
-          },
-          {
-            text: "❌ No, cancel",
-            callback_data: `calendar_no:${token}`,
-          },
-        ],
-      ],
-    }
+    lines.join("\n"),
+    buildUndoInlineKeyboard(undoToken)
   );
 }
 
@@ -232,11 +239,27 @@ export async function handleCalendarBatchAddAction(params: {
     await cancelActivePendingCalendarAction(userId);
   }
 
-  const token = await savePendingCalendarBatchAction({
-    userId,
-    payload: intent,
+  const createdEvents = await Promise.all(
+    intent.events.map((ev) =>
+      createCalendarEvent({
+        calendarName: intent.calendarName,
+        ...ev,
+      })
+    )
+  );
+
+  const eventIds = createdEvents.map((e) => e.id).filter(Boolean);
+
+  const undoToken = await registerUndoAction(userId, {
+    type: "calendar_batch_created",
+    description: `${intent.events.length} events`,
+    data: {
+      calendarName: intent.calendarName,
+      eventIds: JSON.stringify(eventIds),
+    },
   });
 
+  const badge = intent.calendarName === "work" ? "💼 Work" : "🏠 Personal";
   const eventPreviews = intent.events.map((ev, idx) => {
     const timing = ev.allDay
       ? `${formatCalendarDate(ev.date || "")} (All day)`
@@ -248,26 +271,11 @@ export async function handleCalendarBatchAddAction(params: {
   await sendTelegramMessage(
     chatId,
     [
-      `I found ${intent.events.length} events for your ${intent.calendarName} calendar:`,
+      `✅ Added ${intent.events.length} events to ${badge} Calendar:`,
       "",
       eventPreviews.join("\n\n"),
-      "",
-      `Create all ${intent.events.length} events?`,
     ].join("\n"),
-    {
-      inline_keyboard: [
-        [
-          {
-            text: `✅ Yes, create all (${intent.events.length})`,
-            callback_data: `calendar_batch_yes:${token}`,
-          },
-          {
-            text: "❌ No, cancel",
-            callback_data: `calendar_batch_no:${token}`,
-          },
-        ],
-      ],
-    }
+    buildUndoInlineKeyboard(undoToken)
   );
 }
 

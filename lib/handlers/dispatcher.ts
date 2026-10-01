@@ -1,12 +1,20 @@
 import type { AssistantIntent } from "../assistant-intent";
 import type { FinanceTransaction } from "../finance";
 import {
+  getTransactionById,
+  searchActiveTransactions,
+  updateTransaction,
+} from "../finance";
+import { moveCalendarEvent } from "../calendar";
+import {
   handleFinanceAddAction,
   handleFinanceSummaryAction,
   handleFinanceDeleteSearchAction,
   handleFinanceQueryAction,
 } from "./finance-handler";
 import {
+  formatCalendarDate,
+  formatSingaporeDateTime,
   handleCalendarViewAction,
   handleCalendarAddAction,
   handleCalendarBatchAddAction,
@@ -40,7 +48,12 @@ import {
   handleRecurringToggleCallback,
 } from "./recurring-handler";
 import { handleBudgetSetAction } from "./budget-handler";
-import { executeUndo } from "../undo";
+import {
+  handleWorkoutStartAction,
+  handleWorkoutLogAction,
+  handleWorkoutViewAction,
+} from "../workout/workout-handler";
+import { executeUndo, executeLatestUndo } from "../undo";
 import { logHabitDone } from "../habits";
 import {
   answerTelegramCallback,
@@ -139,6 +152,7 @@ defaultRegistry
   .registerIntent("finance_add", async (ctx, intent) => {
     await handleFinanceAddAction({
       chatId: ctx.chatId,
+      userId: ctx.userId,
       intent,
       messageDateObj: ctx.messageDateObj,
     });
@@ -238,7 +252,9 @@ defaultRegistry
   .registerIntent("todo_add", async (ctx, intent) => {
     await handleTodoAddAction({
       chatId: ctx.chatId,
+      userId: ctx.userId,
       task: intent.task,
+      tasks: intent.tasks,
       dueDate: intent.dueDate,
       priority: intent.priority,
       remindIntervalMinutes: intent.remindIntervalMinutes,
@@ -337,12 +353,163 @@ defaultRegistry
     await handleRecurringViewAction({ chatId: ctx.chatId });
     return { completionStatus: "recurring_view" };
   })
+  .registerIntent("finance_modify", async (ctx, intent) => {
+    const resolvedTxnId =
+      intent.transactionId ||
+      (ctx.text.toLowerCase().includes("this") || ctx.text.toLowerCase().includes("that")
+        ? ctx.targetTransaction?.transactionId
+        : undefined);
+
+    let transaction: FinanceTransaction | null = null;
+    if (resolvedTxnId) {
+      transaction = await getTransactionById(resolvedTxnId);
+    }
+    if (!transaction && intent.query) {
+      const matches = await searchActiveTransactions(intent.query);
+      if (matches.length > 0) {
+        transaction = matches[0];
+      }
+    }
+    if (!transaction) {
+      transaction = ctx.targetTransaction || null;
+    }
+
+    if (!transaction) {
+      await sendTelegramMessage(
+        ctx.chatId,
+        "I couldn't find the transaction you want to modify. Please specify the description or reply to the transaction message."
+      );
+      return { completionStatus: "finance_modify_not_found" };
+    }
+
+    if (
+      intent.updates.description &&
+      transaction.description &&
+      (transaction.description.includes("(DBS PayLah)") ||
+        transaction.description.includes("(Apple Pay)")) &&
+      !intent.updates.description.includes("(DBS PayLah)") &&
+      !intent.updates.description.includes("(Apple Pay)")
+    ) {
+      const currentDesc = transaction.description;
+      const item = intent.updates.description.trim();
+      if (currentDesc.includes(" @ ")) {
+        const parts = currentDesc.split(" @ ");
+        intent.updates.description = `${item} @ ${parts.slice(1).join(" @ ")}`;
+      } else {
+        intent.updates.description = `${item} @ ${currentDesc}`;
+      }
+    }
+
+    const updated = await updateTransaction(transaction.transactionId, intent.updates);
+    if (!updated) {
+      await sendTelegramMessage(
+        ctx.chatId,
+        `Failed to update transaction ${transaction.transactionId}. It may have already been deleted.`
+      );
+      return { completionStatus: "finance_modify_failed" };
+    }
+
+    await sendTelegramMessage(
+      ctx.chatId,
+      [
+        "✅ Transaction updated!",
+        "",
+        `Type: ${updated.type}`,
+        `Amount: ${Number(updated.amount).toFixed(2)} ${updated.currency}`,
+        `Category: ${updated.category}`,
+        `Description: ${updated.description}`,
+        `Date & Time: ${updated.timestamp} (SGT)`,
+      ].join("\n")
+    );
+    return { completionStatus: "finance_modify_success" };
+  })
+  .registerIntent("calendar_move", async (ctx, intent) => {
+    try {
+      const moveRes = await moveCalendarEvent({
+        fromCalendar: intent.fromCalendar,
+        toCalendar: intent.toCalendar,
+        title: intent.title,
+        eventId: intent.eventId,
+        allDay: intent.allDay,
+        start: intent.start,
+        end: intent.end,
+        date: intent.date,
+      });
+
+      const fromBadge = intent.fromCalendar === "work" ? "💼 Work" : "🏠 Personal";
+      const toBadge = intent.toCalendar === "work" ? "💼 Work" : "🏠 Personal";
+      const timingLine = moveRes.allDay
+        ? `Date: ${formatCalendarDate(moveRes.start)} (All day)`
+        : `Start: ${formatSingaporeDateTime(moveRes.start)}\nEnd: ${formatSingaporeDateTime(moveRes.end ?? "")}`;
+
+      await sendTelegramMessage(
+        ctx.chatId,
+        [
+          `✅ Moved event from ${fromBadge} to ${toBadge}!`,
+          "",
+          `Title: ${moveRes.title}`,
+          timingLine,
+          moveRes.htmlLink ? `Link: ${moveRes.htmlLink}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+      return { completionStatus: "calendar_move" };
+    } catch (moveError) {
+      await sendTelegramMessage(
+        ctx.chatId,
+        `Sorry, I couldn't move "${intent.title}" to ${intent.toCalendar}: ${
+          moveError instanceof Error ? moveError.message : "Unknown error"
+        }`
+      );
+      return { completionStatus: "calendar_move_failed" };
+    }
+  })
   .registerIntent("budget_set", async (ctx, intent) => {
     await handleBudgetSetAction({
       chatId: ctx.chatId,
       intent: { amount: intent.amount, category: intent.category },
     });
     return { completionStatus: "budget_set" };
+  })
+  .registerIntent("workout_start", async (ctx, intent) => {
+    await handleWorkoutStartAction({
+      chatId: ctx.chatId,
+      userId: ctx.userId,
+      location: intent.location,
+    });
+    return { completionStatus: "workout_start" };
+  })
+  .registerIntent("workout_log", async (ctx, intent) => {
+    await handleWorkoutLogAction({
+      chatId: ctx.chatId,
+      userId: ctx.userId,
+      text: intent.text,
+      location: intent.location,
+    });
+    return { completionStatus: "workout_log" };
+  })
+  .registerIntent("workout_view", async (ctx) => {
+    await handleWorkoutViewAction({
+      chatId: ctx.chatId,
+    });
+    return { completionStatus: "workout_view" };
+  })
+  .registerIntent("undo", async (ctx) => {
+    const res = await executeLatestUndo(ctx.userId);
+    await sendTelegramMessage(ctx.chatId, res.message);
+    return { completionStatus: "undo_conversational" };
+  })
+  .registerCallback("gym_loc", async (ctx) => {
+    const location = (ctx.parts[1] || "school") as "school" | "csc";
+    await answerTelegramCallback(ctx.callbackId, `Setting up ${location} workout...`);
+    await removeTelegramInlineKeyboard(ctx.chatId, ctx.messageId);
+    await handleWorkoutStartAction({
+      chatId: ctx.chatId,
+      userId: ctx.userId,
+      location,
+    });
+    return true;
   })
   .registerCallback("cal_resched_yes", (ctx) =>
     handleCalendarRescheduleCallback({

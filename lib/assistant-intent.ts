@@ -171,7 +171,8 @@ const intentSchema = z.union([
   }),
   z.object({
     action: z.literal("todo_add"),
-    task: z.string().min(1).max(300),
+    task: z.string().min(1).max(300).optional(),
+    tasks: z.array(z.string().min(1).max(300)).optional(),
     dueDate: z.string().date().optional(),
     priority: z.enum(["low", "medium", "high"]).default("medium"),
     remindIntervalMinutes: z.number().int().positive().optional(),
@@ -207,6 +208,21 @@ const intentSchema = z.union([
     end: singaporeDateTimeSchema.optional(),
     date: z.string().date().optional(),
     location: z.string().max(200).optional(),
+  }),
+  z.object({
+    action: z.literal("workout_start"),
+    location: z.enum(["school", "csc"]).optional(),
+  }),
+  z.object({
+    action: z.literal("workout_log"),
+    text: z.string().min(1),
+    location: z.enum(["school", "csc"]).optional(),
+  }),
+  z.object({
+    action: z.literal("workout_view"),
+  }),
+  z.object({
+    action: z.literal("undo"),
   }),
   z.object({
     action: z.literal("unknown"),
@@ -495,7 +511,11 @@ Supported actions:
 22. recurring_add
 23. recurring_view
 24. budget_set
-25. unknown
+25. workout_start
+26. workout_log
+27. workout_view
+28. undo
+29. unknown
 
 Finance entry:
 {
@@ -731,6 +751,29 @@ Set the monthly budget or a category spending cap:
   "category": "optional category name; omit to set the overall monthly budget"
 }
 
+Start or setup workout session:
+{
+  "action": "workout_start",
+  "location": "school" or "csc" (optional if unspecified)
+}
+
+Log workout sets or exercise logs:
+{
+  "action": "workout_log",
+  "text": "raw exercise and sets text",
+  "location": "school" or "csc" (optional)
+}
+
+View workout stats and progressive overload analytics:
+{
+  "action": "workout_view"
+}
+
+Undo last autonomous action:
+{
+  "action": "undo"
+}
+
 Unknown:
 {
   "action": "unknown",
@@ -868,10 +911,21 @@ To-do rules:
 - "Remind me to buy groceries" -> todo_add with task "buy groceries", remindIntervalMinutes: 30.
 - "Remind me every 15 minutes to drink water" -> todo_add with task "drink water", remindIntervalMinutes: 15.
 - "Add finish presentation due tomorrow" -> todo_add with task "finish presentation" and dueDate of tomorrow.
+- If the user provides multiple tasks in a list, bullet points, or multiple items (e.g. "add to my todo list: 1. buy milk 2. do laundry 3. call mom" or "add buy milk, wash car, and clean desk to my tasks"), return todo_add with tasks: ["buy milk", "do laundry", "call mom"] (an array of strings).
 - "What do I have to do for today?", "what do I have to do today?", "what are my tasks for today?", "today's todo list" -> todo_view with timeframe "today".
 - "What's on my to-do list?", "show my tasks", "view my todo list", "what do I have to do?", "list my todos" -> todo_view with timeframe "all".
 - "I'm done with buy milk", "done with call John", "finished buying groceries", "mark buy milk as done" -> todo_complete with query "buy milk" (or relevant keyword).
 - "Remove buy milk from my list", "delete task call John", "delete todo buy milk" -> todo_delete_search with query.
+
+Workout rules:
+- If the user says they are going to the gym, heading to workout, or starting gym (e.g. "I'm going to the gym", "heading to the gym", "gym time", "going to school gym", "going to csc gym"), return action "workout_start". DO NOT classify as calendar_add or unknown unless they explicitly say "add gym to my calendar" or provide a specific scheduling time like "schedule gym tomorrow at 7pm".
+  - If they mention "school", location is "school". If they mention "csc", location is "csc". Otherwise omit location so the bot can prompt them.
+- If the user sends raw workout sets or exercise logs with weights and reps (e.g. "incline smith 100 x 5.5, 100 x 4, 80 x 7", "bench press 90 x 7, t bar 60 x 8", or multiline exercise notes), return action "workout_log" with text containing the log.
+- If the user asks about their workout stats, PRs, or training progress (e.g. "show my workout stats", "what's my best bench", "gym progress", "workout stats"), return action "workout_view".
+
+Undo rules:
+- If the user says "undo", "cancel that", "revert that", "undo last action", "revert", return action "undo".
+- Do NOT return undo if the user is asking to delete a specific item by name (e.g. "delete my coffee expense" is finance_delete_search). Only standalone or general rollback phrases are action "undo".
 
 Email draft rules:
 - If the user asks to draft, write, compose, or prepare an email, return email_draft.

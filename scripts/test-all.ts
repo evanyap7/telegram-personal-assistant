@@ -28,6 +28,8 @@ const SUITES = [
   { name: "Personal Memory & Contact Resolution", command: "npm run test:memory" },
   { name: "Currency Conversion & CSV Export", command: "npm run test:currency-export" },
   { name: "Cron Endpoint Request Authorization", command: "npm run test:cron-auth" },
+  { name: "Workout Progressive Overload Engine", command: "npm run test:workout" },
+  { name: "Multi-Item To-Do Batch Logging", command: "npm run test:todos-batch" },
   { name: "Assistant Intent Classification Fixtures", command: "npm run test:intents" },
 ];
 
