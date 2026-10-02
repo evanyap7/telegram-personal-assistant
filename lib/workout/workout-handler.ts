@@ -7,7 +7,6 @@ import {
   calculateSessionVolume,
 } from "./progressive-overload";
 import {
-  deleteWorkoutRows,
   getRecentWorkoutSetsByLocation,
   getWorkoutStatsSummary,
   logWorkoutSession,
@@ -161,7 +160,7 @@ export async function handleWorkoutStartAction(params: {
   userId: number;
   location?: GymLocation;
 }): Promise<void> {
-  const { chatId, userId, location } = params;
+  const { chatId, location } = params;
 
   if (!location) {
     await sendTelegramMessage(

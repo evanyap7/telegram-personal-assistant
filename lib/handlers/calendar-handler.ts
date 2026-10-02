@@ -18,8 +18,6 @@ import {
   CalendarAddPayload,
   CalendarBatchAddPayload,
   cancelActivePendingCalendarAction,
-  savePendingCalendarAction,
-  savePendingCalendarBatchAction,
   savePendingCalendarSelection,
   savePendingCalendarRescheduleAction,
   takePendingCalendarRescheduleAction,

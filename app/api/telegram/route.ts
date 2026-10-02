@@ -31,6 +31,7 @@ import { resolveRepliedTransaction } from "@/lib/handlers/finance-handler";
 import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-intent";
 import { defaultRegistry } from "@/lib/handlers/dispatcher";
 import { answerWithSearch } from "@/lib/search";
+import { handleVoiceNoteAction } from "@/lib/voice-transcribe";
 
 function log(event: string, values: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ event, timestamp: new Date().toISOString(), ...values }));
@@ -211,11 +212,49 @@ export async function POST(request: Request) {
       }
     }
 
-    const text = message.text?.trim() ?? "";
+    let text = (message.text || message.caption)?.trim() ?? "";
+
+    // 2.5 Handle Voice Notes & Audio Memos
+    if (!text && (message.voice || message.audio)) {
+      const audioObj = message.voice || message.audio;
+      if (audioObj) {
+        try {
+          const transcription = await handleVoiceNoteAction({
+            chatId,
+            fileId: audioObj.file_id,
+            mimeType: audioObj.mime_type,
+          });
+
+          if (!transcription) {
+            await markUpdateCompleted(updateId, "voice_empty");
+            return Response.json({ ok: true });
+          }
+
+          text = transcription;
+        } catch (voiceError) {
+          log("telegram.voice_transcribe.failed", {
+            updateId,
+            error: errorText(voiceError),
+          });
+          await markUpdateFailed(updateId, errorText(voiceError));
+          return Response.json({ ok: true });
+        }
+      }
+    }
+
     if (!text) {
       await markUpdateCompleted(updateId, "ignored_no_text");
       return Response.json({ ok: true });
     }
+
+    logChatMessage({
+      messageId: message.message_id,
+      userId: message.from.id,
+      role: "user",
+      text,
+      actionType: message.voice || message.audio ? "voice_transcribed" : "incoming_text",
+    }).catch(() => {});
+
 
     // 3. Fast-path: Photo Follow-up Instructions
     if (!text.startsWith("/")) {
