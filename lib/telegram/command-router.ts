@@ -5,6 +5,7 @@ import {
 } from "./menu-builder";
 import {
   sendTelegramChatAction,
+  sendTelegramDocument,
   sendTelegramMessage,
   setTelegramBotCommands,
 } from "../telegram";
@@ -29,18 +30,16 @@ import {
 } from "../handlers/todo-handler";
 import { formatBudgetSummary } from "../budget";
 import { tryHandleBudgetSetCommand } from "../handlers/budget-handler";
-import { getFinanceSummary } from "../finance";
+import { getFinanceSummary, listRecentTransactions } from "../finance";
 import {
   formatFinanceSummary,
-  handleFinanceSummaryAction,
+  formatFinanceTransaction,
 } from "../handlers/finance-handler";
 import {
-  handleIOUSummaryAction,
   handleOwedCommand,
   handleSplitCommand,
 } from "../handlers/split-handler";
 import {
-  buildRecurringListMessage,
   handleRecurringCommand,
 } from "../handlers/recurring-handler";
 import {
@@ -74,7 +73,7 @@ export interface CommandContext {
 export async function dispatchCommand(
   ctx: CommandContext
 ): Promise<{ handled: boolean; completionStatus?: string }> {
-  const { chatId, userId, updateId, text } = ctx;
+  const { chatId, userId, text } = ctx;
   const lowerText = text.toLowerCase().trim();
 
   // Menu / Dashboard
@@ -322,6 +321,33 @@ export async function dispatchCommand(
     return { handled: true, completionStatus: "finance_summary_command" };
   }
 
+  // Finance recent transactions list
+  if (
+    text === "/finance_list" ||
+    text === "/finance list" ||
+    lowerText === "finance list" ||
+    lowerText === "recent expenses"
+  ) {
+    const transactions = await listRecentTransactions();
+    if (transactions.length === 0) {
+      await sendTelegramMessage(chatId, "No active finance transactions found.");
+      return { handled: true, completionStatus: "finance_list_empty" };
+    }
+
+    await sendTelegramMessage(
+      chatId,
+      [
+        "💳 *Recent Active Transactions*:",
+        "",
+        ...transactions
+          .slice(-10)
+          .reverse()
+          .map((transaction) => formatFinanceTransaction(transaction)),
+      ].join("\n\n")
+    );
+    return { handled: true, completionStatus: "finance_list_command" };
+  }
+
   // Budget
   if (
     text === "/budget" ||
@@ -414,6 +440,49 @@ export async function dispatchCommand(
       );
     }
     return { handled: true, completionStatus: "habits_command" };
+  }
+
+  // Export monthly transactions as CSV
+  if (
+    text === "/export" ||
+    text.startsWith("/export ") ||
+    lowerText === "export" ||
+    lowerText === "export csv"
+  ) {
+    const monthArg = text.replace("/export", "").trim() || undefined;
+    await sendTelegramChatAction(chatId, "upload_document");
+    try {
+      const result = await generateMonthlyCsvExport(monthArg);
+      if (result.rowCount === 0) {
+        await sendTelegramMessage(
+          chatId,
+          `ℹ️ No transactions found for ${result.monthName} to export.`
+        );
+      } else {
+        const caption = [
+          `📊 *Transaction Export (${result.monthName})*`,
+          `💰 Total Income: $${result.totalIncome.toFixed(2)} SGD`,
+          `💸 Total Expenses: $${result.totalExpense.toFixed(2)} SGD`,
+          `📈 Net Balance: ${
+            result.netSavings >= 0 ? "+" : ""
+          }$${result.netSavings.toFixed(2)} SGD`,
+          `📝 Records: ${result.rowCount}`,
+        ].join("\n");
+        await sendTelegramDocument(
+          chatId,
+          result.csvContent,
+          result.filename,
+          caption
+        );
+      }
+    } catch (err) {
+      console.error("Export failed:", err);
+      await sendTelegramMessage(
+        chatId,
+        "⚠️ Could not export transactions. Check that Google Sheets is configured."
+      );
+    }
+    return { handled: true, completionStatus: "export_command" };
   }
 
   // Sync DBS & Grab

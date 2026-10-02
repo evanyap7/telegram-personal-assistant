@@ -9,8 +9,7 @@ import {
   takePendingEmailDraftAction,
 } from "../pending-actions";
 import { createEmailDraft, sendGmailDraft } from "../gmail";
-import { downloadTelegramAudio } from "../telegram-files";
-import { transcribeTelegramVoiceNote } from "../voice-transcribe";
+import { handleVoiceNoteAction } from "../voice-transcribe";
 import { markUpdateCompleted, markUpdateFailed } from "../finance";
 import { resolveContact } from "@/lib/memory";
 
@@ -257,36 +256,5 @@ export async function handleEmailSendCallback(params: {
   }
 }
 
-export async function handleVoiceNoteAction(params: {
-  chatId: number;
-  fileId: string;
-  mimeType?: string;
-}): Promise<string | null> {
-  const { chatId, fileId, mimeType } = params;
+export { handleVoiceNoteAction };
 
-  await sendTelegramMessage(chatId, "🎧 Listening to your voice note...");
-  try {
-    const downloaded = await downloadTelegramAudio(fileId, mimeType);
-    const transcription = await transcribeTelegramVoiceNote({
-      audio: downloaded.data,
-      mediaType: downloaded.mediaType,
-    });
-
-    if (!transcription) {
-      await sendTelegramMessage(
-        chatId,
-        "I couldn't hear any words in that voice note. Please try again."
-      );
-      return null;
-    }
-
-    await sendTelegramMessage(chatId, `🎤 Heard: “${transcription}”`);
-    return transcription;
-  } catch (voiceError) {
-    await sendTelegramMessage(
-      chatId,
-      "Sorry, I had trouble processing that voice note. Please try typing your message."
-    );
-    throw voiceError;
-  }
-}

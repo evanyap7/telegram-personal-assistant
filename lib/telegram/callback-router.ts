@@ -14,6 +14,9 @@ import {
   cancelPendingCalendarDeleteAction,
   cancelPendingFinanceDeleteAction,
   cancelPendingTodoDeleteAction,
+  savePendingCalendarDeleteAction,
+  savePendingFinanceDeleteAction,
+  savePendingTodoDeleteAction,
   takePendingCalendarDeleteAction,
   takePendingCalendarSelection,
   takePendingFinanceDeleteAction,
@@ -22,8 +25,8 @@ import {
   takePendingTodoSelection,
 } from "../pending-actions";
 import {
-  getTransactionById,
   markUpdateCompleted,
+  searchActiveTransactions,
   softDeleteTransaction,
   updateTransaction,
 } from "../finance";
@@ -32,12 +35,12 @@ import {
   deleteCalendarEvent,
   getUpcomingSchedule,
 } from "../calendar";
+import { formatCalendarEvent } from "../handlers/calendar-handler";
 import {
   formatScheduleAgendaView,
   formatSchedulePureTableView,
   ScheduleTimeframe,
 } from "../calendar-format";
-import { formatCalendarDate } from "../handlers/calendar-handler";
 import {
   completeTodo,
   deleteTodo,
@@ -45,11 +48,11 @@ import {
   snoozeTodoReminder,
 } from "../todos";
 import {
-  handleWorkoutStartAction,
   handleWorkoutViewAction,
 } from "../workout/workout-handler";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
 import { buildUndoInlineKeyboard, registerUndoAction } from "../undo";
+import { dispatchCommand } from "./command-router";
 
 export interface CallbackDispatchInput {
   callbackId: string;
@@ -122,6 +125,36 @@ export async function dispatchCallback(input: CallbackDispatchInput): Promise<vo
       const res = await setupWorkoutDashboardSheet();
       await sendTelegramMessage(input.chatId, `✅ ${res.message}`);
       await markUpdateCompleted(input.updateId, "menu_workout_setup");
+      return;
+    }
+
+    const menuCommandMap: Record<string, string> = {
+      agenda: "/agenda",
+      cal_week: "/calendar week",
+      freeslots: "/freeslots",
+      reminders: "/reminders",
+      finance_summary: "/finance_summary",
+      finance_list: "/finance_list",
+      budget: "/budget",
+      sync: "/sync",
+      todos: "/todo",
+      todos_today: "/todotoday",
+      habits: "/habits",
+      recurring: "/recurring",
+      owed: "/owed",
+      export: "/export",
+      inbox: "/inbox",
+    };
+
+    if (menuCommandMap[subAction]) {
+      await answerTelegramCallback(input.callbackId);
+      await dispatchCommand({
+        chatId: input.chatId,
+        userId: input.userId,
+        updateId: input.updateId,
+        text: menuCommandMap[subAction],
+      });
+      await markUpdateCompleted(input.updateId, `menu_${subAction}`);
       return;
     }
 
@@ -270,6 +303,152 @@ export async function dispatchCallback(input: CallbackDispatchInput): Promise<vo
     await answerTelegramCallback(input.callbackId, "Event deleted.");
     await removeTelegramInlineKeyboard(input.chatId, input.messageId);
     await sendTelegramMessage(input.chatId, `🗑️ Calendar event deleted.`);
+    return;
+  }
+
+  // 8.5 Disambiguation Select Callbacks
+  if (action === "finance_select") {
+    const selectionToken = parts[1];
+    const selectedIndex = Number(parts[2]);
+    if (!selectionToken || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    const selection = await takePendingFinanceSelection(selectionToken, input.userId);
+    const transactionId = selection?.transactionIds[selectedIndex];
+    if (!transactionId) {
+      await answerTelegramCallback(input.callbackId, "This selection has expired.");
+      return;
+    }
+
+    const matches = await searchActiveTransactions(transactionId);
+    const transaction = matches.find((c) => c.transactionId === transactionId);
+    if (!transaction) {
+      await answerTelegramCallback(input.callbackId, "Transaction not found or already deleted.");
+      return;
+    }
+
+    const confirmationToken = await savePendingFinanceDeleteAction({
+      userId: input.userId,
+      payload: { transactionId },
+    });
+
+    await answerTelegramCallback(input.callbackId, "Transaction selected.");
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+    await sendTelegramMessage(
+      input.chatId,
+      [
+        "Delete this finance transaction?",
+        "",
+        formatFinanceTransaction(transaction),
+        "",
+        "This will mark the row as deleted in Google Sheets.",
+      ].join("\n"),
+      {
+        inline_keyboard: [
+          [
+            { text: "🗑️ Yes, delete", callback_data: `finance_delete_yes:${confirmationToken}` },
+            { text: "❌ No, keep it", callback_data: `finance_delete_no:${confirmationToken}` },
+          ],
+        ],
+      }
+    );
+    await markUpdateCompleted(input.updateId, "finance_selection_confirmed");
+    return;
+  }
+
+  if (action === "calendar_select") {
+    const selectionToken = parts[1];
+    const selectedIndex = Number(parts[2]);
+    if (!selectionToken || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    const selection = await takePendingCalendarSelection(selectionToken, input.userId);
+    const event = selection?.events[selectedIndex];
+    if (!selection || !event) {
+      await answerTelegramCallback(input.callbackId, "This selection has expired.");
+      return;
+    }
+
+    const confirmationToken = await savePendingCalendarDeleteAction({
+      userId: input.userId,
+      payload: {
+        calendarName: selection.calendarName,
+        eventId: event.eventId,
+      },
+    });
+
+    await answerTelegramCallback(input.callbackId, "Calendar event selected.");
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+    await sendTelegramMessage(
+      input.chatId,
+      [
+        "Delete this calendar event?",
+        "",
+        formatCalendarEvent({
+          calendarName: selection.calendarName,
+          title: event.title,
+          start: event.start,
+          end: event.end,
+          eventId: event.eventId,
+        }),
+        "",
+        "This permanently deletes the event from Google Calendar.",
+      ].join("\n"),
+      {
+        inline_keyboard: [
+          [
+            { text: "🗑️ Yes, delete", callback_data: `calendar_delete_yes:${confirmationToken}` },
+            { text: "❌ No, keep it", callback_data: `calendar_delete_no:${confirmationToken}` },
+          ],
+        ],
+      }
+    );
+    await markUpdateCompleted(input.updateId, "calendar_selection_confirmed");
+    return;
+  }
+
+  if (action === "todo_del_select") {
+    const selectionToken = parts[1];
+    const selectedIndex = Number(parts[2]);
+    if (!selectionToken || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+      await answerTelegramCallback(input.callbackId, "This action is invalid.");
+      return;
+    }
+
+    const selection = await takePendingTodoSelection(selectionToken, input.userId);
+    const todo = selection?.todos[selectedIndex];
+    if (!selection || !todo) {
+      await answerTelegramCallback(input.callbackId, "This selection has expired.");
+      return;
+    }
+
+    const confirmationToken = await savePendingTodoDeleteAction({
+      userId: input.userId,
+      payload: {
+        taskId: todo.taskId,
+        task: todo.task,
+      },
+    });
+
+    await answerTelegramCallback(input.callbackId, "Task selected.");
+    await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+    await sendTelegramMessage(
+      input.chatId,
+      `Remove this task from your to-do list?\n\n• ${todo.task}`,
+      {
+        inline_keyboard: [
+          [
+            { text: "🗑️ Yes, remove", callback_data: `todo_del_yes:${confirmationToken}` },
+            { text: "❌ No, keep", callback_data: `todo_del_no:${confirmationToken}` },
+          ],
+        ],
+      }
+    );
+    await markUpdateCompleted(input.updateId, "todo_selection_confirmed");
     return;
   }
 

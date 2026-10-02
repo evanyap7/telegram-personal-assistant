@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 export type GymLocation = "school" | "csc";
 
 export type RoutineType = "upper" | "lower" | "push" | "pull" | "legs" | "fullbody";

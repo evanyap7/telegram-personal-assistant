@@ -1,5 +1,4 @@
 import { getSheetsClient } from "../google";
-import { formatSingaporeTimestamp } from "../finance";
 import {
   calculateEstimated1RM,
   calculateSessionVolume,
@@ -117,7 +116,7 @@ export async function logWorkoutSession(
     ]);
   });
 
-  const appendRes = await sheets.spreadsheets.values.append({
+  await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${WORKOUTS_SHEET}!A:M`,
     valueInputOption: "USER_ENTERED",

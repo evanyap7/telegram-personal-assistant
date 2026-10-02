@@ -5,7 +5,6 @@ import {
   generateProgressiveOverloadTarget,
   buildWorkoutPlanForLocation,
 } from "../lib/workout/progressive-overload";
-import { parseWorkoutText } from "../lib/workout/workout-handler";
 import type { WorkoutSet } from "../lib/workout/workout-types";
 
 function runWorkoutTests() {
