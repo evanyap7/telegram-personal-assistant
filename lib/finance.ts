@@ -442,6 +442,28 @@ export async function addTransaction(input: TransactionInput): Promise<{
   const sanitizedDescription = maskSensitiveFinancialData(input.description);
 
   const targetSheet = await resolveMonthSheetName(dateObj);
+
+  // Concurrency guard: prevent duplicate rows if exact same transaction was logged within the last 15 minutes
+  const existingDup = await findRecentDuplicateTransaction(
+    sanitizedDescription,
+    Number(input.amount) || 0,
+    input.type,
+    0.01
+  );
+  if (
+    existingDup &&
+    existingDup.description.toLowerCase() === sanitizedDescription.toLowerCase()
+  ) {
+    console.warn(
+      `[addTransaction] Suppressed duplicate transaction insert: ${sanitizedDescription} ($${input.amount})`
+    );
+    return {
+      transactionId: existingDup.transactionId,
+      timestamp: existingDup.timestamp,
+      sheetName: existingDup.sheetName || targetSheet,
+    };
+  }
+
   await ensureMonthlyTransactionsSheet(targetSheet);
 
   await withExponentialBackoff(async () => {
@@ -1051,9 +1073,64 @@ export async function getProcessedExternalIds(): Promise<Set<string>> {
   return new Set(existingIds.map((row) => String(row[0])));
 }
 
+const inFlightExternalClaims = new Set<string>();
+
+export async function claimExternalId(externalId: string): Promise<boolean> {
+  const normId = String(externalId);
+  if (inFlightExternalClaims.has(normId)) {
+    return false;
+  }
+  inFlightExternalClaims.add(normId);
+
+  try {
+    const sheets = getSheetsClient();
+    const spreadsheetId = getSpreadsheetId();
+
+    const response = await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!A2:A`,
+      })
+    );
+
+    const existingIds = response.data.values ?? [];
+    const alreadyExists = existingIds.some((row) => row[0] === normId);
+    if (alreadyExists) {
+      inFlightExternalClaims.delete(normId);
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!A:F`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [[normId, "processing", now, "", "Sync in progress", ""]],
+        },
+      })
+    );
+
+    return true;
+  } catch (err) {
+    inFlightExternalClaims.delete(normId);
+    throw err;
+  }
+}
+
+export function releaseExternalId(externalId: string): void {
+  inFlightExternalClaims.delete(String(externalId));
+}
+
 export async function hasProcessedExternalId(
   externalId: string
 ): Promise<boolean> {
+  const normId = String(externalId);
+  if (inFlightExternalClaims.has(normId)) {
+    return true;
+  }
+
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
@@ -1065,27 +1142,60 @@ export async function hasProcessedExternalId(
   );
 
   const existingIds = response.data.values ?? [];
-  return existingIds.some((row) => row[0] === String(externalId));
+  return existingIds.some((row) => row[0] === normId);
 }
 
 export async function markExternalIdProcessed(
   externalId: string,
   details: string
 ): Promise<void> {
+  const normId = String(externalId);
+  inFlightExternalClaims.delete(normId);
+
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
   const now = new Date().toISOString();
 
-  await withExponentialBackoff(() =>
-    sheets.spreadsheets.values.append({
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${UPDATE_LOG_SHEET}!A:F`,
-      valueInputOption: "USER_ENTERED",
-      requestBody: {
-        values: [[String(externalId), "completed", now, now, details, ""]],
-      },
+      range: `${UPDATE_LOG_SHEET}!A2:A`,
     })
   );
+
+  const rows = response.data.values ?? [];
+  let matchingRowIndex = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i][0] === normId) {
+      matchingRowIndex = i;
+      break;
+    }
+  }
+
+  if (matchingRowIndex !== -1) {
+    const rowNumber = matchingRowIndex + 2;
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!B${rowNumber}:F${rowNumber}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [["completed", now, now, details, ""]],
+        },
+      })
+    );
+  } else {
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!A:F`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [[normId, "completed", now, now, details, ""]],
+        },
+      })
+    );
+  }
 }
 
 export async function markUpdateStarted(updateId: number): Promise<void> {

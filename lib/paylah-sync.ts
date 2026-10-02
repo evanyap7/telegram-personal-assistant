@@ -1,10 +1,11 @@
 import { getGmailClient } from "./google";
 import {
   addTransaction,
+  claimExternalId,
   findRecentDuplicateTransaction,
   formatSingaporeTimestamp,
-  hasProcessedExternalId,
   markExternalIdProcessed,
+  releaseExternalId,
 } from "./finance";
 import { sendTelegramMessage } from "./telegram";
 import { google } from "@ai-sdk/google";
@@ -735,8 +736,8 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
   const results = await Promise.allSettled(
     targetIds.map(async (messageId) => {
       const externalId = `gmail_${messageId}`;
-      const alreadyProcessed = await hasProcessedExternalId(externalId);
-      if (alreadyProcessed) {
+      const claimed = await claimExternalId(externalId);
+      if (!claimed) {
         return null;
       }
 
@@ -775,21 +776,21 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
 
           const dateObj = resolveTransactionDate(parsed.date);
 
-          // Safety net: skip logging if an active transaction with the same
-          // type/amount/merchant was already recorded recently (e.g. a
-          // shipping/delivery email that slipped past the classifier above
-          // for an order whose payment receipt was already logged).
-          // Bank alerts (DBS PayLah, PayNow, GIRO, DBS Card) are discrete monetary
-          // debits and should never be suppressed by order-lifecycle deduplication.
+          // Deduplication:
+          // For bank alerts (PayLah, PayNow, GIRO), check within a tight 30-minute window (0.02 days).
+          // For receipts/invoices/orders, check a 14-day window.
           const isBankAlert =
             paymentMethod.toLowerCase().includes("paylah") ||
             paymentMethod.toLowerCase().includes("paynow") ||
-            paymentMethod.toLowerCase().includes("giro") ||
-            paymentMethod.toLowerCase().includes("card");
+            paymentMethod.toLowerCase().includes("giro");
 
-          const duplicate = isBankAlert
-            ? null
-            : await findRecentDuplicateTransaction(merchant, amount, type);
+          const duplicateWindowDays = isBankAlert ? 0.02 : 14;
+          const duplicate = await findRecentDuplicateTransaction(
+            merchant,
+            amount,
+            type,
+            duplicateWindowDays
+          );
 
           if (duplicate) {
             await markExternalIdProcessed(
@@ -797,8 +798,10 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
               `Skipped duplicate: ${paymentMethod} ${type} ${currency} ${amount} at ${merchant} (matches ${duplicate.transactionId} logged ${duplicate.timestamp})`
             );
 
+            // Only notify user for order-lifecycle duplicates across different days,
+            // NOT for immediate rapid deliveries within the same hour
             const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
-            if (allowedUserId) {
+            if (allowedUserId && !isBankAlert && duplicateWindowDays > 1) {
               const skipMessage = [
                 "🔁 *Skipped Duplicate Transaction*",
                 "",
@@ -901,6 +904,7 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
         }
       } catch (msgErr) {
         console.error(`Failed to process Gmail message ${messageId}:`, msgErr);
+        await releaseExternalId(externalId);
         return null;
       }
     })
