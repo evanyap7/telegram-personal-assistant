@@ -19,7 +19,7 @@ export interface WorkoutSession {
   sessionId: string;
   date: string; // YYYY-MM-DD
   week?: number;
-  location: GymLocation;
+  location: GymLocation | "ph3";
   routine: RoutineType | string;
   sets: WorkoutSet[];
   totalVolumeKg: number;

@@ -32,6 +32,7 @@ import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-inten
 import { defaultRegistry } from "@/lib/handlers/dispatcher";
 import { answerWithSearch } from "@/lib/search";
 import { handleVoiceNoteAction } from "@/lib/voice-transcribe";
+import { handleWorkoutSessionMessage } from "@/lib/workout/workout-session";
 
 function log(event: string, values: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ event, timestamp: new Date().toISOString(), ...values }));
@@ -255,6 +256,13 @@ export async function POST(request: Request) {
       actionType: message.voice || message.audio ? "voice_transcribed" : "incoming_text",
     }).catch(() => {});
 
+
+    // 2.9 Guided PH3 workout: consumes workout start phrases, day commands, and every
+    // message while a session is active (until the user ends it).
+    if (await handleWorkoutSessionMessage({ chatId, text })) {
+      await markUpdateCompleted(updateId, "workout_session");
+      return Response.json({ ok: true });
+    }
 
     // 3. Fast-path: Photo Follow-up Instructions
     if (!text.startsWith("/")) {

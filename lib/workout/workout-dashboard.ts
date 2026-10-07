@@ -5,9 +5,12 @@ const ANALYTICS_SHEET_TITLE = "📈 Workout Analytics";
 const WORKOUTS_SHEET_TITLE = "Workouts";
 
 function getSpreadsheetId(): string {
-  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  const spreadsheetId =
+    process.env.GOOGLE_WORKOUT_SHEET_ID || process.env.GOOGLE_SHEET_ID;
   if (!spreadsheetId) {
-    throw new Error("GOOGLE_SHEET_ID is missing.");
+    throw new Error(
+      "GOOGLE_WORKOUT_SHEET_ID (or GOOGLE_SHEET_ID) is missing."
+    );
   }
   return spreadsheetId;
 }

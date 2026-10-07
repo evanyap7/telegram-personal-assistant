@@ -97,13 +97,10 @@ export function getSubmenuMarkup(category: "calendar" | "finance" | "workout" | 
 
     case "workout":
       return {
-        text: "🏋️ *Workout Hub*\n\nStart a gym session or view strength progress:",
+        text: "🏋️ *Workout Hub*\n\nStart today's guided PH3 workout or view strength progress:",
         markup: {
           inline_keyboard: [
-            [
-              { text: "🏫 School Gym", callback_data: "gym_loc:school" },
-              { text: "🏛️ CSC Gym", callback_data: "gym_loc:csc" },
-            ],
+            [{ text: "🏋️ Start Today's Workout", callback_data: "menu:workout_start" }],
             [
               { text: "📊 Strength Stats", callback_data: "menu:workout_stats" },
               { text: "⚙️ Setup Dashboard Sheet", callback_data: "menu:workout_setup_sheet" },

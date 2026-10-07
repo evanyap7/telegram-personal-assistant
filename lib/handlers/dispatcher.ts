@@ -53,6 +53,7 @@ import {
   handleWorkoutLogAction,
   handleWorkoutViewAction,
 } from "../workout/workout-handler";
+import { startPH3Workout } from "../workout/workout-session";
 import { executeUndo, executeLatestUndo } from "../undo";
 import { logHabitDone } from "../habits";
 import {
@@ -472,12 +473,8 @@ defaultRegistry
     });
     return { completionStatus: "budget_set" };
   })
-  .registerIntent("workout_start", async (ctx, intent) => {
-    await handleWorkoutStartAction({
-      chatId: ctx.chatId,
-      userId: ctx.userId,
-      location: intent.location,
-    });
+  .registerIntent("workout_start", async (ctx) => {
+    await startPH3Workout({ chatId: ctx.chatId });
     return { completionStatus: "workout_start" };
   })
   .registerIntent("workout_log", async (ctx, intent) => {

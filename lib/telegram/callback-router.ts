@@ -51,6 +51,7 @@ import {
   handleWorkoutViewAction,
 } from "../workout/workout-handler";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
+import { startPH3Workout } from "../workout/workout-session";
 import { buildUndoInlineKeyboard, registerUndoAction } from "../undo";
 import { dispatchCommand } from "./command-router";
 
@@ -110,6 +111,13 @@ export async function dispatchCallback(input: CallbackDispatchInput): Promise<vo
       const sub = getSubmenuMarkup(subAction);
       await editTelegramMessage(input.chatId, input.messageId, sub.text, sub.markup);
       await markUpdateCompleted(input.updateId, `menu_${subAction}`);
+      return;
+    }
+
+    if (subAction === "workout_start") {
+      await answerTelegramCallback(input.callbackId);
+      await startPH3Workout({ chatId: input.chatId });
+      await markUpdateCompleted(input.updateId, "menu_workout_start");
       return;
     }
 
