@@ -21,6 +21,7 @@
     "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts",
     "test:cron-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-cron-auth.ts",
     "test:workout": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-workout.ts",
+    "test:workout-session": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-workout-session.ts",
     "test:todos-batch": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-todos-batch.ts",
     "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts"
   },

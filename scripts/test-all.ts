@@ -29,6 +29,7 @@ const SUITES = [
   { name: "Currency Conversion & CSV Export", command: "npm run test:currency-export" },
   { name: "Cron Endpoint Request Authorization", command: "npm run test:cron-auth" },
   { name: "Workout Progressive Overload Engine", command: "npm run test:workout" },
+  { name: "Guided PH3 Workout Session", command: "npm run test:workout-session" },
   { name: "Multi-Item To-Do Batch Logging", command: "npm run test:todos-batch" },
   { name: "Assistant Intent Classification Fixtures", command: "npm run test:intents" },
 ];

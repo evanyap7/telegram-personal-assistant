@@ -56,10 +56,8 @@ import {
 } from "../handlers/memory-handler";
 import { generateMonthlyCsvExport } from "../export";
 import { syncPayLahTransactions } from "../paylah-sync";
-import {
-  handleWorkoutStartAction,
-  handleWorkoutViewAction,
-} from "../workout/workout-handler";
+import { handleWorkoutViewAction } from "../workout/workout-handler";
+import { startPH3Workout } from "../workout/workout-session";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
 import { executeLatestUndo } from "../undo";
 
@@ -260,7 +258,7 @@ export async function dispatchCommand(
     lowerText === "gym" ||
     lowerText === "workout"
   ) {
-    await handleWorkoutStartAction({ chatId, userId });
+    await startPH3Workout({ chatId });
     return { handled: true, completionStatus: "gym_command" };
   }
 
