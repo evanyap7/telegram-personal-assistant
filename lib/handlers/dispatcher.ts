@@ -5,7 +5,7 @@ import {
   searchActiveTransactions,
   updateTransaction,
 } from "../finance";
-import { moveCalendarEvent } from "../calendar";
+import { moveCalendarEvent, renameCalendarEvent } from "../calendar";
 import {
   handleFinanceAddAction,
   handleFinanceSummaryAction,
@@ -464,6 +464,32 @@ defaultRegistry
         }`
       );
       return { completionStatus: "calendar_move_failed" };
+    }
+  })
+  .registerIntent("calendar_rename", async (ctx, intent) => {
+    try {
+      const renameRes = await renameCalendarEvent({
+        calendarName: intent.calendarName,
+        title: intent.title,
+        newTitle: intent.newTitle,
+        eventId: intent.eventId,
+      });
+
+      await sendTelegramMessage(
+        ctx.chatId,
+        `✅ Renamed event to "${renameRes.title}"${
+          renameRes.htmlLink ? `\nLink: ${renameRes.htmlLink}` : ""
+        }`
+      );
+      return { completionStatus: "calendar_rename" };
+    } catch (renameError) {
+      await sendTelegramMessage(
+        ctx.chatId,
+        `Sorry, I couldn't rename "${intent.title}": ${
+          renameError instanceof Error ? renameError.message : "Unknown error"
+        }`
+      );
+      return { completionStatus: "calendar_rename_failed" };
     }
   })
   .registerIntent("budget_set", async (ctx, intent) => {
