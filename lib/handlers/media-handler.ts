@@ -8,6 +8,11 @@ import {
 } from "../finance";
 import { createCalendarEvent } from "../calendar";
 import { formatCalendarDate, formatSingaporeDateTime } from "./calendar-handler";
+import {
+  addRecurringSchedule,
+  computeNextRunDate,
+  listRecurringSchedules,
+} from "../recurring";
 import { registerUndoAction, buildUndoInlineKeyboard } from "../undo";
 
 export interface MediaGroupBatch {
@@ -161,6 +166,80 @@ export async function processAssistantImages(input: {
     );
 
     await markUpdateCompleted(updateId, "image_finance_batch_logged");
+    return true;
+  }
+
+  // Recurring subscriptions from Image
+  if (imageIntent.action === "subscriptions_from_image") {
+    const sgToday = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Singapore" });
+    const existing = await listRecurringSchedules({ type: "subscription" });
+    const existingTitles = new Set(existing.map((s) => s.title.trim().toLowerCase()));
+
+    const created: Array<{ id: string; line: string }> = [];
+    const skipped: string[] = [];
+
+    for (const sub of imageIntent.subscriptions) {
+      const key = sub.title.trim().toLowerCase();
+      if (existingTitles.has(key)) {
+        skipped.push(sub.title);
+        continue;
+      }
+      existingTitles.add(key);
+
+      const renewal =
+        sub.nextRenewalDate && sub.nextRenewalDate >= sgToday ? sub.nextRenewalDate : undefined;
+      const dayOfMonth = renewal ? Number(renewal.slice(8, 10)) : undefined;
+      const dayOfWeek = renewal ? new Date(`${renewal}T00:00:00Z`).getUTCDay() : undefined;
+
+      const schedule = await addRecurringSchedule({
+        type: "subscription",
+        title: sub.title,
+        amount: sub.amount,
+        currency: sub.currency,
+        category: sub.category || "Subscriptions",
+        frequency: sub.frequency,
+        dayOfMonth: sub.frequency === "weekly" ? undefined : dayOfMonth,
+        dayOfWeek: sub.frequency === "weekly" ? dayOfWeek : undefined,
+        startDate: renewal,
+      });
+
+      const next =
+        schedule.nextRunDate ||
+        computeNextRunDate(sub.frequency, dayOfMonth, dayOfWeek, new Date());
+      created.push({
+        id: schedule.id,
+        line: `${created.length + 1}. ${sub.title} — $${sub.amount.toFixed(2)} ${sub.currency} / ${sub.frequency.replace(/ly$/, "")} (next: ${next})`,
+      });
+    }
+
+    if (created.length === 0) {
+      await sendTelegramMessage(
+        chatId,
+        `🔁 Those subscriptions are already tracked: ${skipped.join(", ")}.`
+      );
+      await markUpdateCompleted(updateId, "image_subscriptions_duplicate");
+      return true;
+    }
+
+    const undoToken = await registerUndoAction(userId, {
+      type: "recurring_batch_created",
+      description: `${created.length} subscriptions from image`,
+      data: { scheduleIds: JSON.stringify(created.map((c) => c.id)) },
+    });
+
+    const lines = [
+      `🔁 *Added ${created.length} subscription${created.length === 1 ? "" : "s"}:*`,
+      "",
+      ...created.map((c) => c.line),
+      "",
+      "They'll be logged automatically on each renewal date.",
+    ];
+    if (skipped.length > 0) {
+      lines.push(`Skipped (already tracked): ${skipped.join(", ")}`);
+    }
+
+    await sendTelegramMessage(chatId, lines.join("\n"), buildUndoInlineKeyboard(undoToken));
+    await markUpdateCompleted(updateId, "image_subscriptions_added");
     return true;
   }
 

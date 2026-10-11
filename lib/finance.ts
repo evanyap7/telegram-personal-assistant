@@ -325,7 +325,7 @@ export async function ensureMonthlyTransactionsSheet(
             "",
             "",
             "",
-            '=SUMIFS(D2:D, C2:C, "expense", H2:H, "<>deleted") - SUMIFS(D2:D, C2:C, "income", H2:H, "<>deleted")',
+            '=SUMIFS(D2:D, C2:C, "expense", H2:H, "<>deleted")',
           ],
         ],
       },

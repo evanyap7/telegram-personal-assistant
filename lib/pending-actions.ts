@@ -116,7 +116,8 @@ export type UndoPayload = {
     | "todo_completed"
     | "todo_created"
     | "todo_batch_created"
-    | "workout_logged";
+    | "workout_logged"
+    | "recurring_batch_created";
   description: string;
   data: Record<string, string>;
 };

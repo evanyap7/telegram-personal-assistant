@@ -899,6 +899,7 @@ Recurring schedule rules:
 
 Budget setting rules:
 - "set my budget to $600", "change monthly budget to 600", "my budget is $450 a month" -> budget_set with amount and no category.
+- Phrases that change the budget to a stated total ("can u increase my budget for this month to $700 instead", "raise my budget to 800", "lower the budget to 400", "make it $700 instead") -> budget_set with amount 700/800/400 (the new total, not the difference) and no category.
 - "cap dining at $150", "set transport budget to $80", "limit shopping to $100 a month" -> budget_set with amount and category.
 - Asking to VIEW the budget is not budget_set.
 

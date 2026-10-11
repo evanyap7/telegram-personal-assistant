@@ -40,6 +40,17 @@ const financeItemSchema = z.object({
 
 export type ImageFinanceItem = z.infer<typeof financeItemSchema>;
 
+const subscriptionItemSchema = z.object({
+  title: z.string().min(1).max(120),
+  amount: z.number().positive(),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  category: z.string().min(1).max(50).optional(),
+  frequency: z.enum(["weekly", "monthly", "yearly"]),
+  nextRenewalDate: singaporeDateSchema.optional(),
+});
+
+export type ImageSubscriptionItem = z.infer<typeof subscriptionItemSchema>;
+
 const imageIntentSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("calendar_from_image"),
@@ -58,6 +69,10 @@ const imageIntentSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("finance_batch_from_image"),
     transactions: z.array(financeItemSchema).min(1).max(25),
+  }),
+  z.object({
+    action: z.literal("subscriptions_from_image"),
+    subscriptions: z.array(subscriptionItemSchema).min(1).max(25),
   }),
   z.object({
     action: z.literal("unknown"),
@@ -140,7 +155,8 @@ Supported actions:
 1. calendar_from_image
 2. finance_from_image
 3. finance_batch_from_image
-4. unknown
+4. subscriptions_from_image
+5. unknown
 
 Calendar output:
 {
@@ -199,6 +215,21 @@ Finance batch output (multiple distinct transactions, items, or receipts across 
   ]
 }
 
+Subscriptions output (recurring subscriptions, memberships, or plans to track):
+{
+  "action": "subscriptions_from_image",
+  "subscriptions": [
+    {
+      "title": "service name, e.g. CapCut or iCloud+",
+      "amount": positive number (the price per billing period),
+      "currency": "SGD",
+      "category": "Subscriptions" (optional),
+      "frequency": "monthly" or "weekly" or "yearly",
+      "nextRenewalDate": "YYYY-MM-DD" (optional, from text like "Renews 13 October")
+    }
+  ]
+}
+
 Unknown output:
 {
   "action": "unknown",
@@ -223,6 +254,10 @@ Rules:
 - If the user's instruction asks for a notification or reminder (e.g. "notify me about this 2 hours before the deadline", "remind me 1 hour before"):
   - Extract the lead time in minutes into "reminderMinutes" (e.g. "2 hours before" -> 120, "30 minutes before" -> 30).
   - If no reminder time is mentioned in the instruction, omit "reminderMinutes".
+- If the instruction asks to add/track/save subscriptions (or the image is an app-store/subscription-management screen such as iOS Settings > Subscriptions) return subscriptions_from_image, NOT finance output. These are recurring charges, not one-off purchases.
+  - Default frequency to "monthly" unless the image or instruction clearly says weekly or yearly/annual.
+  - If a "Renews <date>" is shown, set nextRenewalDate to the next occurrence of that date on or after today (Singapore time). Omit it if not shown.
+  - Use the service name as title (strip trailing plan text like "SG Membership Subscription").
 - For receipt, invoice, bank statement, or transaction screenshots across the images:
   - If multiple distinct transactions or line items are visible (e.g. across multiple images or within an image), return finance_batch_from_image containing all extracted items (up to 25 items).
   - If only a single transaction/charge is visible across all images, return finance_from_image.

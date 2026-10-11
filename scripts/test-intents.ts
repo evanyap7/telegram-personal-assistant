@@ -44,6 +44,7 @@ export const TEST_CASES: IntentTestCase[] = [
   { message: "log Spotify $11.98 every month", expectedAction: "recurring_add", description: "Recurring subscription" },
   { message: "show my subscriptions", expectedAction: "recurring_view", description: "View recurring schedules" },
   { message: "set my monthly budget to $600", expectedAction: "budget_set", description: "Set overall budget" },
+  { message: "can u increase my budget for this month to $700 instead", expectedAction: "budget_set", description: "Increase overall budget to new total" },
   { message: "cap dining at $150 a month", expectedAction: "budget_set", description: "Set category cap" },
   { message: "I'm going to the gym", expectedAction: "workout_start", description: "Workout start greeting" },
   { message: "going to school gym", expectedAction: "workout_start", description: "Workout start with location" },

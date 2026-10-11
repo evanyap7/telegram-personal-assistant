@@ -319,6 +319,28 @@ export async function toggleRecurringSchedule(
   return true;
 }
 
+/**
+ * Clears the sheet rows for the given schedule IDs. Rows are cleared rather than
+ * deleted so row numbers of other schedules stay stable.
+ */
+export async function deleteRecurringSchedules(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+
+  const schedules = await listRecurringSchedules();
+  const targets = schedules.filter((s) => ids.includes(s.id));
+  if (targets.length === 0) return 0;
+
+  const sheets = getSheetsClient();
+  await sheets.spreadsheets.values.batchClear({
+    spreadsheetId: getSpreadsheetId(),
+    requestBody: {
+      ranges: targets.map((t) => `${RECURRING_SHEET}!A${t.rowNumber}:M${t.rowNumber}`),
+    },
+  });
+
+  return targets.length;
+}
+
 export interface ProcessRecurringResult {
   processedCount: number;
   subscriptionsLogged: number;

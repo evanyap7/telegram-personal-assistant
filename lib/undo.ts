@@ -121,6 +121,16 @@ async function executeUndoPayload(
         };
       }
 
+      case "recurring_batch_created": {
+        const { deleteRecurringSchedules } = await import("./recurring");
+        const scheduleIds: string[] = JSON.parse(action.data.scheduleIds || "[]");
+        await deleteRecurringSchedules(scheduleIds);
+        return {
+          success: true,
+          message: `↩️ Undone: Removed ${scheduleIds.length} subscriptions.`,
+        };
+      }
+
       default:
         return { success: false, message: "Unknown undo action type." };
     }
