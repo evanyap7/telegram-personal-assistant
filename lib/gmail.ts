@@ -72,3 +72,27 @@ export async function createEmailDraft(
     gmailUrl: "https://mail.google.com/mail/u/0/#drafts",
   };
 }
+
+export async function sendGmailDraft(
+  draftId: string
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const gmail = getGmailClient();
+    const res = await gmail.users.drafts.send({
+      userId: "me",
+      requestBody: {
+        id: draftId,
+      },
+    });
+    return {
+      success: true,
+      messageId: res.data.id || undefined,
+    };
+  } catch (err) {
+    console.error(`Failed to send Gmail draft ${draftId}:`, err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to send email draft",
+    };
+  }
+}

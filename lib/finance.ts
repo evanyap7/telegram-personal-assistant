@@ -1,6 +1,10 @@
 import { getSheetsClient, withExponentialBackoff } from "./google";
+import { deleteSheetRows } from "./sheet-rows";
 import { maskSensitiveFinancialData } from "./security";
 import { parseSingaporeDate } from "./date-parser";
+import { getMonthlyBudgetStatus, type MonthlyBudgetStatus } from "./budget";
+
+export { getMonthlyBudgetStatus, type MonthlyBudgetStatus };
 
 export const UPDATE_LOG_SHEET = "UpdateLog";
 
@@ -263,6 +267,7 @@ export async function ensureMonthlyTransactionsSheet(
 
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
+  const insertIndex = titles.some((t) => t.includes("Dashboard")) ? 1 : 0;
 
   // Create sheet with frozen row 1, 1000 rows, 26 columns
   const addSheetRes = await withExponentialBackoff(() =>
@@ -274,7 +279,7 @@ export async function ensureMonthlyTransactionsSheet(
             addSheet: {
               properties: {
                 title: sheetName,
-                index: 0,
+                index: insertIndex,
                 gridProperties: {
                   rowCount: 1000,
                   columnCount: 26,
@@ -320,7 +325,7 @@ export async function ensureMonthlyTransactionsSheet(
             "",
             "",
             "",
-            '=SUMIFS(D2:D, C2:C, "expense", H2:H, "<>deleted") - SUMIFS(D2:D, C2:C, "income", H2:H, "<>deleted")',
+            '=SUMIFS(D2:D, C2:C, "expense", H2:H, "<>deleted")',
           ],
         ],
       },
@@ -426,6 +431,7 @@ export async function addTransaction(input: TransactionInput): Promise<{
   transactionId: string;
   timestamp: string;
   sheetName: string;
+  budgetStatus?: MonthlyBudgetStatus;
 }> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -436,6 +442,28 @@ export async function addTransaction(input: TransactionInput): Promise<{
   const sanitizedDescription = maskSensitiveFinancialData(input.description);
 
   const targetSheet = await resolveMonthSheetName(dateObj);
+
+  // Concurrency guard: prevent duplicate rows if exact same transaction was logged within the last 15 minutes
+  const existingDup = await findRecentDuplicateTransaction(
+    sanitizedDescription,
+    Number(input.amount) || 0,
+    input.type,
+    0.01
+  );
+  if (
+    existingDup &&
+    existingDup.description.toLowerCase() === sanitizedDescription.toLowerCase()
+  ) {
+    console.warn(
+      `[addTransaction] Suppressed duplicate transaction insert: ${sanitizedDescription} ($${input.amount})`
+    );
+    return {
+      transactionId: existingDup.transactionId,
+      timestamp: existingDup.timestamp,
+      sheetName: existingDup.sheetName || targetSheet,
+    };
+  }
+
   await ensureMonthlyTransactionsSheet(targetSheet);
 
   await withExponentialBackoff(async () => {
@@ -461,22 +489,36 @@ export async function addTransaction(input: TransactionInput): Promise<{
     });
   });
 
+  let budgetStatus: MonthlyBudgetStatus | undefined = undefined;
+  try {
+    budgetStatus = await getMonthlyBudgetStatus(
+      targetSheet,
+      dateObj,
+      input.type === "expense"
+        ? { amount: Number(input.amount) || 0, category: input.category }
+        : undefined
+    );
+  } catch (err) {
+    console.warn("Could not calculate budget status after adding transaction:", err);
+  }
+
   return {
     transactionId,
     timestamp,
     sheetName: targetSheet,
+    budgetStatus,
   };
 }
 
 export async function addTransactionsBatch(
   items: TransactionInput[]
-): Promise<Array<{ transactionId: string; timestamp: string; sheetName: string }>> {
+): Promise<Array<{ transactionId: string; timestamp: string; sheetName: string; budgetStatus?: MonthlyBudgetStatus }>> {
   if (items.length === 0) return [];
 
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  const results: Array<{ transactionId: string; timestamp: string; sheetName: string }> = [];
+  const results: Array<{ transactionId: string; timestamp: string; sheetName: string; budgetStatus?: MonthlyBudgetStatus }> = [];
   const groups = new Map<string, (string | number)[][]>();
 
   for (const input of items) {
@@ -516,6 +558,24 @@ export async function addTransactionsBatch(
         },
       })
     );
+
+    // Compute updated budget status for this sheet
+    try {
+      const addedExpense = rows.reduce(
+        (sum, row) => (row[2] === "expense" ? sum + (Number(row[3]) || 0) : sum),
+        0
+      );
+      const budgetStatus = await getMonthlyBudgetStatus(sheetName, undefined, {
+        amount: addedExpense,
+      });
+      for (const res of results) {
+        if (res.sheetName === sheetName) {
+          res.budgetStatus = budgetStatus;
+        }
+      }
+    } catch (err) {
+      console.warn(`Could not compute budget status for ${sheetName}:`, err);
+    }
   }
 
   return results;
@@ -660,7 +720,7 @@ export type FinanceSummary = {
   categories: CategorySpending[];
 };
 
-function parseSingaporeTimestamp(str: string): Date | null {
+export function parseSingaporeTimestamp(str: string): Date | null {
   if (!str) return null;
   const trimmed = str.trim();
 
@@ -1013,9 +1073,64 @@ export async function getProcessedExternalIds(): Promise<Set<string>> {
   return new Set(existingIds.map((row) => String(row[0])));
 }
 
+const inFlightExternalClaims = new Set<string>();
+
+export async function claimExternalId(externalId: string): Promise<boolean> {
+  const normId = String(externalId);
+  if (inFlightExternalClaims.has(normId)) {
+    return false;
+  }
+  inFlightExternalClaims.add(normId);
+
+  try {
+    const sheets = getSheetsClient();
+    const spreadsheetId = getSpreadsheetId();
+
+    const response = await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!A2:A`,
+      })
+    );
+
+    const existingIds = response.data.values ?? [];
+    const alreadyExists = existingIds.some((row) => row[0] === normId);
+    if (alreadyExists) {
+      inFlightExternalClaims.delete(normId);
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!A:F`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [[normId, "processing", now, "", "Sync in progress", ""]],
+        },
+      })
+    );
+
+    return true;
+  } catch (err) {
+    inFlightExternalClaims.delete(normId);
+    throw err;
+  }
+}
+
+export function releaseExternalId(externalId: string): void {
+  inFlightExternalClaims.delete(String(externalId));
+}
+
 export async function hasProcessedExternalId(
   externalId: string
 ): Promise<boolean> {
+  const normId = String(externalId);
+  if (inFlightExternalClaims.has(normId)) {
+    return true;
+  }
+
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
@@ -1027,27 +1142,60 @@ export async function hasProcessedExternalId(
   );
 
   const existingIds = response.data.values ?? [];
-  return existingIds.some((row) => row[0] === String(externalId));
+  return existingIds.some((row) => row[0] === normId);
 }
 
 export async function markExternalIdProcessed(
   externalId: string,
   details: string
 ): Promise<void> {
+  const normId = String(externalId);
+  inFlightExternalClaims.delete(normId);
+
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
   const now = new Date().toISOString();
 
-  await withExponentialBackoff(() =>
-    sheets.spreadsheets.values.append({
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${UPDATE_LOG_SHEET}!A:F`,
-      valueInputOption: "USER_ENTERED",
-      requestBody: {
-        values: [[String(externalId), "completed", now, now, details, ""]],
-      },
+      range: `${UPDATE_LOG_SHEET}!A2:A`,
     })
   );
+
+  const rows = response.data.values ?? [];
+  let matchingRowIndex = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i][0] === normId) {
+      matchingRowIndex = i;
+      break;
+    }
+  }
+
+  if (matchingRowIndex !== -1) {
+    const rowNumber = matchingRowIndex + 2;
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!B${rowNumber}:F${rowNumber}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [["completed", now, now, details, ""]],
+        },
+      })
+    );
+  } else {
+    await withExponentialBackoff(() =>
+      sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `${UPDATE_LOG_SHEET}!A:F`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: {
+          values: [[normId, "completed", now, now, details, ""]],
+        },
+      })
+    );
+  }
 }
 
 export async function markUpdateStarted(updateId: number): Promise<void> {
@@ -1126,6 +1274,50 @@ export async function markUpdateFailed(
     "",
     errorMessage.slice(0, 500),
   ]);
+}
+
+/**
+ * Prunes UpdateLog rows that only exist for short-term idempotency:
+ * numeric Telegram update IDs (Telegram stops retrying within a day) and
+ * leave-now notice keys. External receipt IDs (Gmail message IDs etc.) are
+ * kept forever because they prevent old receipts from being imported twice.
+ */
+export async function pruneUpdateLog(
+  daysToKeep = 7
+): Promise<{ prunedCount: number; remainingCount: number }> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A2:C`,
+    })
+  );
+
+  const rows = response.data.values ?? [];
+  const cutoffMs = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+  const pruneRowNumbers: number[] = [];
+
+  rows.forEach((row, index) => {
+    const id = String(row[0] ?? "");
+    const isShortLived = /^\d{1,12}$/.test(id) || id.startsWith("leave_now:");
+    const startedMs = new Date(row[2]).getTime();
+    if (isShortLived && !Number.isNaN(startedMs) && startedMs < cutoffMs) {
+      pruneRowNumbers.push(index + 2);
+    }
+  });
+
+  await deleteSheetRows({
+    spreadsheetId,
+    sheetTitle: UPDATE_LOG_SHEET,
+    rowNumbers: pruneRowNumbers,
+  });
+
+  return {
+    prunedCount: pruneRowNumbers.length,
+    remainingCount: rows.length - pruneRowNumbers.length,
+  };
 }
 
 export function parseSwipeReplyTransactionUpdate(
@@ -1238,4 +1430,142 @@ export function parseSwipeReplyTransactionUpdate(
     description: newDesc,
     category,
   };
+}
+
+export interface FinanceQueryFilters {
+  merchant?: string;
+  category?: string;
+  month?: string;
+  type?: "income" | "expense";
+}
+
+export interface FilteredFinanceSummary {
+  totalAmount: number;
+  count: number;
+  average: number;
+  currency: string;
+  transactions: FinanceTransaction[];
+  filterDescription: string;
+}
+
+export async function queryFilteredTransactions(
+  filters: FinanceQueryFilters
+): Promise<FilteredFinanceSummary> {
+  const allSheets = await getAllTransactionSheetNames();
+  let targetSheets: string[] = [];
+
+  const now = new Date();
+  const currentSheet = await resolveMonthSheetName(now);
+
+  if (filters.month) {
+    const mLower = filters.month.trim().toLowerCase();
+    if (mLower === "this month" || mLower === "current") {
+      targetSheets = [currentSheet];
+    } else if (
+      mLower === "last month" ||
+      mLower === "prev" ||
+      mLower === "previous"
+    ) {
+      const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevSheet = await resolveMonthSheetName(prevDate);
+      targetSheets = [prevSheet];
+    } else {
+      const matched = allSheets.filter((s) => s.toLowerCase().includes(mLower));
+      targetSheets = matched.length > 0 ? matched : [currentSheet];
+    }
+  } else {
+    targetSheets = allSheets;
+  }
+
+  const transactions: FinanceTransaction[] = [];
+  for (const sheet of targetSheets) {
+    const txns = await listTransactionsFromSheet(sheet);
+    transactions.push(...txns);
+  }
+
+  const merchantLower = filters.merchant?.trim().toLowerCase();
+  const categoryLower = filters.category?.trim().toLowerCase();
+  const typeLower = filters.type?.trim().toLowerCase();
+
+  const filtered = transactions.filter((txn) => {
+    if (txn.status !== "active") return false;
+
+    if (typeLower && txn.type.toLowerCase() !== typeLower) {
+      return false;
+    }
+
+    if (categoryLower && !txn.category.toLowerCase().includes(categoryLower)) {
+      return false;
+    }
+
+    if (merchantLower) {
+      const descLower = txn.description.toLowerCase();
+      if (!descLower.includes(merchantLower)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  let totalAmount = 0;
+  let currency = "SGD";
+  for (const txn of filtered) {
+    totalAmount += parseFloat(txn.amount) || 0;
+    if (txn.currency) currency = txn.currency.toUpperCase();
+  }
+
+  const count = filtered.length;
+  const average = count > 0 ? totalAmount / count : 0;
+
+  const descParts: string[] = [];
+  if (filters.type) descParts.push(filters.type);
+  if (filters.merchant) descParts.push(`"${filters.merchant}"`);
+  if (filters.category) descParts.push(`category "${filters.category}"`);
+  if (filters.month) descParts.push(`in ${filters.month}`);
+
+  const filterDescription =
+    descParts.length > 0 ? descParts.join(" ") : "all transactions";
+
+  return {
+    totalAmount,
+    count,
+    average,
+    currency,
+    transactions: filtered,
+    filterDescription,
+  };
+}
+
+export function formatFilteredFinanceSummary(
+  summary: FilteredFinanceSummary
+): string {
+  if (summary.count === 0) {
+    return `🔍 No transactions found for ${summary.filterDescription}.`;
+  }
+
+  const lines: string[] = [
+    `🔍 *Finance Summary: ${summary.filterDescription}*`,
+    "",
+    `💰 *Total:* $${summary.totalAmount.toFixed(2)} ${summary.currency}`,
+    `🔢 *Transactions:* ${summary.count}`,
+    `📊 *Average:* $${summary.average.toFixed(2)} / transaction`,
+  ];
+
+  if (summary.transactions.length > 0) {
+    lines.push("", "📋 *Recent Matching Transactions:*");
+    const preview = summary.transactions.slice(0, 5);
+    for (const txn of preview) {
+      lines.push(
+        `• ${txn.timestamp.split("@")[0].trim()}: $${parseFloat(
+          txn.amount
+        ).toFixed(2)} — ${txn.description}`
+      );
+    }
+    if (summary.transactions.length > 5) {
+      lines.push(`...and ${summary.transactions.length - 5} more`);
+    }
+  }
+
+  return lines.join("\n");
 }

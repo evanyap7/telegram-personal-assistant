@@ -1,10 +1,11 @@
 import { getGmailClient } from "./google";
 import {
   addTransaction,
+  claimExternalId,
   findRecentDuplicateTransaction,
   formatSingaporeTimestamp,
-  hasProcessedExternalId,
   markExternalIdProcessed,
+  releaseExternalId,
 } from "./finance";
 import { sendTelegramMessage } from "./telegram";
 import { google } from "@ai-sdk/google";
@@ -357,21 +358,57 @@ function parseEmailTransactionRegex(
     }
   }
 
-  // 8. DBS Card Alert
-  const cardMatch = text.match(
-    /(?:transaction of|charged)\s*(?:SGD|S\$)?\s*([0-9]+(?:\.[0-9]{2})?)\s*(?:was made on your DBS Card|on your card).*?at\s*(.+?)(?:\s+on|\.|$)/i
-  );
-  if (cardMatch) {
-    const amount = parseFloat(cardMatch[1]);
-    const merchant = cardMatch[2].trim();
-    if (amount && amount > 0) {
+  // 8. Card Alert (DBS/POSB, UOB, OCBC, Citi, Apple Pay email or SMS)
+  const amtMatch =
+    text.match(/(?:SGD|S\$|\$)\s*([0-9]+(?:\.[0-9]{2})?)/i) ||
+    text.match(/(?:amount|transaction of|charged|total|paid)\s*(?:SGD|S\$|\$)?\s*([0-9]+(?:\.[0-9]{2})?)/i);
+
+  if (amtMatch) {
+    const amount = parseFloat(amtMatch[1]);
+
+    // Extract merchant via "at <Merchant>" or "to <Merchant>"
+    let rawMerchant: string | undefined;
+    const atMatch = text.match(
+      /\bat\s+([A-Za-z0-9\s&'._-]+?)(?:\s+(?:on|dated|ref|via|with|using|\d{1,2}\/\d{1,2}|\d{1,2}\s+[A-Za-z]{3})|[.,;\n]|$)/i
+    );
+    if (atMatch) {
+      rawMerchant = atMatch[1].trim();
+    } else {
+      const toMatch = text.match(
+        /\bto\s+([A-Za-z0-9\s&'._-]+?)(?:\s+(?:was successful|is successful|on|dated|ref|via|with|using|\d{1,2}\/\d{1,2}|\d{1,2}\s+[A-Za-z]{3})|[.,;\n]|$)/i
+      );
+      if (toMatch) {
+        rawMerchant = toMatch[1].trim();
+      }
+    }
+
+    if (rawMerchant && amount && amount > 0) {
+      const cleanMerchant = rawMerchant
+        .replace(/^(?:your|the)\s+/i, "")
+        .replace(/\s+(?:was successful|is successful).*$/i, "")
+        .trim();
+
+      let paymentMethod = "Credit/Debit Card";
+      const textLower = `${subject} ${text}`.toLowerCase();
+      if (textLower.includes("dbs") || textLower.includes("posb")) {
+        paymentMethod = "DBS Card";
+      } else if (textLower.includes("uob")) {
+        paymentMethod = "UOB Card";
+      } else if (textLower.includes("ocbc")) {
+        paymentMethod = "OCBC Card";
+      } else if (textLower.includes("citi")) {
+        paymentMethod = "Citi Card";
+      } else if (textLower.includes("apple pay")) {
+        paymentMethod = "Apple Pay";
+      }
+
       return {
         isTransaction: true,
         type: "expense",
         amount,
         currency: "SGD",
-        merchant: merchant || "DBS Card Merchant",
-        paymentMethod: "DBS Card",
+        merchant: cleanMerchant || "Card Merchant",
+        paymentMethod,
       };
     }
   }
@@ -538,7 +575,7 @@ If this email is a shipping, dispatch, tracking, or delivery-status update (e.g.
 ${SECURITY_SYSTEM_GUARDRAIL}`;
 }
 
-async function parseEmailTransaction(
+export async function parseEmailTransaction(
   subject: string,
   cleanBody: string
 ): Promise<EmailTransactionParsedResult> {
@@ -699,8 +736,8 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
   const results = await Promise.allSettled(
     targetIds.map(async (messageId) => {
       const externalId = `gmail_${messageId}`;
-      const alreadyProcessed = await hasProcessedExternalId(externalId);
-      if (alreadyProcessed) {
+      const claimed = await claimExternalId(externalId);
+      if (!claimed) {
         return null;
       }
 
@@ -739,21 +776,21 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
 
           const dateObj = resolveTransactionDate(parsed.date);
 
-          // Safety net: skip logging if an active transaction with the same
-          // type/amount/merchant was already recorded recently (e.g. a
-          // shipping/delivery email that slipped past the classifier above
-          // for an order whose payment receipt was already logged).
-          // Bank alerts (DBS PayLah, PayNow, GIRO, DBS Card) are discrete monetary
-          // debits and should never be suppressed by order-lifecycle deduplication.
+          // Deduplication:
+          // For bank alerts (PayLah, PayNow, GIRO), check within a tight 30-minute window (0.02 days).
+          // For receipts/invoices/orders, check a 14-day window.
           const isBankAlert =
             paymentMethod.toLowerCase().includes("paylah") ||
             paymentMethod.toLowerCase().includes("paynow") ||
-            paymentMethod.toLowerCase().includes("giro") ||
-            paymentMethod.toLowerCase().includes("card");
+            paymentMethod.toLowerCase().includes("giro");
 
-          const duplicate = isBankAlert
-            ? null
-            : await findRecentDuplicateTransaction(merchant, amount, type);
+          const duplicateWindowDays = isBankAlert ? 0.02 : 14;
+          const duplicate = await findRecentDuplicateTransaction(
+            merchant,
+            amount,
+            type,
+            duplicateWindowDays
+          );
 
           if (duplicate) {
             await markExternalIdProcessed(
@@ -761,8 +798,10 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
               `Skipped duplicate: ${paymentMethod} ${type} ${currency} ${amount} at ${merchant} (matches ${duplicate.transactionId} logged ${duplicate.timestamp})`
             );
 
+            // Only notify user for order-lifecycle duplicates across different days,
+            // NOT for immediate rapid deliveries within the same hour
             const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
-            if (allowedUserId) {
+            if (allowedUserId && !isBankAlert && duplicateWindowDays > 1) {
               const skipMessage = [
                 "🔁 *Skipped Duplicate Transaction*",
                 "",
@@ -815,6 +854,9 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
               `• *Method:* ${paymentMethod}`,
               `• *Category:* ${category}`,
               `• *Recorded:* ${displayDate}`,
+              result.budgetStatus?.hasBudget && type === "expense"
+                ? result.budgetStatus.formattedMarkdownNotice
+                : null,
               "",
               "💬 _Tip: Swipe reply to this message anytime to rename the item or modify details!_",
             ]
@@ -862,6 +904,7 @@ export async function syncPayLahTransactions(options?: SyncPayLahOptions): Promi
         }
       } catch (msgErr) {
         console.error(`Failed to process Gmail message ${messageId}:`, msgErr);
+        await releaseExternalId(externalId);
         return null;
       }
     })

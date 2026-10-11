@@ -1,5 +1,6 @@
 import { getSheetsClient } from "./google";
 import { formatSingaporeTimestamp } from "./finance";
+import { deleteSheetRows } from "./sheet-rows";
 
 const CHAT_HISTORY_SHEET = "ChatHistory";
 
@@ -160,5 +161,50 @@ export async function getRecentChatHistory(
   } catch (error) {
     console.error("Failed to retrieve chat history from Google Sheets:", error);
     return [];
+  }
+}
+
+export async function pruneOldChatHistory(
+  daysToKeep = 30
+): Promise<{ prunedCount: number; remainingCount: number }> {
+  try {
+    await ensureChatHistorySheetExists();
+
+    const sheets = getSheetsClient();
+    const spreadsheetId = getSpreadsheetId();
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${CHAT_HISTORY_SHEET}!A2:G`,
+    });
+
+    const rows = res.data.values ?? [];
+    if (rows.length === 0) {
+      return { prunedCount: 0, remainingCount: 0 };
+    }
+
+    const cutoffMs = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+    const pruneRowNumbers: number[] = [];
+
+    rows.forEach((row, index) => {
+      const timeMs = new Date(row[1]).getTime();
+      if (!Number.isNaN(timeMs) && timeMs < cutoffMs) {
+        pruneRowNumbers.push(index + 2);
+      }
+    });
+
+    await deleteSheetRows({
+      spreadsheetId,
+      sheetTitle: CHAT_HISTORY_SHEET,
+      rowNumbers: pruneRowNumbers,
+    });
+
+    return {
+      prunedCount: pruneRowNumbers.length,
+      remainingCount: rows.length - pruneRowNumbers.length,
+    };
+  } catch (error) {
+    console.error("Failed to prune chat history in Google Sheets:", error);
+    return { prunedCount: 0, remainingCount: 0 };
   }
 }

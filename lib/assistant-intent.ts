@@ -19,6 +19,8 @@ const calendarAddSchema = z.discriminatedUnion("allDay", [
     title: z.string().min(1).max(100),
     start: singaporeDateTimeSchema,
     end: singaporeDateTimeSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
   z.object({
     action: z.literal("calendar_add"),
@@ -26,8 +28,34 @@ const calendarAddSchema = z.discriminatedUnion("allDay", [
     allDay: z.literal(true),
     title: z.string().min(1).max(100),
     date: z.string().date(),
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
 ]);
+
+const calendarBatchEventSchema = z.discriminatedUnion("allDay", [
+  z.object({
+    allDay: z.literal(false),
+    title: z.string().min(1).max(100),
+    start: singaporeDateTimeSchema,
+    end: singaporeDateTimeSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
+  }),
+  z.object({
+    allDay: z.literal(true),
+    title: z.string().min(1).max(100),
+    date: z.string().date(),
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
+  }),
+]);
+
+const calendarBatchAddSchema = z.object({
+  action: z.literal("calendar_batch_add"),
+  calendarName: z.enum(["personal", "work"]),
+  events: z.array(calendarBatchEventSchema).min(1).max(30),
+});
 
 const intentSchema = z.union([
   z.object({
@@ -40,6 +68,7 @@ const intentSchema = z.union([
     explicitDate: z.string().date().optional(),
   }),
   calendarAddSchema,
+  calendarBatchAddSchema,
   z.object({
     action: z.literal("calendar_view"),
     calendarName: z.enum(["personal", "work", "all"]).default("all"),
@@ -51,8 +80,76 @@ const intentSchema = z.union([
     query: z.string().min(1).max(200),
   }),
   z.object({
+    action: z.literal("calendar_reschedule"),
+    calendarName: z.enum(["personal", "work", "all"]).default("all"),
+    query: z.string().min(1).max(200),
+    newDate: z.string().date().optional(),
+    newStartTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+    newEndTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+    durationMinutes: z.number().int().positive().optional(),
+  }),
+  z.object({
+    action: z.literal("calendar_free_slots"),
+    calendarName: z.enum(["personal", "work", "all"]).default("all"),
+    date: z.string().date().optional(),
+    timeframe: z.enum(["today", "tomorrow", "specific"]).default("today"),
+    minDurationMinutes: z.number().int().positive().default(30),
+  }),
+  z.object({
     action: z.literal("finance_summary"),
     period: z.enum(["today", "week", "month", "all"]).default("month"),
+  }),
+  z.object({
+    action: z.literal("finance_query"),
+    merchant: z.string().optional(),
+    category: z.string().optional(),
+    month: z.string().optional(),
+    type: z.enum(["income", "expense"]).optional(),
+  }),
+  z.object({
+    action: z.literal("split_bill"),
+    total: z.number().positive().optional(),
+    subtotal: z.number().positive().optional(),
+    people: z.array(z.string()).default([]),
+    tipPercent: z.number().optional(),
+    taxPercent: z.number().optional(),
+    description: z.string().optional(),
+    payer: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("iou_summary"),
+    person: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("memory_save"),
+    key: z.string().min(1).max(100),
+    value: z.string().min(1).max(500),
+    category: z
+      .enum(["note", "contact", "fact", "preference", "credential"])
+      .default("note"),
+  }),
+  z.object({
+    action: z.literal("memory_recall"),
+    query: z.string().min(1).max(200),
+  }),
+  z.object({
+    action: z.literal("recurring_add"),
+    type: z.enum(["subscription", "recurring_task"]),
+    title: z.string().min(1).max(200),
+    frequency: z.enum(["daily", "weekly", "monthly", "yearly"]),
+    amount: z.number().positive().optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    category: z.string().min(1).max(50).optional(),
+    dayOfMonth: z.number().int().min(1).max(31).optional(),
+    dayOfWeek: z.number().int().min(0).max(6).optional(),
+  }),
+  z.object({
+    action: z.literal("recurring_view"),
+  }),
+  z.object({
+    action: z.literal("budget_set"),
+    amount: z.number().positive(),
+    category: z.string().min(1).max(50).optional(),
   }),
   z.object({
     action: z.literal("finance_delete_search"),
@@ -74,9 +171,11 @@ const intentSchema = z.union([
   }),
   z.object({
     action: z.literal("todo_add"),
-    task: z.string().min(1).max(300),
+    task: z.string().min(1).max(300).optional(),
+    tasks: z.array(z.string().min(1).max(300)).optional(),
     dueDate: z.string().date().optional(),
     priority: z.enum(["low", "medium", "high"]).default("medium"),
+    remindIntervalMinutes: z.number().int().positive().optional(),
   }),
   z.object({
     action: z.literal("todo_view"),
@@ -108,6 +207,7 @@ const intentSchema = z.union([
     start: singaporeDateTimeSchema.optional(),
     end: singaporeDateTimeSchema.optional(),
     date: z.string().date().optional(),
+    location: z.string().max(200).optional(),
   }),
   z.object({
     action: z.literal("calendar_rename"),
@@ -115,6 +215,21 @@ const intentSchema = z.union([
     title: z.string().min(1).max(100),
     newTitle: z.string().min(1).max(100),
     eventId: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal("workout_start"),
+    location: z.enum(["school", "csc"]).optional(),
+  }),
+  z.object({
+    action: z.literal("workout_log"),
+    text: z.string().min(1),
+    location: z.enum(["school", "csc"]).optional(),
+  }),
+  z.object({
+    action: z.literal("workout_view"),
+  }),
+  z.object({
+    action: z.literal("undo"),
   }),
   z.object({
     action: z.literal("unknown"),
@@ -134,6 +249,8 @@ export type ConversationContext = {
     start?: string;
     end?: string;
     date?: string;
+    location?: string;
+    reminderMinutes?: number;
   };
   recentCalendarEvent?: {
     calendarName: "personal" | "work";
@@ -142,6 +259,7 @@ export type ConversationContext = {
     start?: string;
     end?: string;
     date?: string;
+    location?: string;
     eventId?: string;
   };
   recentChatHistory?: Array<{
@@ -224,14 +342,17 @@ export async function parseAssistantIntent(
     }
     if (context.activePendingCalendar) {
       const p = context.activePendingCalendar;
+      const loc = p.location ? `\n- Location: "${p.location}"` : "";
+      const rem = p.reminderMinutes ? `\n- Reminder: ${p.reminderMinutes} minutes before` : "";
       items.push(
-        `Active pending calendar confirmation:\n- Calendar: ${p.calendarName}\n- Title: "${p.title}"\n- All-day: ${p.allDay}\n- Timing: ${p.allDay ? p.date : `${p.start} to ${p.end}`}`
+        `Active pending calendar confirmation:\n- Calendar: ${p.calendarName}\n- Title: "${p.title}"\n- All-day: ${p.allDay}\n- Timing: ${p.allDay ? p.date : `${p.start} to ${p.end}`}${loc}${rem}`
       );
     }
     if (context.recentCalendarEvent) {
       const r = context.recentCalendarEvent;
+      const loc = r.location ? `\n- Location: "${r.location}"` : "";
       items.push(
-        `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}\n- Event ID: ${r.eventId ?? "none"}`
+        `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}${loc}\n- Event ID: ${r.eventId ?? "none"}`
       );
     }
     if (context.recentTransaction) {
@@ -385,9 +506,24 @@ Supported actions:
 10. todo_delete_search
 11. email_draft
 12. calendar_move
-13. calendar_rename
-14. finance_modify
-15. unknown
+13. finance_modify
+14. calendar_batch_add
+15. calendar_reschedule
+16. calendar_free_slots
+17. finance_query
+18. split_bill
+19. iou_summary
+20. memory_save
+21. memory_recall
+22. recurring_add
+23. recurring_view
+24. budget_set
+25. workout_start
+26. workout_log
+27. workout_view
+28. undo
+29. calendar_rename
+30. unknown
 
 Finance entry:
 {
@@ -408,7 +544,9 @@ start time plus end time or duration:
   "allDay": false,
   "title": "event title",
   "start": "YYYY-MM-DDTHH:mm:ss+08:00",
-  "end": "YYYY-MM-DDTHH:mm:ss+08:00"
+  "end": "YYYY-MM-DDTHH:mm:ss+08:00",
+  "location": "optional meeting location, room, address, or online meeting link",
+  "reminderMinutes": positive integer (minutes before event to notify; e.g. 120 for 2 hours before, 30 for 30 mins; optional)
 }
 
 All-day calendar creation, when the user gives a date but no time:
@@ -417,7 +555,32 @@ All-day calendar creation, when the user gives a date but no time:
   "calendarName": "personal" or "work",
   "allDay": true,
   "title": "event title",
-  "date": "YYYY-MM-DD"
+  "date": "YYYY-MM-DD",
+  "location": "optional location",
+  "reminderMinutes": optional number
+}
+
+Batch calendar creation (when user provides multiple calendar events in a single message):
+{
+  "action": "calendar_batch_add",
+  "calendarName": "personal" or "work",
+  "events": [
+    {
+      "allDay": false,
+      "title": "event title",
+      "start": "YYYY-MM-DDTHH:mm:ss+08:00",
+      "end": "YYYY-MM-DDTHH:mm:ss+08:00",
+      "location": "optional location",
+      "reminderMinutes": optional number
+    },
+    {
+      "allDay": true,
+      "title": "event title",
+      "date": "YYYY-MM-DD",
+      "location": "optional location",
+      "reminderMinutes": optional number
+    }
+  ]
 }
 
 Calendar view / agenda query:
@@ -467,7 +630,8 @@ To-do item creation:
   "action": "todo_add",
   "task": "task description",
   "dueDate": "YYYY-MM-DD (if mentioned, otherwise omit)",
-  "priority": "low", "medium", or "high"
+  "priority": "low", "medium", or "high",
+  "remindIntervalMinutes": 30 (default 30 whenever user asks to be reminded to do something, or requested interval)
 }
 
 To-do view:
@@ -498,7 +662,7 @@ Email draft creation:
   "bcc": "optional bcc address"
 }
 
-Calendar move or switch:
+Calendar move or switch (ONLY for an existing event that has already been created in Google Calendar; NEVER for modifying pending confirmation drafts):
 {
   "action": "calendar_move",
   "fromCalendar": "personal" or "work",
@@ -510,13 +674,121 @@ Calendar move or switch:
   "end": "YYYY-MM-DDTHH:mm:ss+08:00"
 }
 
-Calendar rename (title only, same calendar — does NOT move or change timing):
+Calendar rename (title only, same calendar — does NOT move or change timing; ONLY for an existing event, NEVER for pending confirmation drafts):
 {
   "action": "calendar_rename",
   "calendarName": "personal" or "work",
   "title": "the event's current title",
   "newTitle": "the new title the user wants",
   "eventId": "event id if known"
+}
+
+Reschedule an EXISTING calendar event (change its date and/or time):
+{
+  "action": "calendar_reschedule",
+  "calendarName": "personal", "work", or "all",
+  "query": "short event title keyword",
+  "newDate": "YYYY-MM-DD (only if the date changes)",
+  "newStartTime": "HH:mm (24-hour)",
+  "newEndTime": "HH:mm (24-hour, optional)",
+  "durationMinutes": optional positive integer
+}
+
+Find free time slots:
+{
+  "action": "calendar_free_slots",
+  "calendarName": "personal", "work", or "all",
+  "timeframe": "today", "tomorrow", or "specific",
+  "date": "YYYY-MM-DD (only when timeframe is specific)",
+  "minDurationMinutes": 30
+}
+
+Finance query about a specific merchant, category, or month:
+{
+  "action": "finance_query",
+  "merchant": "optional merchant name",
+  "category": "optional category",
+  "month": "optional month phrase, e.g. September, last month, this month",
+  "type": "income" or "expense" (optional)
+}
+
+Split a bill:
+{
+  "action": "split_bill",
+  "total": positive number,
+  "people": ["Me", "Alice", "Bob"],
+  "tipPercent": optional number,
+  "taxPercent": optional number,
+  "description": "optional short description",
+  "payer": "optional name of who paid (default Me)"
+}
+
+IOU / debt balances:
+{
+  "action": "iou_summary",
+  "person": "optional person name"
+}
+
+Save a personal memory / note:
+{
+  "action": "memory_save",
+  "key": "item name, e.g. locker code, Alice's birthday",
+  "value": "the detail to remember",
+  "category": "note", "contact", "fact", "preference", or "credential"
+}
+
+Recall a saved memory / note:
+{
+  "action": "memory_recall",
+  "query": "what to look up, e.g. locker code, Alice's birthday"
+}
+
+Create a recurring subscription expense or recurring task:
+{
+  "action": "recurring_add",
+  "type": "subscription" or "recurring_task",
+  "title": "e.g. Spotify, Pay rent",
+  "frequency": "daily", "weekly", "monthly", or "yearly",
+  "amount": positive number (subscriptions only),
+  "currency": "SGD",
+  "category": "optional category, e.g. Subscriptions, Utilities",
+  "dayOfMonth": 1-31 (monthly/yearly, optional),
+  "dayOfWeek": 0-6 where 0 is Sunday (weekly, optional)
+}
+
+View recurring schedules:
+{
+  "action": "recurring_view"
+}
+
+Set the monthly budget or a category spending cap:
+{
+  "action": "budget_set",
+  "amount": positive number,
+  "category": "optional category name; omit to set the overall monthly budget"
+}
+
+Start or setup workout session:
+{
+  "action": "workout_start",
+  "location": "school" or "csc" (optional if unspecified)
+}
+
+Log workout sets or exercise logs:
+{
+  "action": "workout_log",
+  "text": "raw exercise and sets text",
+  "location": "school" or "csc" (optional)
+}
+
+View workout stats and progressive overload analytics:
+{
+  "action": "workout_view"
+}
+
+Undo last autonomous action:
+{
+  "action": "undo"
 }
 
 Unknown:
@@ -528,12 +800,16 @@ ${contextBlock}
 
 Contextual Reference Rules:
 - If an active pending calendar confirmation is present in the context:
+  - If the user asks to modify, rename, or adjust any aspect of this pending event (e.g. "change the title to ...", "rename to ...", "title should be ...", "make it work instead", "change time to 7pm"):
+    Return calendar_add with the updated fields, retaining the unchanged fields from the pending event!
+    CRITICAL: NEVER return calendar_move when an active pending confirmation is present and the user wants to adjust it. calendar_move is strictly for moving already-created events between calendars.
   - If the user asks to change the calendar (e.g. "add it to my work calendar", "change it to work calendar", "switch to work", "make it work instead", "put this in work", "work calendar instead"):
-    Return calendar_add with the requested calendarName ("personal" or "work") retaining the title and timing (start/end or date) from the pending event! DO NOT return unknown.
-  - If the user asks to change the time (e.g. "make it 7pm", "change to 8pm"), update the start and end times while retaining the title and calendar.
-  - If the user asks to change the date (e.g. "make it tomorrow", "change to 8 sept"), update the date while retaining the title and calendar.
-  - If the user asks to change the title (e.g. "rename it to ...", "title should be ..."), update the title while retaining the timing and calendar.
-- If the user replied to an event creation message OR asks to change an event that was just created:
+    Return calendar_add with the requested calendarName ("personal" or "work") retaining the title and timing (start/end or date) from the pending event! DO NOT return unknown and DO NOT return calendar_move.
+  - If the user asks to change or rename the title (e.g. "change the title to: ...", "rename it to ...", "title should be ...", "call it ..."):
+    Return calendar_add with the new title while retaining the timing and calendar from the pending event! DO NOT return calendar_move.
+  - If the user asks to change the time (e.g. "make it 7pm", "change to 8pm"), return calendar_add with the updated start and end times while retaining the title and calendar.
+  - If the user asks to change the date (e.g. "make it tomorrow", "change to 8 sept"), return calendar_add with the updated date while retaining the title and calendar.
+- If the user replied to an event creation confirmation (e.g. "Created event ...", "Added to your calendar") OR asks to change an event that was just created:
   - If the user asks to move it or change its calendar (e.g. "sorry can u add this to my work calendar instead", "move this to my work calendar", "switch to work calendar", "change this to work"):
     Return calendar_move with fromCalendar, toCalendar, title, and any known event details from the context or replied message.
   - If the user asks ONLY to change the title/name (e.g. "change the title to ...", "rename it to ...", "call it ..."), and does NOT ask to change the calendar or timing:
@@ -570,14 +846,21 @@ Calendar creation rules:
   set allDay to true and return date only.
 - If the user gives both a date and time, create a timed event:
   set allDay to false and provide start and end.
-- For timed events, require a clear start time and end time or duration.
-- Never invent a date, time, or duration.
+- For timed events:
+  - If both start time and end time or duration are given, use them.
+  - If a start time is given but end time or duration is omitted (e.g. "at 8:45pm", "at 3 pm"), default the duration to 1 hour (end time = start time + 1 hour).
+  - End time MUST ALWAYS be strictly after start time.
+- If multiple calendar events are provided in a single message, return "calendar_batch_add" with all extracted events (up to 30 events).
+- Never invent a date or time that was not mentioned or implied.
+- If the user specifies a location (e.g. "at Starbucks Raffles City", "in Room 302", "at Level 4", "on Zoom", "Google Meet link"), extract this into the "location" field rather than repeating it in the title.
+- If the user requests a reminder or notification (e.g. "notify me 2 hours before", "remind me 30 mins before", "set reminder 1 hour before"):
+  - Extract the lead time in minutes into "reminderMinutes" (e.g. "2 hours before" -> 120, "1 hour before" -> 60, "45 mins" -> 45).
+  - If no reminder time is mentioned, omit "reminderMinutes".
 - If no date can be determined, return unknown.
 - Include seconds as :00 and end timed datetimes with +08:00.
 - "Add gym tomorrow" means an all-day calendar_add.
 - "Schedule gym tomorrow at 7 pm for 1 hour" means a timed calendar_add.
-- "Meeting tomorrow at 3 pm" returns unknown because end time or duration
-  is missing.
+- "Meeting tomorrow at 3 pm" means a timed calendar_add from 15:00:00 to 16:00:00 (default 1 hour duration).
 
 Calendar view rules:
 - If the user asks to see, check, list, or view their schedule, calendar, agenda, or events, return calendar_view.
@@ -587,22 +870,82 @@ Calendar view rules:
 - "Show upcoming events", "upcoming schedule", "what's on my calendar" means calendar_view with timeframe "upcoming".
 - Use calendarName "all" unless user explicitly asks for personal or work only.
 
+Calendar reschedule rules:
+- If the user asks to move, reschedule, postpone, push, delay, or shift an existing calendar event (e.g. "move gym tomorrow to 5pm", "reschedule dental appointment to Friday 3pm", "push team sync by 1 hour", "postpone lunch with Alex to 1:30pm"), return calendar_reschedule.
+- Extract query (the event name/keyword), newDate (if moving date), newStartTime (HH:mm 24-hr format), newEndTime, and durationMinutes.
+- "move my gym session to 5pm tomorrow" -> calendar_reschedule with query "gym", newDate of tomorrow, newStartTime "17:00". It is NOT calendar_add: words like move/reschedule/push/postpone/shift refer to an event that already exists.
+- Exception: while an active pending calendar confirmation exists, adjustments to that pending draft stay calendar_add (see Contextual Reference Rules).
+
+Calendar free slots rules:
+- If the user asks when they are free, asks for open or available slots, or wants to check free time (e.g. "when am I free today?", "find free slots tomorrow", "do I have 1 hour free on Friday?", "open slots today"), return calendar_free_slots.
+- Extract timeframe ("today", "tomorrow", "specific"), date, and minDurationMinutes (default 30).
+- "when am I free tomorrow?" -> calendar_free_slots with timeframe "tomorrow". It is NOT calendar_view: calendar_view lists events, calendar_free_slots lists the gaps between them.
+
 Finance summary rules:
-- If the user asks for spending summary, expense total, how much they spent, or budget overview, return finance_summary.
+- If the user asks for general spending summary, expense total, how much they spent, or budget overview, return finance_summary.
 - "How much did I spend this month?", "spending this month", "monthly breakdown", "finance summary" means finance_summary with period "month".
 - "How much did I spend today?", "today's spending" means finance_summary with period "today".
 - "How much did I spend this week?", "spending this week" means finance_summary with period "week".
 - "Total spending", "overall expenses", "all-time spending" means finance_summary with period "all".
 
+Finance query rules:
+- If the user asks about spending on a specific merchant, category, or specific month (e.g. "how much on Grab in September", "what did I spend on Uniqlo", "how much did I spend on food last month"), return finance_query.
+- Extract merchant (e.g. "Grab", "Uniqlo", "Shopee", "Toast Box"), category (e.g. "food", "transport", "shopping"), month (e.g. "September", "last month", "this month"), and type ("income" or "expense").
+- "how much on Grab in September" -> finance_query with merchant "Grab", month "September".
+- "what did I spend on Uniqlo" -> finance_query with merchant "Uniqlo".
+- "how much did I spend on food last month" -> finance_query with category "food", month "last month", type "expense".
+
+Bill split and IOU rules:
+- If the user asks to split a bill, dinner, meal, or shared expense (e.g. "split $80 dinner with Alex and Ben", "paid $120 for lunch, split among 4 people", "split $60 with Sarah"), return split_bill.
+- Extract total, list of people (names or 'Me' plus friends), tipPercent, taxPercent, and description.
+- If the user asks who owes them, what they owe, debts, or IOU balance (e.g. "who owes me money?", "what do I owe Alex?", "show my debts", "IOU summary"), return iou_summary.
+- "split $60 bill with Alice and Bob" -> split_bill with total 60, people ["Me", "Alice", "Bob"]. It is NOT finance_add and NOT unknown.
+- "who owes me money?" -> iou_summary with no person.
+
+Memory and personal notes rules:
+- If the user asks you to remember, save, or store a note, fact, contact, password/code, or preference (e.g. "remember that my locker code is 1234", "save note: wifi password is ...", "remember Alex's email is alex@gmail.com", "save contact Sarah: 91234567"), return memory_save.
+- Extract key (the item name/subject, e.g. "locker code", "wifi password", "Alex"), value (the secret or detail), and category ("credential", "contact", "preference", or "note").
+- If the user asks what they noted or asks to recall information (e.g. "what is my locker code?", "what did I note about wifi?", "recall Alex's contact", "show my notes about ..."), return memory_recall.
+- Questions about personal facts the user may have saved (e.g. "what is Alice's birthday?", "what's my wifi password?") are memory_recall, NOT unknown.
+- "remember that Alice's birthday is June 15" -> memory_save with key "Alice's birthday", value "June 15", category "fact".
+
+Recurring schedule rules:
+- If the user wants something to repeat on a schedule (words like "every month", "every week", "every day", "monthly", "weekly", "yearly", "on the 1st of each month", "every Monday"), return recurring_add, NOT todo_add or finance_add.
+- A repeating payment or subscription (e.g. "Spotify $11.98 every month", "log my phone bill $30 monthly on the 5th") is type "subscription" with amount.
+- A repeating chore or reminder (e.g. "remind me to pay rent on the 1st every month", "water the plants every Sunday") is type "recurring_task".
+- "remind me to pay rent on the 1st every month" -> recurring_add with type "recurring_task", title "Pay rent", frequency "monthly", dayOfMonth 1.
+- "show my subscriptions", "list recurring", "what recurring tasks do I have" -> recurring_view.
+
+Budget setting rules:
+- "set my budget to $600", "change monthly budget to 600", "my budget is $450 a month" -> budget_set with amount and no category.
+- Phrases that change the budget to a stated total ("can u increase my budget for this month to $700 instead", "raise my budget to 800", "lower the budget to 400", "make it $700 instead") -> budget_set with amount 700/800/400 (the new total, not the difference) and no category.
+- "cap dining at $150", "set transport budget to $80", "limit shopping to $100 a month" -> budget_set with amount and category.
+- Asking to VIEW the budget is not budget_set.
+
 To-do rules:
 - If the user asks to add something to their to-do list, tasks, reminder, or "todo: ...", return todo_add.
+- CRITICAL REMINDER RULE: Whenever the user asks you to REMIND them to do something (e.g. "remind me to...", "set a reminder to...", "nag me to...", "remind me every 30 mins to..."), return action "todo_add" with 'remindIntervalMinutes: 30' (or whatever interval in minutes was requested, default 30).
+- If the user merely asks to add a task without asking for reminders (e.g. "add buy milk to my todo list", "todo: clean room"), do NOT include 'remindIntervalMinutes'.
 - "Add buy milk to my todo list" -> todo_add with task "buy milk".
-- "Remind me to call John today" -> todo_add with task "call John", dueDate: "${currentDate}".
+- "Remind me to call John today" -> todo_add with task "call John", dueDate: "${currentDate}", remindIntervalMinutes: 30.
+- "Remind me to buy groceries" -> todo_add with task "buy groceries", remindIntervalMinutes: 30.
+- "Remind me every 15 minutes to drink water" -> todo_add with task "drink water", remindIntervalMinutes: 15.
 - "Add finish presentation due tomorrow" -> todo_add with task "finish presentation" and dueDate of tomorrow.
+- If the user provides multiple tasks in a list, bullet points, or multiple items (e.g. "add to my todo list: 1. buy milk 2. do laundry 3. call mom" or "add buy milk, wash car, and clean desk to my tasks"), return todo_add with tasks: ["buy milk", "do laundry", "call mom"] (an array of strings).
 - "What do I have to do for today?", "what do I have to do today?", "what are my tasks for today?", "today's todo list" -> todo_view with timeframe "today".
 - "What's on my to-do list?", "show my tasks", "view my todo list", "what do I have to do?", "list my todos" -> todo_view with timeframe "all".
 - "I'm done with buy milk", "done with call John", "finished buying groceries", "mark buy milk as done" -> todo_complete with query "buy milk" (or relevant keyword).
 - "Remove buy milk from my list", "delete task call John", "delete todo buy milk" -> todo_delete_search with query.
+
+Workout rules:
+- If the user says they are going to the gym, heading to workout, or starting gym (e.g. "I'm going to the gym", "heading to the gym", "gym time", "going to school gym", "going to csc gym"), return action "workout_start". DO NOT classify as calendar_add or unknown unless they explicitly say "add gym to my calendar" or provide a specific scheduling time like "schedule gym tomorrow at 7pm".
+  - If they mention "school", location is "school". If they mention "csc", location is "csc". Otherwise omit location so the bot can prompt them.
+- If the user sends raw workout sets or exercise logs with weights and reps (e.g. "incline smith 100 x 5.5, 100 x 4, 80 x 7", "bench press 90 x 7, t bar 60 x 8", or multiline exercise notes), return action "workout_log" with text containing the log.
+- If the user asks about their workout stats, PRs, or training progress (e.g. "show my workout stats", "what's my best bench", "gym progress", "workout stats"), return action "workout_view".
+
+Undo rules:
+- If the user says "undo", "cancel that", "revert that", "undo last action", "revert", return action "undo".
+- Do NOT return undo if the user is asking to delete a specific item by name (e.g. "delete my coffee expense" is finance_delete_search). Only standalone or general rollback phrases are action "undo".
 
 Email draft rules:
 - If the user asks to draft, write, compose, or prepare an email, return email_draft.

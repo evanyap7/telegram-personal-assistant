@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addTransaction, formatSingaporeTimestamp } from "@/lib/finance";
+import {
+  addTransaction,
+  findRecentDuplicateTransaction,
+  formatSingaporeTimestamp,
+} from "@/lib/finance";
+import { parseEmailTransaction } from "@/lib/paylah-sync";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { safeCompare } from "@/lib/security";
 import { parseSingaporeDate } from "@/lib/date-parser";
@@ -33,7 +38,12 @@ function normalizeAmount(val: unknown): number | null {
       obj.number ??
       obj.Number ??
       obj.total ??
-      obj.Total;
+      obj.Total ??
+      obj.formatted ??
+      obj.formattedString ??
+      obj.displayString ??
+      obj.text ??
+      obj.string;
     if (candidate !== undefined && candidate !== val) {
       return normalizeAmount(candidate);
     }
@@ -292,7 +302,22 @@ function verifyAuth(req: NextRequest, bodySecret?: unknown): boolean {
   return false;
 }
 
-async function processWalletTransaction(payload: Record<string, unknown>) {
+async function processWalletTransaction(rawPayload: Record<string, unknown>) {
+  let payload: Record<string, unknown> = { ...rawPayload };
+
+  // Unwrap any nested wrapper like "transaction", "shortcut input", "data", "body", "payload"
+  const wrapperKeys = ["transaction", "shortcut input", "shortcutinput", "data", "body", "payload", "input"];
+  for (const [key, val] of Object.entries(payload)) {
+    if (
+      wrapperKeys.includes(key.toLowerCase().replace(/[\s_-]/g, "")) &&
+      typeof val === "object" &&
+      val !== null &&
+      !Array.isArray(val)
+    ) {
+      payload = { ...(val as Record<string, unknown>), ...payload };
+    }
+  }
+
   const rawAmount = getField(payload, [
     "amount",
     "value",
@@ -300,8 +325,49 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
     "total",
     "transaction_amount",
     "transactionamount",
+    "cost",
   ]);
-  const amount = normalizeAmount(rawAmount);
+  let amount = normalizeAmount(rawAmount);
+
+  // If structured amount is not found, check if unstructured text was passed (e.g. Bank SMS or receipt)
+  if (!amount) {
+    const rawText = getField(payload, [
+      "text",
+      "message",
+      "sms",
+      "body",
+      "content",
+      "rawText",
+      "raw",
+      "shortcutInput",
+      "shortcut_input",
+    ]);
+
+    if (rawText && typeof rawText === "string" && rawText.trim()) {
+      const parsed = await parseEmailTransaction("Payment Alert", rawText.trim());
+      if (parsed && parsed.isTransaction && parsed.amount) {
+        amount = parsed.amount;
+        if (!payload.merchant && parsed.merchant) {
+          payload.merchant = parsed.merchant;
+        }
+        if (!payload.currency && parsed.currency) {
+          payload.currency = parsed.currency;
+        }
+        if (!payload.category && parsed.category) {
+          payload.category = parsed.category;
+        }
+        if (!payload.card && parsed.paymentMethod) {
+          payload.card = parsed.paymentMethod;
+        }
+        if (!payload.date && parsed.date) {
+          payload.date = parsed.date;
+        }
+        if (!payload.item && parsed.item) {
+          payload.item = parsed.item;
+        }
+      }
+    }
+  }
 
   if (!amount) {
     return NextResponse.json(
@@ -323,6 +389,8 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
       "name",
       "store",
       "description",
+      "title",
+      "label",
     ]) ?? "Apple Pay Purchase";
   const merchant = String(rawMerchant).trim() || "Apple Pay Purchase";
 
@@ -333,6 +401,7 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
     "product",
     "note",
     "notes",
+    "details",
   ]);
   const itemCandidate = rawItem ? String(rawItem).trim() : undefined;
   const item = itemCandidate && itemCandidate !== merchant ? itemCandidate : undefined;
@@ -389,6 +458,24 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
     ? `${merchant} (Apple Pay - ${card})`
     : `${merchant} (Apple Pay)`;
 
+  // Prevent duplicate logging if this purchase was already recorded (e.g. by Gmail push sync or tap within 15 mins)
+  if (!payload.force && !payload.allowDuplicate) {
+    const duplicate = await findRecentDuplicateTransaction(
+      merchant,
+      amount,
+      "expense",
+      15 / (24 * 60) // 15 minute window
+    );
+    if (duplicate) {
+      return NextResponse.json({
+        success: true,
+        duplicate: true,
+        message: `Transaction for ${merchant} (${currency} ${amount.toFixed(2)}) was already logged recently.`,
+        transactionId: duplicate.transactionId,
+      });
+    }
+  }
+
   try {
     // 1. Add transaction to Google Sheets
     const result = await addTransaction({
@@ -414,6 +501,7 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
         `• *Category:* ${category}`,
         card ? `• *Card:* ${card}` : null,
         `• *Recorded:* ${displayDate}`,
+        result.budgetStatus?.hasBudget ? result.budgetStatus.formattedMarkdownNotice : null,
         "",
         "💬 _Tip: Swipe reply to this message anytime with what you bought (e.g. \"bought iced latte\") to update it!_",
       ]
@@ -464,8 +552,14 @@ async function processWalletTransaction(payload: Record<string, unknown>) {
 export async function GET(req: NextRequest) {
   const isAuthed = verifyAuth(req);
 
-  // If query params include amount and request is authenticated, allow recording via GET
-  if (isAuthed && req.nextUrl.searchParams.has("amount")) {
+  // If query params include amount or text and request is authenticated, allow recording via GET
+  if (
+    isAuthed &&
+    (req.nextUrl.searchParams.has("amount") ||
+      req.nextUrl.searchParams.has("text") ||
+      req.nextUrl.searchParams.has("message") ||
+      req.nextUrl.searchParams.has("sms"))
+  ) {
     const queryPayload: Record<string, unknown> = {};
     for (const [k, v] of req.nextUrl.searchParams.entries()) {
       queryPayload[k] = v;
@@ -484,7 +578,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: Record<string, unknown> = {};
+  let body: unknown = {};
   try {
     const textBody = await req.text();
     if (textBody && textBody.trim()) {
@@ -499,6 +593,8 @@ export async function POST(req: NextRequest) {
         }
         if (Object.keys(parsed).length > 0) {
           body = parsed;
+        } else {
+          body = { text: textBody.trim() };
         }
       }
     }
@@ -506,12 +602,20 @@ export async function POST(req: NextRequest) {
     console.warn("Could not read request body in apple-wallet route:", err);
   }
 
+  // Handle array payload (e.g. [{ amount: ... }])
+  const resolvedBody: Record<string, unknown> =
+    Array.isArray(body) && body.length > 0 && typeof body[0] === "object" && body[0] !== null
+      ? (body[0] as Record<string, unknown>)
+      : typeof body === "object" && body !== null
+      ? (body as Record<string, unknown>)
+      : {};
+
   // Combine query parameters and body so nothing is missed
   const queryParams: Record<string, unknown> = {};
   for (const [k, v] of req.nextUrl.searchParams.entries()) {
     queryParams[k] = v;
   }
-  const payload: Record<string, unknown> = { ...queryParams, ...body };
+  const payload: Record<string, unknown> = { ...queryParams, ...resolvedBody };
 
   const bodySecret =
     payload.secret ??

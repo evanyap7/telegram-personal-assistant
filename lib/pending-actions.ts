@@ -1,4 +1,5 @@
 import { getSheetsClient } from "./google";
+import { deleteSheetRows } from "./sheet-rows";
 
 const SHEET_NAME = "PendingActions";
 const EXPIRY_MS = 5 * 60 * 1000;
@@ -10,12 +11,16 @@ export type CalendarAddPayload =
       title: string;
       start: string;
       end: string;
+      location?: string;
+      reminderMinutes?: number;
     }
   | {
       calendarName: "personal" | "work";
       allDay: true;
       title: string;
       date: string;
+      location?: string;
+      reminderMinutes?: number;
     };
 
 export type FinanceAddPayload = {
@@ -58,11 +63,15 @@ export type CalendarBatchEventItem =
       title: string;
       start: string;
       end: string;
+      location?: string;
+      reminderMinutes?: number;
     }
   | {
       allDay: true;
       title: string;
       date: string;
+      location?: string;
+      reminderMinutes?: number;
     };
 
 export type CalendarBatchAddPayload = {
@@ -86,6 +95,31 @@ export type TodoDeletePayload = {
 export type TodoSelectionItem = {
   taskId: string;
   task: string;
+};
+
+export type CalendarReschedulePayload = {
+  calendarName: "personal" | "work";
+  eventId: string;
+  title: string;
+  oldStart: string;
+  oldEnd: string;
+  newStart: string;
+  newEnd: string;
+};
+
+export type UndoPayload = {
+  type:
+    | "calendar_event_created"
+    | "calendar_batch_created"
+    | "finance_transaction_created"
+    | "finance_batch_created"
+    | "todo_completed"
+    | "todo_created"
+    | "todo_batch_created"
+    | "workout_logged"
+    | "recurring_batch_created";
+  description: string;
+  data: Record<string, string>;
 };
 
 export type TodoSelectionPayload = {
@@ -124,7 +158,9 @@ type PendingActionType =
   | "calendar_delete"
   | "email_draft"
   | "todo_select"
-  | "todo_delete";
+  | "todo_delete"
+  | "calendar_reschedule"
+  | "undo";
 
 type PendingStatus = "pending" | "selected" | "confirmed" | "cancelled";
 
@@ -163,6 +199,7 @@ async function savePendingAction(input: {
   actionType: PendingActionType;
   payload: unknown;
   status?: PendingStatus;
+  expiryMs?: number;
 }): Promise<string> {
   const token = createToken();
   const sheets = getSheetsClient();
@@ -178,7 +215,7 @@ async function savePendingAction(input: {
           String(input.userId),
           input.actionType,
           JSON.stringify(input.payload),
-          new Date(Date.now() + EXPIRY_MS).toISOString(),
+          new Date(Date.now() + (input.expiryMs ?? EXPIRY_MS)).toISOString(),
           input.status ?? "pending",
         ],
       ],
@@ -771,6 +808,7 @@ export type UserCalendarContext = {
     start?: string;
     end?: string;
     date?: string;
+    location?: string;
     eventId?: string;
   };
 };
@@ -829,6 +867,7 @@ export async function getLatestUserCalendarContext(
           start: parsed.start,
           end: parsed.end,
           date: parsed.date,
+          location: parsed.location,
           eventId: parsed.eventId,
         };
       } catch {}
@@ -873,4 +912,153 @@ export async function cancelActivePendingCalendarAction(
 
   await setPendingStatus(context.activePending.rowNumber, "cancelled");
   return true;
+}
+
+export async function pruneExpiredPendingActions(
+  hoursToKeep = 24
+): Promise<{ prunedCount: number; remainingCount: number }> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+  if (rows.length === 0) {
+    return { prunedCount: 0, remainingCount: 0 };
+  }
+
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - hoursToKeep * 60 * 60 * 1000;
+  const pruneRowNumbers: number[] = [];
+
+  rows.forEach((row, index) => {
+    const expiresAtMs = new Date(row[4]).getTime();
+    const isLivePending = row[5] === "pending" && expiresAtMs > nowMs;
+    if (!isLivePending && !Number.isNaN(expiresAtMs) && expiresAtMs < cutoffMs) {
+      pruneRowNumbers.push(index + 2);
+    }
+  });
+
+  await deleteSheetRows({
+    spreadsheetId,
+    sheetTitle: SHEET_NAME,
+    rowNumbers: pruneRowNumbers,
+  });
+
+  return {
+    prunedCount: pruneRowNumbers.length,
+    remainingCount: rows.length - pruneRowNumbers.length,
+  };
+}
+
+export async function savePendingCalendarRescheduleAction(input: {
+  userId: number;
+  payload: CalendarReschedulePayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "calendar_reschedule",
+    payload: input.payload,
+  });
+}
+
+export async function takePendingCalendarRescheduleAction(
+  token: string,
+  userId: number
+): Promise<CalendarReschedulePayload | null> {
+  const result = await takePendingAction<CalendarReschedulePayload>({
+    token,
+    userId,
+    actionType: "calendar_reschedule",
+    nextStatus: "confirmed",
+  });
+  return result?.payload ?? null;
+}
+
+export async function cancelPendingCalendarRescheduleAction(
+  token: string,
+  userId: number
+): Promise<boolean> {
+  return cancelPendingAction({
+    token,
+    userId,
+    actionType: "calendar_reschedule",
+  });
+}
+
+const UNDO_EXPIRY_MS = 10 * 60 * 1000;
+
+/**
+ * Undo tokens are persisted in the PendingActions sheet (not process memory)
+ * so an Undo tap works even when it lands on a different serverless instance.
+ */
+export async function saveUndoAction(input: {
+  userId: number;
+  payload: UndoPayload;
+}): Promise<string> {
+  return savePendingAction({
+    userId: input.userId,
+    actionType: "undo",
+    payload: input.payload,
+    expiryMs: UNDO_EXPIRY_MS,
+  });
+}
+
+export async function takeUndoAction(
+  token: string,
+  userId: number
+): Promise<UndoPayload | null> {
+  const result = await takePendingAction<UndoPayload>({
+    token,
+    userId,
+    actionType: "undo",
+    nextStatus: "confirmed",
+  });
+  return result?.payload ?? null;
+}
+
+export async function takeLatestUndoAction(
+  userId: number
+): Promise<{ token: string; payload: UndoPayload } | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${SHEET_NAME}!A2:F`,
+  });
+
+  const rows = response.data.values ?? [];
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const token = row[0] ?? "";
+    const rowUserId = Number(row[1]);
+    const actionType = row[2] as PendingActionType;
+    const payloadJson = row[3] ?? "{}";
+    const expiresAt = row[4] ?? "";
+    const status = row[5] ?? "";
+
+    if (
+      rowUserId === userId &&
+      actionType === "undo" &&
+      status === "pending" &&
+      !isExpired(expiresAt)
+    ) {
+      await setPendingStatus(i + 2, "confirmed");
+      try {
+        return {
+          token,
+          payload: parsePayload<UndoPayload>(payloadJson),
+        };
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  return null;
 }

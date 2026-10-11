@@ -16,12 +16,16 @@ const calendarEventSchema = z.discriminatedUnion("allDay", [
     allDay: z.literal(true),
     title: z.string().min(1).max(120),
     date: singaporeDateSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
   z.object({
     allDay: z.literal(false),
     title: z.string().min(1).max(120),
     start: singaporeDateTimeSchema,
     end: singaporeDateTimeSchema,
+    location: z.string().max(200).optional(),
+    reminderMinutes: z.number().int().positive().optional(),
   }),
 ]);
 
@@ -35,6 +39,17 @@ const financeItemSchema = z.object({
 });
 
 export type ImageFinanceItem = z.infer<typeof financeItemSchema>;
+
+const subscriptionItemSchema = z.object({
+  title: z.string().min(1).max(120),
+  amount: z.number().positive(),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  category: z.string().min(1).max(50).optional(),
+  frequency: z.enum(["weekly", "monthly", "yearly"]),
+  nextRenewalDate: singaporeDateSchema.optional(),
+});
+
+export type ImageSubscriptionItem = z.infer<typeof subscriptionItemSchema>;
 
 const imageIntentSchema = z.discriminatedUnion("action", [
   z.object({
@@ -54,6 +69,10 @@ const imageIntentSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("finance_batch_from_image"),
     transactions: z.array(financeItemSchema).min(1).max(25),
+  }),
+  z.object({
+    action: z.literal("subscriptions_from_image"),
+    subscriptions: z.array(subscriptionItemSchema).min(1).max(25),
   }),
   z.object({
     action: z.literal("unknown"),
@@ -136,7 +155,8 @@ Supported actions:
 1. calendar_from_image
 2. finance_from_image
 3. finance_batch_from_image
-4. unknown
+4. subscriptions_from_image
+5. unknown
 
 Calendar output:
 {
@@ -146,7 +166,9 @@ Calendar output:
     {
       "allDay": true,
       "title": "event title",
-      "date": "YYYY-MM-DD"
+      "date": "YYYY-MM-DD",
+      "location": "meeting venue, room, address, or link (optional)",
+      "reminderMinutes": positive integer (optional)
     }
   ]
 }
@@ -160,7 +182,9 @@ Timed calendar-event output:
       "allDay": false,
       "title": "event title",
       "start": "YYYY-MM-DDTHH:mm:ss+08:00",
-      "end": "YYYY-MM-DDTHH:mm:ss+08:00"
+      "end": "YYYY-MM-DDTHH:mm:ss+08:00",
+      "location": "meeting venue, room, address, or link (optional)",
+      "reminderMinutes": positive integer (optional)
     }
   ]
 }
@@ -191,6 +215,21 @@ Finance batch output (multiple distinct transactions, items, or receipts across 
   ]
 }
 
+Subscriptions output (recurring subscriptions, memberships, or plans to track):
+{
+  "action": "subscriptions_from_image",
+  "subscriptions": [
+    {
+      "title": "service name, e.g. CapCut or iCloud+",
+      "amount": positive number (the price per billing period),
+      "currency": "SGD",
+      "category": "Subscriptions" (optional),
+      "frequency": "monthly" or "weekly" or "yearly",
+      "nextRenewalDate": "YYYY-MM-DD" (optional, from text like "Renews 13 October")
+    }
+  ]
+}
+
 Unknown output:
 {
   "action": "unknown",
@@ -203,10 +242,22 @@ Rules:
 - If the instruction asks to add dates/events to a calendar, return calendar_from_image.
 - Use personal unless the instruction explicitly says work.
 - If an event has a date but no time, set allDay to true.
-- For timed events, require both a start and end time or an explicit duration.
-- Never invent dates, times, amounts, merchants, or durations.
+- For timed events:
+  - End time MUST ALWAYS be strictly after start time. NEVER output an event where start and end times are identical.
+  - If both start and end times or an explicit duration are given, use them.
+  - If only a deadline, due date/time, or closing time is specified (e.g. "closes at 11:59pm", "deadline: 5pm", "due by 18:00"):
+    - If the deadline is 11:59pm / 23:59 (end of day), set allDay to true for that date, OR set start to 23:30:00 and end to 23:59:00.
+    - For other deadline times (e.g. 5:00pm), set start to 30 minutes before the deadline (16:30:00) and end to the deadline (17:00:00).
+- Never invent ungrounded dates, amounts, merchants, or events not present in the images.
 - Extract all calendar events found across all provided images (up to 30 events total).
-- If the user instruction requests locations (e.g. "include location of both meetings"), include the location in the title (e.g. "Meeting Title (Room / Location Name)").
+- If a location, address, venue, meeting room, or online link (e.g. Zoom, Meet, Teams, AI Workbench) is shown on the images or requested in the instruction, extract it into the dedicated "location" field (do not append it to the title).
+- If the user's instruction asks for a notification or reminder (e.g. "notify me about this 2 hours before the deadline", "remind me 1 hour before"):
+  - Extract the lead time in minutes into "reminderMinutes" (e.g. "2 hours before" -> 120, "30 minutes before" -> 30).
+  - If no reminder time is mentioned in the instruction, omit "reminderMinutes".
+- If the instruction asks to add/track/save subscriptions (or the image is an app-store/subscription-management screen such as iOS Settings > Subscriptions) return subscriptions_from_image, NOT finance output. These are recurring charges, not one-off purchases.
+  - Default frequency to "monthly" unless the image or instruction clearly says weekly or yearly/annual.
+  - If a "Renews <date>" is shown, set nextRenewalDate to the next occurrence of that date on or after today (Singapore time). Omit it if not shown.
+  - Use the service name as title (strip trailing plan text like "SG Membership Subscription").
 - For receipt, invoice, bank statement, or transaction screenshots across the images:
   - If multiple distinct transactions or line items are visible (e.g. across multiple images or within an image), return finance_batch_from_image containing all extracted items (up to 25 items).
   - If only a single transaction/charge is visible across all images, return finance_from_image.

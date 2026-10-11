@@ -9,10 +9,21 @@
     "lint": "eslint",
     "get-gmail-token": "node scripts/get-gmail-token.mjs",
     "setup-gmail-watch": "node scripts/setup-gmail-watch.mjs",
+    "setup-dashboard": "node scripts/setup-sheet-dashboard.mjs",
     "bench:intent": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/bench/intent-latency.ts",
     "bench:cost": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/bench/model-cost.ts",
     "bench:parallel": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/bench/parallel-vs-sequential.ts",
-    "bench:all": "npm run bench:intent && npm run bench:cost && npm run bench:parallel"
+    "bench:all": "npm run bench:intent && npm run bench:cost && npm run bench:parallel",
+    "test:intents": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-intents.ts",
+    "test:split": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-split.ts",
+    "test:calendar": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-calendar-slots.ts",
+    "test:memory": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-memory.ts",
+    "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts",
+    "test:cron-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-cron-auth.ts",
+    "test:workout": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-workout.ts",
+    "test:workout-session": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-workout-session.ts",
+    "test:todos-batch": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-todos-batch.ts",
+    "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.58",
