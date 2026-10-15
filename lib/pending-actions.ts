@@ -113,6 +113,7 @@ export type UndoPayload = {
     | "calendar_batch_created"
     | "finance_transaction_created"
     | "finance_batch_created"
+    | "finance_transaction_deleted"
     | "todo_completed"
     | "todo_created"
     | "todo_batch_created"

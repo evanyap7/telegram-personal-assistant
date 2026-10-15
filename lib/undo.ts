@@ -1,6 +1,9 @@
 import { deleteCalendarEvent } from "./calendar";
 import { uncompleteTodo, deleteTodo } from "./todos";
-import { softDeleteTransaction } from "./finance";
+import {
+  softDeleteTransaction,
+  restoreTransaction,
+} from "./finance";
 import {
   saveUndoAction,
   takeUndoAction,
@@ -73,6 +76,20 @@ async function executeUndoPayload(
           success: true,
           message: `↩️ Undone: Removed ${transactionIds.length} logged transactions.`,
         };
+      }
+
+      case "finance_transaction_deleted": {
+        const { transactionId } = action.data;
+        if (!transactionId) {
+          return { success: false, message: "Missing transaction ID for finance undo." };
+        }
+        const restored = await restoreTransaction(transactionId);
+        return restored
+          ? {
+              success: true,
+              message: `↩️ Undone: Restored transaction (${action.description}).`,
+            }
+          : { success: false, message: "Couldn't find that transaction to restore." };
       }
 
       case "todo_completed": {
