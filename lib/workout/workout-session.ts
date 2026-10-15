@@ -25,6 +25,10 @@ export interface LoggedSet {
   reps: number;
   /** true if the entry went into the PH3 sheet cell; false if it needs the Workouts-tab fallback. */
   inSheet: boolean;
+  /** true if the reps replaced the prescribed rep range in the sheet. */
+  repsInSheet?: boolean;
+  /** The rep range that was in the sheet before the reps replaced it, restored on removal. */
+  originalReps?: string;
 }
 
 export interface SkippedSet {
@@ -519,8 +523,11 @@ export async function recordSet(
   const set = ex.sets[setIdx];
 
   let inSheet = false;
+  let repsInSheet = false;
   try {
-    inSheet = (await writeSetToSheet({ plan, set, ...entry })) === "written";
+    const written = await writeSetToSheet({ plan, set, ...entry });
+    inSheet = written.weight;
+    repsInSheet = written.reps;
   } catch (error) {
     console.error("PH3 sheet write failed; falling back to Workouts tab:", error);
   }
@@ -530,6 +537,7 @@ export async function recordSet(
     setNumber: set.setNumber,
     ...entry,
     inSheet,
+    ...(repsInSheet ? { repsInSheet, originalReps: set.reps } : {}),
   };
   state.skipped = (state.skipped ?? []).filter(
     (k) => !(k.exercise === ex.exercise && k.setNumber === set.setNumber)
@@ -555,7 +563,15 @@ export async function editLoggedSet(
     (l) => l.exercise === ex.exercise && l.setNumber === set.setNumber
   );
   if (!logged) return false;
-  if (logged.inSheet) await overwriteSetCell({ plan, set, ...entry });
+  if (logged.inSheet || logged.repsInSheet) {
+    await overwriteSetCell({
+      plan,
+      set,
+      ...entry,
+      writeWeight: logged.inSheet,
+      writeReps: !!logged.repsInSheet,
+    });
+  }
   logged.weightKg = entry.weightKg;
   logged.reps = entry.reps;
   return true;
@@ -574,7 +590,15 @@ export async function removeLoggedSet(
     (l) => l.exercise === ex.exercise && l.setNumber === set.setNumber
   );
   if (idx === -1) return false;
-  if (state.logged[idx].inSheet) await clearSetCell({ plan, set });
+  const entry = state.logged[idx];
+  if (entry.inSheet || entry.repsInSheet) {
+    await clearSetCell({
+      plan,
+      set,
+      clearWeight: entry.inSheet,
+      restoreReps: entry.repsInSheet ? entry.originalReps ?? "" : undefined,
+    });
+  }
   state.logged.splice(idx, 1);
   return true;
 }

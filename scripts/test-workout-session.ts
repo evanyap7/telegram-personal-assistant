@@ -10,7 +10,7 @@ import {
   parseSetInput,
   parseWorkoutDayCommand,
 } from "../lib/workout/workout-session";
-import { columnToA1, formatSheetEntry, getBlockInfo } from "../lib/workout/ph3-program";
+import { columnToA1, formatSheetReps, getBlockInfo } from "../lib/workout/ph3-program";
 
 const plan = {
   day: 1,
@@ -19,8 +19,8 @@ const plan = {
   dayTitle: "Day 1 Upper",
   isRestDay: false,
   exercises: [
-    { exercise: "Bench", sets: [1, 2, 3].map((n) => ({ setNumber: n, weight: "", reps: "", weightCell: `A${n}` })) },
-    { exercise: "Row", sets: [1, 2].map((n) => ({ setNumber: n, weight: "", reps: "", weightCell: `B${n}` })) },
+    { exercise: "Bench", sets: [1, 2, 3].map((n) => ({ setNumber: n, weight: "", reps: "", weightCell: `A${n}`, repsCell: `B${n}` })) },
+    { exercise: "Row", sets: [1, 2].map((n) => ({ setNumber: n, weight: "", reps: "", weightCell: `C${n}`, repsCell: `D${n}` })) },
   ],
 };
 const logged = (exercise: string, setNumber: number) => ({ exercise, setNumber, weightKg: 50, reps: 5, inSheet: true });
@@ -184,8 +184,8 @@ function run() {
   console.log("  ✅ skip exercise / set commands");
 
   // Target formatting
-  assert.equal(describeTarget({ setNumber: 1, weight: "  95.0 ".trim(), reps: "x9", weightCell: "C10" }), "95kg × 9");
-  assert.equal(describeTarget({ setNumber: 1, weight: "", reps: "x6-8", weightCell: "C15" }), "6-8 reps");
+  assert.equal(describeTarget({ setNumber: 1, weight: "  95.0 ".trim(), reps: "x9", weightCell: "C10", repsCell: "D10" }), "95kg × 9");
+  assert.equal(describeTarget({ setNumber: 1, weight: "", reps: "x6-8", weightCell: "C15", repsCell: "D15" }), "6-8 reps");
   console.log("  ✅ target formatting");
 
   // Sheet mapping helpers
@@ -193,8 +193,8 @@ function run() {
   assert.equal(columnToA1(2), "C");
   assert.equal(columnToA1(15), "P");
   assert.equal(columnToA1(26), "AA");
-  assert.equal(formatSheetEntry(45, 8), "45*8");
-  assert.equal(formatSheetEntry(102.5, 6), "102.5*6");
+  assert.equal(formatSheetReps(8), "x8");
+  assert.equal(formatSheetReps(12), "x12");
   assert.deepEqual(getBlockInfo(8), { tab: "Accumulation Block", week: 2, colOffset: 13 });
   assert.equal(getBlockInfo(29).tab, "Intermediate Block");
   assert.equal(getBlockInfo(90).tab, "Taper (Final Week)");

@@ -7,6 +7,8 @@ export interface PH3ExerciseSet {
   reps: string;
   /** A1 cell (no tab name) where this set's actual weight is logged, e.g. "P15". */
   weightCell: string;
+  /** A1 cell (no tab name) holding the prescribed rep range, e.g. "Q15". Overwritten with the actual reps. */
+  repsCell: string;
 }
 
 export interface PH3Exercise {
@@ -153,6 +155,7 @@ export async function getDayPlan(day: number, forceRefresh = false): Promise<PH3
             weight,
             reps,
             weightCell: `${columnToA1(wIdx)}${sheetRow}`,
+            repsCell: `${columnToA1(rIdx)}${sheetRow}`,
           });
         }
       }
@@ -340,79 +343,120 @@ export function formatDayPlanMessage(
   return lines.join("\n");
 }
 
-/** Formats a weight/reps pair the way the sheet's accessory rows are filled in: "45*8". */
-export function formatSheetEntry(weightKg: number, reps: number): string {
-  return `${Number(weightKg.toFixed(2))}*${reps}`;
+/** Formats actual reps the way the sheet's rep column is written: "x8". */
+export function formatSheetReps(reps: number): string {
+  return `x${reps}`;
+}
+
+export interface SheetWriteResult {
+  /** The weight landed in the set's weight cell. */
+  weight: boolean;
+  /** The reps landed in the set's rep cell, replacing the prescribed range. */
+  reps: boolean;
+}
+
+function cellRange(plan: PH3DayPlan, cell: string): string {
+  return `'${plan.blockTab}'!${cell}`;
 }
 
 /**
- * Writes an actual weight/reps entry into the set's weight cell, but only if that cell is
- * empty. Prescribed weights (the SBD lifts) are formulas driven by 'Initial Inputs', and
- * previously filled cells are the user's own data, so neither is ever overwritten.
- * Returns whether the entry landed in the sheet.
+ * Writes the actual weight and reps of a set into the sheet. The weight cell is only filled
+ * when empty: prescribed weights (the SBD lifts) are formulas driven by 'Initial Inputs', and
+ * previously filled cells are the user's own data. The rep cell holds the prescribed range, so
+ * it is replaced with the actual reps only while it still shows that range (or is empty).
  */
 export async function writeSetToSheet(params: {
   plan: PH3DayPlan;
   set: PH3ExerciseSet;
   weightKg: number;
   reps: number;
-}): Promise<"written" | "occupied"> {
+}): Promise<SheetWriteResult> {
   const { plan, set, weightKg, reps } = params;
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
-  const range = `'${plan.blockTab}'!${set.weightCell}`;
 
-  const current = await sheets.spreadsheets.values.get({
+  const current = await sheets.spreadsheets.values.batchGet({
     spreadsheetId,
-    range,
+    ranges: [cellRange(plan, set.weightCell), cellRange(plan, set.repsCell)],
     valueRenderOption: "FORMULA",
   });
-  const existing = current.data.values?.[0]?.[0];
-  if (existing !== undefined && String(existing).trim() !== "") {
-    return "occupied";
+  const cellText = (i: number) => String(current.data.valueRanges?.[i]?.values?.[0]?.[0] ?? "").trim();
+  const weightFree = cellText(0) === "";
+  const repsText = cellText(1);
+  const repsFree = repsText === "" || repsText === set.reps.trim();
+
+  const data: Array<{ range: string; values: string[][] }> = [];
+  if (weightFree) {
+    data.push({ range: cellRange(plan, set.weightCell), values: [[String(Number(weightKg.toFixed(2)))]] });
   }
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range,
-    valueInputOption: "RAW",
-    requestBody: { values: [[formatSheetEntry(weightKg, reps)]] },
-  });
-
-  // The cached plan no longer reflects this cell.
-  planCache.delete(plan.day);
-  return "written";
+  if (repsFree) {
+    data.push({ range: cellRange(plan, set.repsCell), values: [[formatSheetReps(reps)]] });
+  }
+  if (data.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: "RAW", data },
+    });
+    // The cached plan no longer reflects these cells.
+    planCache.delete(plan.day);
+  }
+  return { weight: weightFree, reps: repsFree };
 }
 
 /**
- * Overwrites a set's weight cell. Only call this for cells the current session wrote itself
- * (writeSetToSheet only writes into empty cells), never for prescribed formulas or old data.
+ * Overwrites cells this session wrote itself (writeSetToSheet only fills free cells), never
+ * prescribed formulas or old data.
  */
 export async function overwriteSetCell(params: {
   plan: PH3DayPlan;
   set: PH3ExerciseSet;
   weightKg: number;
   reps: number;
+  writeWeight: boolean;
+  writeReps: boolean;
 }): Promise<void> {
-  const { plan, set, weightKg, reps } = params;
-  await getSheetsClient().spreadsheets.values.update({
+  const { plan, set, weightKg, reps, writeWeight, writeReps } = params;
+  const data: Array<{ range: string; values: string[][] }> = [];
+  if (writeWeight) {
+    data.push({ range: cellRange(plan, set.weightCell), values: [[String(Number(weightKg.toFixed(2)))]] });
+  }
+  if (writeReps) {
+    data.push({ range: cellRange(plan, set.repsCell), values: [[formatSheetReps(reps)]] });
+  }
+  if (data.length === 0) return;
+  await getSheetsClient().spreadsheets.values.batchUpdate({
     spreadsheetId: getSpreadsheetId(),
-    range: `'${plan.blockTab}'!${set.weightCell}`,
-    valueInputOption: "RAW",
-    requestBody: { values: [[formatSheetEntry(weightKg, reps)]] },
+    requestBody: { valueInputOption: "RAW", data },
   });
+  planCache.delete(plan.day);
 }
 
-/** Empties a set's weight cell. Same restriction as overwriteSetCell. */
+/**
+ * Undoes a session write: empties the weight cell and puts the prescribed rep range back.
+ * Same restriction as overwriteSetCell.
+ */
 export async function clearSetCell(params: {
   plan: PH3DayPlan;
   set: PH3ExerciseSet;
+  clearWeight: boolean;
+  /** The prescribed rep range to restore; omit to leave the rep cell alone. */
+  restoreReps?: string;
 }): Promise<void> {
-  const { plan, set } = params;
-  await getSheetsClient().spreadsheets.values.clear({
-    spreadsheetId: getSpreadsheetId(),
-    range: `'${plan.blockTab}'!${set.weightCell}`,
-  });
+  const { plan, set, clearWeight, restoreReps } = params;
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  if (clearWeight) {
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: cellRange(plan, set.weightCell) });
+  }
+  if (restoreReps !== undefined) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: cellRange(plan, set.repsCell),
+      valueInputOption: "RAW",
+      requestBody: { values: [[restoreReps]] },
+    });
+  }
+  planCache.delete(plan.day);
 }
 
 const MEMORY_SESSION_KEY = "ph3_workout_session";
