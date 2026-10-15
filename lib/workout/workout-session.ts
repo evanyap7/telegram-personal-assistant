@@ -2,9 +2,11 @@ import { sendTelegramMessage } from "../telegram";
 import {
   advanceUserPH3Day,
   clearPH3Session,
+  clearSetCell,
   getDayPlan,
   getUserPH3Progress,
   loadPH3SessionRaw,
+  overwriteSetCell,
   savePH3SessionRaw,
   setUserPH3Day,
   writeSetToSheet,
@@ -537,6 +539,44 @@ export async function recordSet(
   );
   state.logged.push(logged);
   return logged;
+}
+
+/** Rewrites an already-logged set in place (sheet cell too, if this session wrote it). */
+export async function editLoggedSet(
+  state: WorkoutSessionState,
+  plan: PH3DayPlan,
+  exIdx: number,
+  setIdx: number,
+  entry: { weightKg: number; reps: number }
+): Promise<boolean> {
+  const ex = plan.exercises[exIdx];
+  const set = ex.sets[setIdx];
+  const logged = state.logged.find(
+    (l) => l.exercise === ex.exercise && l.setNumber === set.setNumber
+  );
+  if (!logged) return false;
+  if (logged.inSheet) await overwriteSetCell({ plan, set, ...entry });
+  logged.weightKg = entry.weightKg;
+  logged.reps = entry.reps;
+  return true;
+}
+
+/** Removes a logged set, emptying its sheet cell if this session wrote it. */
+export async function removeLoggedSet(
+  state: WorkoutSessionState,
+  plan: PH3DayPlan,
+  exIdx: number,
+  setIdx: number
+): Promise<boolean> {
+  const ex = plan.exercises[exIdx];
+  const set = ex.sets[setIdx];
+  const idx = state.logged.findIndex(
+    (l) => l.exercise === ex.exercise && l.setNumber === set.setNumber
+  );
+  if (idx === -1) return false;
+  if (state.logged[idx].inSheet) await clearSetCell({ plan, set });
+  state.logged.splice(idx, 1);
+  return true;
 }
 
 async function handleLoggedSet(
