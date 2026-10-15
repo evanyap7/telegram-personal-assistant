@@ -25,6 +25,11 @@ export interface LoggedSet {
   inSheet: boolean;
 }
 
+export interface SkippedSet {
+  exercise: string;
+  setNumber: number;
+}
+
 export interface WorkoutSessionState {
   day: number;
   week: number;
@@ -32,7 +37,54 @@ export interface WorkoutSessionState {
   exIdx: number;
   setIdx: number;
   logged: LoggedSet[];
+  /** Absent on sessions saved before skips were tracked per set. */
+  skipped?: SkippedSet[];
   startedAt: string;
+}
+
+export type SetStatus = "logged" | "skipped" | "pending";
+
+export function getSetStatus(
+  state: Pick<WorkoutSessionState, "logged" | "skipped">,
+  exercise: string,
+  setNumber: number
+): SetStatus {
+  if (state.logged.some((l) => l.exercise === exercise && l.setNumber === setNumber)) {
+    return "logged";
+  }
+  if ((state.skipped ?? []).some((k) => k.exercise === exercise && k.setNumber === setNumber)) {
+    return "skipped";
+  }
+  return "pending";
+}
+
+/**
+ * First pending set at or after (fromExIdx, fromSetIdx) in plan order, wrapping around to
+ * earlier sets so that nothing left undone is silently dropped. Null when every set is
+ * logged or skipped.
+ */
+export function findNextPending(
+  plan: PH3DayPlan,
+  state: Pick<WorkoutSessionState, "logged" | "skipped">,
+  fromExIdx: number,
+  fromSetIdx: number
+): { exIdx: number; setIdx: number } | null {
+  const positions: Array<{ exIdx: number; setIdx: number }> = [];
+  plan.exercises.forEach((ex, exIdx) =>
+    ex.sets.forEach((_, setIdx) => positions.push({ exIdx, setIdx }))
+  );
+  const start = Math.max(
+    0,
+    positions.findIndex((p) => p.exIdx === fromExIdx && p.setIdx === fromSetIdx)
+  );
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[(start + i) % positions.length];
+    const ex = plan.exercises[pos.exIdx];
+    if (getSetStatus(state, ex.exercise, ex.sets[pos.setIdx].setNumber) === "pending") {
+      return pos;
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
