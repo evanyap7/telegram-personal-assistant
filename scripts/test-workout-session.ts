@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
   describeTarget,
+  findNextPending,
+  getSetStatus,
   isEndWorkoutCommand,
   isSkipExerciseCommand,
   isSkipSetCommand,
@@ -9,6 +11,19 @@ import {
   parseWorkoutDayCommand,
 } from "../lib/workout/workout-session";
 import { columnToA1, formatSheetEntry, getBlockInfo } from "../lib/workout/ph3-program";
+
+const plan = {
+  day: 1,
+  week: 1,
+  blockTab: "Accumulation Block",
+  dayTitle: "Day 1 Upper",
+  isRestDay: false,
+  exercises: [
+    { exercise: "Bench", sets: [1, 2, 3].map((n) => ({ setNumber: n, weight: "", reps: "", weightCell: `A${n}` })) },
+    { exercise: "Row", sets: [1, 2].map((n) => ({ setNumber: n, weight: "", reps: "", weightCell: `B${n}` })) },
+  ],
+};
+const logged = (exercise: string, setNumber: number) => ({ exercise, setNumber, weightKg: 50, reps: 5, inSheet: true });
 
 function run() {
   console.log("\n  🏋️ Guided PH3 Workout Session Tests\n");
@@ -184,6 +199,40 @@ function run() {
   assert.equal(getBlockInfo(29).tab, "Intermediate Block");
   assert.equal(getBlockInfo(90).tab, "Taper (Final Week)");
   console.log("  ✅ sheet cell mapping");
+
+  // Set status + cursor logic
+  const fresh = { logged: [], skipped: undefined };
+  assert.deepEqual(findNextPending(plan, fresh, 0, 0), { exIdx: 0, setIdx: 0 });
+  assert.equal(getSetStatus({ logged: [logged("Bench", 1)] }, "Bench", 1), "logged");
+  assert.equal(getSetStatus({ logged: [], skipped: [{ exercise: "Bench", setNumber: 2 }] }, "Bench", 2), "skipped");
+  assert.equal(getSetStatus(fresh, "Bench", 3), "pending");
+
+  // Advances past logged and skipped sets, across exercises
+  assert.deepEqual(
+    findNextPending(plan, { logged: [logged("Bench", 1)], skipped: [{ exercise: "Bench", setNumber: 2 }] }, 0, 0),
+    { exIdx: 0, setIdx: 2 }
+  );
+  assert.deepEqual(
+    findNextPending(
+      plan,
+      { logged: [logged("Bench", 1)], skipped: [{ exercise: "Bench", setNumber: 2 }, { exercise: "Bench", setNumber: 3 }] },
+      0,
+      1
+    ),
+    { exIdx: 1, setIdx: 0 }
+  );
+  // Wraps around to an earlier set that was left undone
+  assert.deepEqual(
+    findNextPending(plan, { logged: [logged("Bench", 2), logged("Bench", 3), logged("Row", 1), logged("Row", 2)] }, 1, 1),
+    { exIdx: 0, setIdx: 0 }
+  );
+  // Nothing left
+  const everything = {
+    logged: [logged("Bench", 1), logged("Bench", 3), logged("Row", 1)],
+    skipped: [{ exercise: "Bench", setNumber: 2 }, { exercise: "Row", setNumber: 2 }],
+  };
+  assert.equal(findNextPending(plan, everything, 0, 0), null);
+  console.log("  ✅ per-set status and cursor");
 
   console.log("\n  All workout session tests passed.\n");
 }
