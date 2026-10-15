@@ -384,6 +384,37 @@ export async function writeSetToSheet(params: {
   return "written";
 }
 
+/**
+ * Overwrites a set's weight cell. Only call this for cells the current session wrote itself
+ * (writeSetToSheet only writes into empty cells), never for prescribed formulas or old data.
+ */
+export async function overwriteSetCell(params: {
+  plan: PH3DayPlan;
+  set: PH3ExerciseSet;
+  weightKg: number;
+  reps: number;
+}): Promise<void> {
+  const { plan, set, weightKg, reps } = params;
+  await getSheetsClient().spreadsheets.values.update({
+    spreadsheetId: getSpreadsheetId(),
+    range: `'${plan.blockTab}'!${set.weightCell}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [[formatSheetEntry(weightKg, reps)]] },
+  });
+}
+
+/** Empties a set's weight cell. Same restriction as overwriteSetCell. */
+export async function clearSetCell(params: {
+  plan: PH3DayPlan;
+  set: PH3ExerciseSet;
+}): Promise<void> {
+  const { plan, set } = params;
+  await getSheetsClient().spreadsheets.values.clear({
+    spreadsheetId: getSpreadsheetId(),
+    range: `'${plan.blockTab}'!${set.weightCell}`,
+  });
+}
+
 const MEMORY_SESSION_KEY = "ph3_workout_session";
 
 export async function loadPH3SessionRaw(): Promise<string | null> {
