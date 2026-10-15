@@ -445,64 +445,76 @@ export async function finishSession(chatId: number, state: WorkoutSessionState):
   );
 }
 
-async function skipExercise(chatId: number, state: WorkoutSessionState): Promise<void> {
-  const plan = await getDayPlan(state.day);
-  const currentEx = plan.exercises[state.exIdx];
-  const nextExIdx = state.exIdx + 1;
+export function markSkipped(
+  state: WorkoutSessionState,
+  exercise: string,
+  setNumber: number
+): void {
+  if (getSetStatus(state, exercise, setNumber) !== "pending") return;
+  state.skipped = [...(state.skipped ?? []), { exercise, setNumber }];
+}
 
-  if (nextExIdx >= plan.exercises.length) {
-    await sendTelegramMessage(chatId, `Skipped ${currentEx.exercise}. That was the last exercise!`);
+/** Moves the cursor to the next pending set, or finishes the session when none remain. */
+async function advanceOrFinish(
+  chatId: number,
+  state: WorkoutSessionState,
+  plan: PH3DayPlan,
+  preface: string
+): Promise<void> {
+  const prevExIdx = state.exIdx;
+  const next = findNextPending(plan, state, state.exIdx, state.setIdx);
+  if (!next) {
+    await sendTelegramMessage(chatId, preface);
     await finishSession(chatId, state);
     return;
   }
 
-  state.exIdx = nextExIdx;
-  state.setIdx = 0;
+  state.exIdx = next.exIdx;
+  state.setIdx = next.setIdx;
   await saveSession(state);
 
-  await sendTelegramMessage(
-    chatId,
-    [
-      `Skipped ${currentEx.exercise}.`,
-      "",
-      `Next exercise — *${plan.exercises[nextExIdx].exercise}*, ${plan.exercises[nextExIdx].sets.length} sets.`,
-      "",
-      buildSetPrompt(plan, state.exIdx, state.setIdx),
-    ].join("\n")
-  );
+  const lines = [preface];
+  if (next.exIdx !== prevExIdx) {
+    const nextEx = plan.exercises[next.exIdx];
+    lines.push("", `Next exercise — *${nextEx.exercise}*, ${nextEx.sets.length} sets.`);
+  }
+  lines.push("", buildSetPrompt(plan, state.exIdx, state.setIdx));
+  await sendTelegramMessage(chatId, lines.join("\n"));
+}
+
+async function skipExercise(chatId: number, state: WorkoutSessionState): Promise<void> {
+  const plan = await getDayPlan(state.day);
+  const currentEx = plan.exercises[state.exIdx];
+  for (const set of currentEx.sets) markSkipped(state, currentEx.exercise, set.setNumber);
+  await advanceOrFinish(chatId, state, plan, `Skipped ${currentEx.exercise}.`);
 }
 
 async function skipSet(chatId: number, state: WorkoutSessionState): Promise<void> {
   const plan = await getDayPlan(state.day);
   const ex = plan.exercises[state.exIdx];
-  const nextSetIdx = state.setIdx + 1;
-  const exerciseDone = nextSetIdx >= ex.sets.length;
-  const nextExIdx = exerciseDone ? state.exIdx + 1 : state.exIdx;
-
-  if (nextExIdx >= plan.exercises.length) {
-    await sendTelegramMessage(chatId, `Skipped set ${state.setIdx + 1} of ${ex.exercise}. Workout complete!`);
-    await finishSession(chatId, state);
-    return;
-  }
-
-  state.exIdx = nextExIdx;
-  state.setIdx = exerciseDone ? 0 : nextSetIdx;
-  await saveSession(state);
-
-  const header = exerciseDone
-    ? `Skipped set. ${ex.exercise} done!\n\nNext exercise — *${plan.exercises[nextExIdx].exercise}*, ${plan.exercises[nextExIdx].sets.length} sets.`
-    : `Skipped set ${nextSetIdx} of ${ex.sets.length}.`;
-  await sendTelegramMessage(chatId, `${header}\n\n${buildSetPrompt(plan, state.exIdx, state.setIdx)}`);
+  const set = ex.sets[state.setIdx];
+  markSkipped(state, ex.exercise, set.setNumber);
+  await advanceOrFinish(
+    chatId,
+    state,
+    plan,
+    `Skipped set ${state.setIdx + 1} of ${ex.sets.length}.`
+  );
 }
 
-async function handleLoggedSet(
-  chatId: number,
+/**
+ * Records a set against a specific plan slot: writes it to the program sheet when the cell is
+ * free (otherwise it is queued for the Workouts tab) and replaces any earlier entry or skip.
+ */
+export async function recordSet(
   state: WorkoutSessionState,
+  plan: PH3DayPlan,
+  exIdx: number,
+  setIdx: number,
   entry: { weightKg: number; reps: number }
-): Promise<void> {
-  const plan = await getDayPlan(state.day);
-  const ex = plan.exercises[state.exIdx];
-  const set = ex.sets[state.setIdx];
+): Promise<LoggedSet> {
+  const ex = plan.exercises[exIdx];
+  const set = ex.sets[setIdx];
 
   let inSheet = false;
   try {
@@ -511,32 +523,30 @@ async function handleLoggedSet(
     console.error("PH3 sheet write failed; falling back to Workouts tab:", error);
   }
 
-  state.logged.push({
+  const logged: LoggedSet = {
     exercise: ex.exercise,
     setNumber: set.setNumber,
-    weightKg: entry.weightKg,
-    reps: entry.reps,
+    ...entry,
     inSheet,
-  });
+  };
+  state.skipped = (state.skipped ?? []).filter(
+    (k) => !(k.exercise === ex.exercise && k.setNumber === set.setNumber)
+  );
+  state.logged = state.logged.filter(
+    (l) => !(l.exercise === ex.exercise && l.setNumber === set.setNumber)
+  );
+  state.logged.push(logged);
+  return logged;
+}
 
-  const nextSetIdx = state.setIdx + 1;
-  const exerciseDone = nextSetIdx >= ex.sets.length;
-  const nextExIdx = exerciseDone ? state.exIdx + 1 : state.exIdx;
-
-  if (nextExIdx >= plan.exercises.length) {
-    await finishSession(chatId, state);
-    return;
-  }
-
-  state.exIdx = nextExIdx;
-  state.setIdx = exerciseDone ? 0 : nextSetIdx;
-  await saveSession(state);
-
-  const confirm = `✅ ${ex.exercise}: ${formatLogged(state.logged[state.logged.length - 1])}`;
-  const header = exerciseDone
-    ? `${confirm}\n\nNext exercise — ${plan.exercises[nextExIdx].exercise}, ${plan.exercises[nextExIdx].sets.length} sets.`
-    : confirm;
-  await sendTelegramMessage(chatId, `${header}\n\n${buildSetPrompt(plan, state.exIdx, state.setIdx)}`);
+async function handleLoggedSet(
+  chatId: number,
+  state: WorkoutSessionState,
+  entry: { weightKg: number; reps: number }
+): Promise<void> {
+  const plan = await getDayPlan(state.day);
+  const logged = await recordSet(state, plan, state.exIdx, state.setIdx, entry);
+  await advanceOrFinish(chatId, state, plan, `✅ ${logged.exercise}: ${formatLogged(logged)}`);
 }
 
 /**
