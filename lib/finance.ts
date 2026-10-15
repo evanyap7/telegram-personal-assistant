@@ -976,6 +976,45 @@ export async function softDeleteTransaction(
   };
 }
 
+export async function restoreTransaction(
+  transactionId: string
+): Promise<boolean> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+  const transactionSheets = await getAllTransactionSheetNames();
+
+  for (const sheetName of transactionSheets) {
+    try {
+      const response = await withExponentialBackoff(() =>
+        sheets.spreadsheets.values.get({
+          spreadsheetId,
+          range: `${sheetName}!A2:I`,
+        })
+      );
+      const rows = response.data.values ?? [];
+      const rowIndex = rows.findIndex(
+        (row) => normaliseCell(row[0]) === transactionId
+      );
+      if (rowIndex === -1) continue;
+
+      const rowNumber = rowIndex + 2;
+      await withExponentialBackoff(() =>
+        sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `${sheetName}!H${rowNumber}:I${rowNumber}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: [["active", ""]] },
+        })
+      );
+      return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
 export async function getTransactionById(
   transactionId: string
 ): Promise<FinanceTransaction | null> {
