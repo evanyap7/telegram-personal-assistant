@@ -81,14 +81,97 @@ export function isWorkoutStartPhrase(text: string): boolean {
   );
 }
 
-export function parseWorkoutDayCommand(
-  text: string
-): { kind: "set"; day: number } | { kind: "next" } | null {
-  const t = text.trim().toLowerCase();
-  const setMatch = t.match(/^(?:\/workoutday|(?:set|go to)\s+(?:my\s+)?workout\s+day|workout\s+day)\s+(\d{1,2})$/);
-  if (setMatch) return { kind: "set", day: parseInt(setMatch[1], 10) };
-  if (/^(?:\/nextworkoutday|(?:skip to |go to )?next workout day)$/.test(t)) return { kind: "next" };
+export type WorkoutDayCommand =
+  | { kind: "set"; day: number; startImmediately: boolean; fromDay?: number }
+  | { kind: "next"; startImmediately: boolean; fromDay?: number };
+
+export function parseWorkoutDayCommand(text: string): WorkoutDayCommand | null {
+  const t = text.trim().toLowerCase().replace(/[.!?]+$/, "");
+
+  // 1. "lets skip day 1 and start day 2", "skip day 1 and do day 2", "skip today and start day 2"
+  const skipAndStartMatch = t.match(
+    /^(?:let'?s\s+)?skip\s+(?:(?:day\s*|d)(\d{1,2})|this\s+day|today|this\s+workout|workout)\s*(?:,|and|&|\s+)\s*(?:start|do|go\s+to|switch\s+to|jump\s+to)\s+(?:(?:day\s*|workout\s+day\s*|d))?(\d{1,2})(?:\s+workout)?$/
+  );
+  if (skipAndStartMatch) {
+    const fromDay = skipAndStartMatch[1] ? parseInt(skipAndStartMatch[1], 10) : undefined;
+    const day = parseInt(skipAndStartMatch[2], 10);
+    return { kind: "set", day, startImmediately: true, fromDay };
+  }
+
+  // 2. "skip day 1 and start next day", "skip today and start next day"
+  const skipAndStartNextMatch = t.match(
+    /^(?:let'?s\s+)?skip\s+(?:(?:day\s*|d)(\d{1,2})|this\s+day|today|this\s+workout|workout)\s*(?:,|and|&|\s+)\s*(?:start|do|go\s+to|switch\s+to)\s+(?:next\s+day|the\s+next\s+day|next\s+workout|next\s+workout\s+day)$/
+  );
+  if (skipAndStartNextMatch) {
+    const fromDay = skipAndStartNextMatch[1] ? parseInt(skipAndStartNextMatch[1], 10) : undefined;
+    return { kind: "next", startImmediately: true, fromDay };
+  }
+
+  // 3. "start day 2", "lets start day 2", "do day 2", "lets do day 2", "start workout day 2"
+  const startDayMatch = t.match(
+    /^(?:let'?s\s+)?(?:start|do)\s+(?:workout\s+day\s*|day\s*|workout\s+|d)(\d{1,2})(?:\s+workout)?$/
+  );
+  if (startDayMatch) {
+    const day = parseInt(startDayMatch[1], 10);
+    return { kind: "set", day, startImmediately: true };
+  }
+
+  // 4. "skip to day 2", "switch to day 2", "go to day 2", "jump to day 2"
+  const jumpToDayMatch = t.match(
+    /^(?:let'?s\s+)?(?:skip\s+to|switch\s+to|change\s+to|go\s+to|jump\s+to|move\s+to)\s+(?:workout\s+day\s*|day\s*|d)(\d{1,2})$/
+  );
+  if (jumpToDayMatch) {
+    const day = parseInt(jumpToDayMatch[1], 10);
+    return { kind: "set", day, startImmediately: true };
+  }
+
+  // 5. Slash command or explicit setting: "/workoutday 12", "set workout day 12", "set day 12", "workout day 12"
+  const setMatch = t.match(
+    /^(?:\/workoutday|(?:set|go to)\s+(?:my\s+)?workout\s+day(?:\s+to)?|workout\s+day|set\s+day(?:\s+to)?)\s*(\d{1,2})$/
+  );
+  if (setMatch) {
+    return { kind: "set", day: parseInt(setMatch[1], 10), startImmediately: false };
+  }
+
+  // 6. Next workout day commands: "/nextworkoutday", "next workout day", "next day", "skip to next day"
+  if (
+    /^(?:\/nextworkoutday|(?:let'?s\s+)?(?:skip\s+to\s+|go\s+to\s+)?next\s+(?:workout\s+day|day|workout))(?:\s+please)?$/.test(
+      t
+    )
+  ) {
+    return { kind: "next", startImmediately: false };
+  }
+
+  // 7. "skip day 1", "skip this day", "skip today", "skip workout"
+  const skipMatch = t.match(
+    /^(?:let'?s\s+)?skip\s+(?:this\s+day|today|this\s+workout|workout|(?:day\s*|d)(\d{1,2}))(?:\s+workout)?$/
+  );
+  if (skipMatch) {
+    const fromDay = skipMatch[1] ? parseInt(skipMatch[1], 10) : undefined;
+    return { kind: "next", startImmediately: false, fromDay };
+  }
+
   return null;
+}
+
+export function isSkipExerciseCommand(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!?]+$/, "");
+  return (
+    /^(?:skip|next)\s+(?:this\s+)?exercise$/.test(t) ||
+    t === "skip exercise" ||
+    t === "skip this exercise" ||
+    t === "next exercise"
+  );
+}
+
+export function isSkipSetCommand(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!?]+$/, "");
+  return (
+    /^(?:skip|next)\s+(?:this\s+)?set$/.test(t) ||
+    t === "skip set" ||
+    t === "skip this set" ||
+    t === "next set"
+  );
 }
 
 function stripDayPrefix(title: string): string {
@@ -203,37 +286,54 @@ function savedWhereNote(state: WorkoutSessionState, flushed: number): string {
 // Public entry points
 // ---------------------------------------------------------------------------
 
-export async function startPH3Workout(params: { chatId: number }): Promise<void> {
-  const { chatId } = params;
+export async function startPH3Workout(params: {
+  chatId: number;
+  day?: number;
+  headerNotice?: string;
+  forceNew?: boolean;
+}): Promise<void> {
+  const { chatId, day: requestedDay, headerNotice, forceNew } = params;
 
   const existing = await loadSession();
-  if (existing) {
-    const plan = await getDayPlan(existing.day);
-    await sendTelegramMessage(
-      chatId,
-      [
-        "You already have a workout in progress — picking up where we left off.",
-        "",
-        buildSetPrompt(plan, existing.exIdx, existing.setIdx),
-        "",
-        "_Say \"end workout\" any time to stop._",
-      ].join("\n")
-    );
-    return;
+  if (existing && !forceNew) {
+    if (requestedDay === undefined || requestedDay === existing.day) {
+      const plan = await getDayPlan(existing.day);
+      await sendTelegramMessage(
+        chatId,
+        [
+          "You already have a workout in progress — picking up where we left off.",
+          "",
+          buildSetPrompt(plan, existing.exIdx, existing.setIdx),
+          "",
+          "_Say \"end workout\" any time to stop._",
+        ].join("\n")
+      );
+      return;
+    }
   }
 
-  const progress = await getUserPH3Progress();
-  const plan = await getDayPlan(progress.currentDay);
+  if (existing) {
+    await flushFallbackSets(existing);
+    await clearPH3Session();
+  }
+
+  const targetDay =
+    requestedDay !== undefined
+      ? requestedDay
+      : (await getUserPH3Progress()).currentDay;
+
+  await setUserPH3Day(targetDay);
+  const plan = await getDayPlan(targetDay);
 
   if (plan.isRestDay || plan.exercises.length === 0) {
-    await sendTelegramMessage(
-      chatId,
-      [
-        `Today is *Week ${plan.week}, Day ${plan.day}* — ${stripDayPrefix(plan.dayTitle) || "Rest day"}.`,
-        "",
-        "Nothing to log today. Say \"next workout day\" to skip ahead, or \"set workout day 12\" to jump to a specific day.",
-      ].join("\n")
+    const lines: string[] = [];
+    if (headerNotice) lines.push(headerNotice, "");
+    lines.push(
+      `Today is *Week ${plan.week}, Day ${plan.day}* — ${stripDayPrefix(plan.dayTitle) || "Rest day"}.`,
+      "",
+      "Nothing to log today. Say \"next workout day\" to skip ahead, or \"set workout day 12\" to jump to a specific day."
     );
+    await sendTelegramMessage(chatId, lines.join("\n"));
     return;
   }
 
@@ -247,16 +347,19 @@ export async function startPH3Workout(params: { chatId: number }): Promise<void>
     startedAt: new Date().toISOString(),
   });
 
-  await sendTelegramMessage(
-    chatId,
-    [
-      buildStartMessage(plan),
-      "",
-      "Let's go! I'll ask for each set. Say \"end workout\" any time to stop.",
-      "",
-      buildSetPrompt(plan, 0, 0),
-    ].join("\n")
+  const lines: string[] = [];
+  if (headerNotice) {
+    lines.push(headerNotice, "");
+  }
+  lines.push(
+    buildStartMessage(plan),
+    "",
+    "Let's go! I'll ask for each set. Say \"end workout\" any time to stop.",
+    "",
+    buildSetPrompt(plan, 0, 0)
   );
+
+  await sendTelegramMessage(chatId, lines.join("\n"));
 }
 
 async function endSession(chatId: number, state: WorkoutSessionState): Promise<void> {
@@ -288,6 +391,56 @@ async function finishSession(chatId: number, state: WorkoutSessionState): Promis
       `Next up: Week ${next.currentWeek}, Day ${next.currentDay}. Back to normal mode.`,
     ].join("\n")
   );
+}
+
+async function skipExercise(chatId: number, state: WorkoutSessionState): Promise<void> {
+  const plan = await getDayPlan(state.day);
+  const currentEx = plan.exercises[state.exIdx];
+  const nextExIdx = state.exIdx + 1;
+
+  if (nextExIdx >= plan.exercises.length) {
+    await sendTelegramMessage(chatId, `Skipped ${currentEx.exercise}. That was the last exercise!`);
+    await finishSession(chatId, state);
+    return;
+  }
+
+  state.exIdx = nextExIdx;
+  state.setIdx = 0;
+  await saveSession(state);
+
+  await sendTelegramMessage(
+    chatId,
+    [
+      `Skipped ${currentEx.exercise}.`,
+      "",
+      `Next exercise — *${plan.exercises[nextExIdx].exercise}*, ${plan.exercises[nextExIdx].sets.length} sets.`,
+      "",
+      buildSetPrompt(plan, state.exIdx, state.setIdx),
+    ].join("\n")
+  );
+}
+
+async function skipSet(chatId: number, state: WorkoutSessionState): Promise<void> {
+  const plan = await getDayPlan(state.day);
+  const ex = plan.exercises[state.exIdx];
+  const nextSetIdx = state.setIdx + 1;
+  const exerciseDone = nextSetIdx >= ex.sets.length;
+  const nextExIdx = exerciseDone ? state.exIdx + 1 : state.exIdx;
+
+  if (nextExIdx >= plan.exercises.length) {
+    await sendTelegramMessage(chatId, `Skipped set ${state.setIdx + 1} of ${ex.exercise}. Workout complete!`);
+    await finishSession(chatId, state);
+    return;
+  }
+
+  state.exIdx = nextExIdx;
+  state.setIdx = exerciseDone ? 0 : nextSetIdx;
+  await saveSession(state);
+
+  const header = exerciseDone
+    ? `Skipped set. ${ex.exercise} done!\n\nNext exercise — *${plan.exercises[nextExIdx].exercise}*, ${plan.exercises[nextExIdx].sets.length} sets.`
+    : `Skipped set ${nextSetIdx} of ${ex.sets.length}.`;
+  await sendTelegramMessage(chatId, `${header}\n\n${buildSetPrompt(plan, state.exIdx, state.setIdx)}`);
 }
 
 async function handleLoggedSet(
@@ -347,7 +500,7 @@ export async function handleWorkoutSessionMessage(params: {
   const trimmed = text.trim();
 
   // Cheap path: slash commands other than the workout ones never need a session lookup.
-  const isWorkoutSlash = /^\/(workout|gym|endworkout|end|workoutday|nextworkoutday)\b/i.test(trimmed);
+  const isWorkoutSlash = /^\/(workout|gym|endworkout|end|workoutday|nextworkoutday|startday)\b/i.test(trimmed);
   if (trimmed.startsWith("/") && !isWorkoutSlash) return false;
 
   const dayCommand = parseWorkoutDayCommand(trimmed);
@@ -358,12 +511,28 @@ export async function handleWorkoutSessionMessage(params: {
 
   if (!state) {
     if (dayCommand) {
-      const progress =
-        dayCommand.kind === "set" ? await setUserPH3Day(dayCommand.day) : await advanceUserPH3Day();
-      await sendTelegramMessage(
-        chatId,
-        `Okay — you're now on *Week ${progress.currentWeek}, Day ${progress.currentDay}*. Say "workout" when you're ready.`
-      );
+      let targetDay: number;
+      if (dayCommand.kind === "set") {
+        targetDay = dayCommand.day;
+      } else if (dayCommand.fromDay !== undefined) {
+        targetDay = dayCommand.fromDay >= 90 ? 1 : dayCommand.fromDay + 1;
+      } else {
+        const current = await getUserPH3Progress();
+        targetDay = current.currentDay >= 90 ? 1 : current.currentDay + 1;
+      }
+
+      if (dayCommand.startImmediately) {
+        const prefix = dayCommand.fromDay
+          ? `Skipping Day ${dayCommand.fromDay} and starting Day ${targetDay}!`
+          : undefined;
+        await startPH3Workout({ chatId, day: targetDay, headerNotice: prefix, forceNew: true });
+      } else {
+        const progress = await setUserPH3Day(targetDay);
+        await sendTelegramMessage(
+          chatId,
+          `Okay — you're now on *Week ${progress.currentWeek}, Day ${progress.currentDay}*. Say "workout" when you're ready.`
+        );
+      }
       return true;
     }
     if (isStart) {
@@ -379,13 +548,54 @@ export async function handleWorkoutSessionMessage(params: {
     return true;
   }
 
-  if (isStart) {
-    await startPH3Workout({ chatId });
+  if (dayCommand) {
+    let targetDay: number;
+    if (dayCommand.kind === "set") {
+      targetDay = dayCommand.day;
+    } else if (dayCommand.fromDay !== undefined) {
+      targetDay = dayCommand.fromDay >= 90 ? 1 : dayCommand.fromDay + 1;
+    } else {
+      targetDay = state.day >= 90 ? 1 : state.day + 1;
+    }
+
+    const flushed = await flushFallbackSets(state);
+    await clearPH3Session();
+
+    const savedNotice =
+      state.logged.length > 0
+        ? `Saved ${state.logged.length} set${state.logged.length === 1 ? "" : "s"} from Day ${state.day}.`
+        : "";
+
+    if (dayCommand.startImmediately) {
+      const skipPrefix = dayCommand.fromDay
+        ? `Skipping Day ${dayCommand.fromDay} and switching to Day ${targetDay}!`
+        : `Switching to Day ${targetDay}!`;
+      const header = savedNotice ? `${savedNotice}\n\n${skipPrefix}` : skipPrefix;
+      await startPH3Workout({ chatId, day: targetDay, headerNotice: header, forceNew: true });
+    } else {
+      const progress = await setUserPH3Day(targetDay);
+      const lines: string[] = [];
+      if (savedNotice) lines.push(savedNotice);
+      lines.push(
+        `Okay — current workout ended and you're now on *Week ${progress.currentWeek}, Day ${progress.currentDay}*. Say "workout" when you're ready.`
+      );
+      await sendTelegramMessage(chatId, lines.join("\n\n"));
+    }
     return true;
   }
 
-  if (dayCommand) {
-    await sendTelegramMessage(chatId, "Finish or end your current workout first (say \"end workout\"), then change the day.");
+  if (isSkipExerciseCommand(trimmed)) {
+    await skipExercise(chatId, state);
+    return true;
+  }
+
+  if (isSkipSetCommand(trimmed)) {
+    await skipSet(chatId, state);
+    return true;
+  }
+
+  if (isStart) {
+    await startPH3Workout({ chatId });
     return true;
   }
 

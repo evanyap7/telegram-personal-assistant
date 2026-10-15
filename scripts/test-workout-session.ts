@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   describeTarget,
   isEndWorkoutCommand,
+  isSkipExerciseCommand,
+  isSkipSetCommand,
   isWorkoutStartPhrase,
   parseSetInput,
   parseWorkoutDayCommand,
@@ -47,12 +49,124 @@ function run() {
   }
   console.log("  ✅ start / end phrases");
 
-  // Day commands
-  assert.deepEqual(parseWorkoutDayCommand("set workout day 12"), { kind: "set", day: 12 });
-  assert.deepEqual(parseWorkoutDayCommand("/workoutday 40"), { kind: "set", day: 40 });
-  assert.deepEqual(parseWorkoutDayCommand("next workout day"), { kind: "next" });
-  assert.equal(parseWorkoutDayCommand("next day"), null);
+  // Day commands & skip / switch syntax
+  assert.deepEqual(parseWorkoutDayCommand("lets skip day 1 and start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+    fromDay: 1,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("let's skip day 1 and start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+    fromDay: 1,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip day 1 and start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+    fromDay: 1,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip day 1, start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+    fromDay: 1,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip day 1 and do day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+    fromDay: 1,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip day 1 & start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+    fromDay: 1,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip today and start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+    fromDay: undefined,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("lets start day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("do day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("switch to day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip to day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("go to day 2"), {
+    kind: "set",
+    day: 2,
+    startImmediately: true,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("set workout day 12"), {
+    kind: "set",
+    day: 12,
+    startImmediately: false,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("/workoutday 40"), {
+    kind: "set",
+    day: 40,
+    startImmediately: false,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("next workout day"), {
+    kind: "next",
+    startImmediately: false,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("next day"), {
+    kind: "next",
+    startImmediately: false,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip day 1"), {
+    kind: "next",
+    startImmediately: false,
+    fromDay: 1,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip this day"), {
+    kind: "next",
+    startImmediately: false,
+    fromDay: undefined,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("skip today"), {
+    kind: "next",
+    startImmediately: false,
+    fromDay: undefined,
+  });
   console.log("  ✅ day commands");
+
+  // Skip exercise / set
+  for (const t of ["skip exercise", "Skip Exercise.", "skip this exercise", "next exercise", "next exercise!"]) {
+    assert.ok(isSkipExerciseCommand(t), `skip ex: ${t}`);
+  }
+  for (const t of ["skip set", "Skip Set", "skip this set", "next set"]) {
+    assert.ok(isSkipSetCommand(t), `skip set: ${t}`);
+  }
+  assert.ok(!isSkipExerciseCommand("100 x 5"));
+  assert.ok(!isSkipSetCommand("100 x 5"));
+  console.log("  ✅ skip exercise / set commands");
 
   // Target formatting
   assert.equal(describeTarget({ setNumber: 1, weight: "  95.0 ".trim(), reps: "x9", weightCell: "C10" }), "95kg × 9");
