@@ -16,7 +16,7 @@ import type { WorkoutSet } from "./workout-types";
 
 const USER_NAME = "Evan";
 
-interface LoggedSet {
+export interface LoggedSet {
   exercise: string;
   setNumber: number;
   weightKg: number;
@@ -25,7 +25,7 @@ interface LoggedSet {
   inSheet: boolean;
 }
 
-interface WorkoutSessionState {
+export interface WorkoutSessionState {
   day: number;
   week: number;
   dayTitle: string;
@@ -205,7 +205,7 @@ function buildStartMessage(plan: PH3DayPlan): string {
   return lines.join("\n");
 }
 
-function buildSetPrompt(plan: PH3DayPlan, exIdx: number, setIdx: number): string {
+export function buildSetPrompt(plan: PH3DayPlan, exIdx: number, setIdx: number): string {
   const ex = plan.exercises[exIdx];
   const target = describeTarget(ex.sets[setIdx]);
   return [
@@ -218,7 +218,7 @@ function buildSetPrompt(plan: PH3DayPlan, exIdx: number, setIdx: number): string
 // Session persistence (Memory sheet: serverless instances share no memory)
 // ---------------------------------------------------------------------------
 
-async function loadSession(): Promise<WorkoutSessionState | null> {
+export async function loadSession(): Promise<WorkoutSessionState | null> {
   const raw = await loadPH3SessionRaw();
   if (!raw) return null;
   try {
@@ -229,12 +229,12 @@ async function loadSession(): Promise<WorkoutSessionState | null> {
   }
 }
 
-async function saveSession(state: WorkoutSessionState): Promise<void> {
+export async function saveSession(state: WorkoutSessionState): Promise<void> {
   await savePH3SessionRaw(JSON.stringify(state));
 }
 
 /** Appends sets that couldn't be written into the program sheet to the Workouts tab. */
-async function flushFallbackSets(state: WorkoutSessionState): Promise<number> {
+export async function flushFallbackSets(state: WorkoutSessionState): Promise<number> {
   const pending = state.logged.filter((l) => !l.inSheet);
   if (pending.length === 0) return 0;
 
@@ -362,7 +362,7 @@ export async function startPH3Workout(params: {
   await sendTelegramMessage(chatId, lines.join("\n"));
 }
 
-async function endSession(chatId: number, state: WorkoutSessionState): Promise<void> {
+export async function endSession(chatId: number, state: WorkoutSessionState): Promise<void> {
   const flushed = await flushFallbackSets(state);
   await clearPH3Session();
 
@@ -375,7 +375,7 @@ async function endSession(chatId: number, state: WorkoutSessionState): Promise<v
   await sendTelegramMessage(chatId, lines.join("\n"));
 }
 
-async function finishSession(chatId: number, state: WorkoutSessionState): Promise<void> {
+export async function finishSession(chatId: number, state: WorkoutSessionState): Promise<void> {
   const flushed = await flushFallbackSets(state);
   await clearPH3Session();
   const next = await advanceUserPH3Day();
