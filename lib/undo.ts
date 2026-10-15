@@ -3,6 +3,7 @@ import { uncompleteTodo, deleteTodo } from "./todos";
 import {
   softDeleteTransaction,
   restoreTransaction,
+  updateTransaction,
 } from "./finance";
 import {
   saveUndoAction,
@@ -90,6 +91,20 @@ async function executeUndoPayload(
               message: `↩️ Undone: Restored transaction (${action.description}).`,
             }
           : { success: false, message: "Couldn't find that transaction to restore." };
+      }
+
+      case "finance_transaction_updated": {
+        const { transactionId, previous } = action.data;
+        if (!transactionId || !previous) {
+          return { success: false, message: "Missing data for finance undo." };
+        }
+        const reverted = await updateTransaction(transactionId, JSON.parse(previous));
+        return reverted
+          ? {
+              success: true,
+              message: `↩️ Undone: Reverted edit (${action.description}).`,
+            }
+          : { success: false, message: "Couldn't find that transaction to revert." };
       }
 
       case "todo_completed": {
