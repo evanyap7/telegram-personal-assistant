@@ -317,3 +317,15 @@ export function IconCheckCircle({ className = "w-4 h-4" }: { className?: string 
   );
 }
 
+
+export function IconDumbbell({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.5 6.5v11" />
+      <path d="M17.5 6.5v11" />
+      <path d="M3.5 9v6" />
+      <path d="M20.5 9v6" />
+      <path d="M6.5 12h11" />
+    </svg>
+  );
+}

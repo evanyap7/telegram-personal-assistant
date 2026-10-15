@@ -23,9 +23,10 @@ import {
   IconSparkles,
   IconDatabase,
   IconCodeBracket,
+  IconDumbbell,
 } from "@/components/icons";
 
-type ShowcaseKey = "apple-pay" | "paylah" | "voice" | "vision" | "calendar";
+type ShowcaseKey = "apple-pay" | "paylah" | "voice" | "vision" | "calendar" | "workout";
 
 const ACCENT: Record<ShowcaseKey, { bg: string; border: string; text: string; badge: string }> = {
   "apple-pay": { bg: "bg-[#4d7cff]", border: "border-[#4d7cff]", text: "text-white", badge: "bg-[#4d7cff] text-white" },
@@ -33,6 +34,7 @@ const ACCENT: Record<ShowcaseKey, { bg: string; border: string; text: string; ba
   voice: { bg: "bg-[#ffd21f]", border: "border-[#ffd21f]", text: "text-[#0a0a0a]", badge: "bg-[#ffd21f] text-[#0a0a0a]" },
   vision: { bg: "bg-[#3ecf6e]", border: "border-[#3ecf6e]", text: "text-[#0a0a0a]", badge: "bg-[#3ecf6e] text-[#0a0a0a]" },
   calendar: { bg: "bg-[#2bd4c7]", border: "border-[#2bd4c7]", text: "text-[#0a0a0a]", badge: "bg-[#2bd4c7] text-[#0a0a0a]" },
+  workout: { bg: "bg-[#ff8a3d]", border: "border-[#ff8a3d]", text: "text-[#0a0a0a]", badge: "bg-[#ff8a3d] text-[#0a0a0a]" },
 };
 
 export default function Home() {
@@ -222,6 +224,36 @@ export default function Home() {
         status: "confirmed",
       },
     },
+    workout: {
+      title: "Conversational Workout Tracker",
+      badge: "Tool-Calling Agent",
+      icon: <IconDumbbell className="w-4 h-4" />,
+      description:
+        "Walks you through a 90-day lifting program set by set. Mid-session, just talk: an agent with tools to log, fix, delete, skip and reorder sets keeps the Google Sheets log correct.",
+      terminal: [
+        { role: "device", label: "USER_MSG", text: "\"bench was actually 62.5 for 8, and skip the last set of flies\"" },
+        { role: "system", label: "SESSION_STATE", text: "Loaded Day 12 plan • cursor at Exercise 3, Set 2" },
+        { role: "ai", label: "TOOL_CALLS", text: "editLoggedSet(bench, set 3, 62.5kg × 8) • skipSets(flies)" },
+        { role: "bot", label: "TELEGRAM", text: "Confirmed edits and prompted the next pending set" },
+      ],
+      previewCard: {
+        header: "Workout Log Updated",
+        lines: [
+          { label: "Day", value: "12 • Week 2 (PH3)" },
+          { label: "Edited", value: "Bench Press set 3 → 62.5kg × 8" },
+          { label: "Skipped", value: "Cable Fly set 3" },
+          { label: "Next Up", value: "Exercise 3 • Set 2" },
+        ],
+      },
+      sheetRow: {
+        timestamp: "16 Oct 2026 @ 7:42 PM",
+        type: "workout_set",
+        amount: "62.5kg × 8",
+        category: "Bench Press",
+        description: "Day 12 • Set 3 (edited via chat)",
+        status: "logged",
+      },
+    },
   };
 
   const commands = [
@@ -230,6 +262,11 @@ export default function Home() {
     { cmd: "/finance summary", desc: "View spending breakdown by category with % analytics", category: "Finance" },
     { cmd: "/finance list", desc: "View recent active finance transactions in Google Sheets", category: "Finance" },
     { cmd: "/paylah", desc: "Run on-demand sync of recent DBS PayLah email receipts", category: "Fintech" },
+    { cmd: "/workout", desc: "Start today's guided session (also /gym), prompting set by set", category: "Workout" },
+    { cmd: "/workout stats", desc: "View your lifting progress and workout dashboard", category: "Workout" },
+    { cmd: "/workoutday 12", desc: "Set which day of the 90-day program you're on", category: "Workout" },
+    { cmd: "/nextworkoutday", desc: "Skip ahead to the next program day", category: "Workout" },
+    { cmd: "/workout setup", desc: "Create the workout dashboard sheet in Google Sheets", category: "Workout" },
     { cmd: "/setcommands", desc: "Register interactive quick-access command menu to Telegram", category: "System" },
     { cmd: "/help", desc: "Display assistant capabilities, syntax rules, and voice examples", category: "System" },
   ];
@@ -344,6 +381,7 @@ export default function Home() {
               { id: "voice", label: "Voice Memo", icon: <IconMicrophone className="w-3.5 h-3.5" /> },
               { id: "vision", label: "Receipt Vision", icon: <IconCameraScan className="w-3.5 h-3.5" /> },
               { id: "calendar", label: "Dual Calendar", icon: <IconCalendar className="w-3.5 h-3.5" /> },
+              { id: "workout", label: "Workout Agent", icon: <IconDumbbell className="w-3.5 h-3.5" /> },
             ].map((chip) => (
               <button
                 key={chip.id}
@@ -412,6 +450,7 @@ export default function Home() {
                   { id: "voice", label: "Voice Note", tag: "Opus RAM", icon: <IconMicrophone className="w-3.5 h-3.5" /> },
                   { id: "vision", label: "Receipt Vision", tag: "OCR", icon: <IconCameraScan className="w-3.5 h-3.5" /> },
                   { id: "calendar", label: "Dual Calendar", tag: "Agenda", icon: <IconCalendar className="w-3.5 h-3.5" /> },
+                  { id: "workout", label: "Workout Agent", tag: "Tools", icon: <IconDumbbell className="w-3.5 h-3.5" /> },
                 ] as const
               ).map((tab) => {
                 const isActive = activeTab === tab.id;
@@ -821,6 +860,41 @@ export default function Home() {
                 <span className="font-mono font-bold text-[#0a0a0a]">5 Mins TTL</span>
               </div>
             </div>
+
+            {/* Bento 6: Workout Agent */}
+            <div className="md:col-span-3 nb-card p-7 rounded-2xl">
+              <div className="flex items-start justify-between mb-4">
+                <div className="p-3 rounded-xl bg-[#ff8a3d] border-2 border-[#0a0a0a] text-[#0a0a0a]">
+                  <IconDumbbell className="w-6 h-6" />
+                </div>
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#0a0a0a] px-2.5 py-1 rounded-md bg-[#fdf6e9] border-2 border-[#0a0a0a]">
+                  Workout Agent
+                </span>
+              </div>
+              <h3 className="font-display text-lg text-[#0a0a0a] mb-2">
+                Conversational Workout Tracker
+              </h3>
+              <p className="text-sm text-[#0a0a0a]/70 leading-relaxed max-w-2xl font-medium">
+                A guided 90-day lifting program that prompts you set by set. Mid-session, a tool-calling
+                agent understands plain language: fix a weight, delete or redo a set, skip an exercise,
+                change the order, add a bonus set or jump to another day, all synced to Google Sheets.
+              </p>
+
+              <div className="mt-6 pt-5 border-t-2 border-[#0a0a0a]/10 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                <div>
+                  <div className="text-[#0a0a0a]/50 text-[11px] font-mono">Program</div>
+                  <div className="font-mono font-bold text-[#0a0a0a] mt-0.5">90 Days • 13 Weeks</div>
+                </div>
+                <div>
+                  <div className="text-[#0a0a0a]/50 text-[11px] font-mono">Agent Tools</div>
+                  <div className="font-mono font-bold text-[#0a0a0a] mt-0.5">Log • Edit • Delete • Skip • Reorder</div>
+                </div>
+                <div>
+                  <div className="text-[#0a0a0a]/50 text-[11px] font-mono">Storage</div>
+                  <div className="font-mono font-bold text-[#3ecf6e] mt-0.5">Live Google Sheets</div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -912,7 +986,7 @@ export default function Home() {
 
               {/* Filter Pills */}
               <div className="flex items-center gap-1.5 p-1 rounded-lg bg-[#fdf6e9] border-2 border-[#0a0a0a] text-xs">
-                {["All", "Calendar", "Finance", "Fintech", "System"].map((cat) => (
+                {["All", "Calendar", "Finance", "Fintech", "Workout", "System"].map((cat) => (
                   <button
                     key={cat}
                     type="button"
