@@ -30,9 +30,13 @@ import { getRecentChatHistory, logChatMessage } from "@/lib/chat-history";
 import { resolveRepliedTransaction } from "@/lib/handlers/finance-handler";
 import { ConversationContext, parseAssistantIntent } from "@/lib/assistant-intent";
 import { defaultRegistry } from "@/lib/handlers/dispatcher";
+import { runFinanceAgent } from "@/lib/agent/finance-agent";
 import { answerWithSearch } from "@/lib/search";
 import { handleVoiceNoteAction } from "@/lib/voice-transcribe";
 import { handleWorkoutSessionMessage } from "@/lib/workout/workout-session";
+
+const FINANCE_HINT =
+  /\$|\b(transaction|expense|income|spent|spend|paid|budget|category|amount|paylah|wrong|mistake|typo|record(ed)?|cost)\b/i;
 
 function log(event: string, values: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ event, timestamp: new Date().toISOString(), ...values }));
@@ -381,6 +385,31 @@ export async function POST(request: Request) {
     };
 
     const intent = await parseAssistantIntent(text, conversationContext);
+
+    // Finance agent: edits/deletes, plus unclassified messages that look
+    // money-related. Falls through to the fixed handlers if it declines or fails.
+    if (
+      intent.action === "finance_modify" ||
+      intent.action === "finance_delete_search" ||
+      (intent.action === "unknown" && FINANCE_HINT.test(text))
+    ) {
+      try {
+        const agentResult = await runFinanceAgent({
+          chatId,
+          userId: message.from.id,
+          text,
+          targetTransaction,
+          repliedToText: message.reply_to_message?.text,
+          history: recentChatHistory,
+        });
+        if (agentResult.handled) {
+          await markUpdateCompleted(updateId, agentResult.completionStatus);
+          return Response.json({ ok: true });
+        }
+      } catch (agentError) {
+        log("telegram.finance_agent.failed", { updateId, error: errorText(agentError) });
+      }
+    }
 
     // Dispatch intent to domain handlers
     const dispatched = await defaultRegistry.dispatchIntent(
