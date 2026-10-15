@@ -703,6 +703,17 @@ export async function handleWorkoutSessionMessage(params: {
 
   const entry = parseSetInput(trimmed);
   if (!entry) {
+    // Not a plain "weight x reps": let the agent interpret it (fix, delete, skip, reorder...).
+    try {
+      const { runWorkoutAgent } = await import("../agent/workout-agent");
+      const agentResult = await runWorkoutAgent({ chatId, text: trimmed });
+      // Unrelated to the workout (e.g. "what's the weather"): hand back to the normal assistant.
+      if (!agentResult.handled) return false;
+      return true;
+    } catch (error) {
+      console.error("Workout agent failed; falling back to the set prompt:", error);
+    }
+
     const plan = await getDayPlan(state.day);
     await sendTelegramMessage(
       chatId,
