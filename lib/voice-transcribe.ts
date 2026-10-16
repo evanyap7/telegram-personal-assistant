@@ -2,10 +2,54 @@ import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
 import { downloadTelegramAudio } from "./telegram-files";
 import { sendTelegramChatAction, sendTelegramMessage } from "./telegram";
+import { listAllMemories } from "./memory";
+
+const STATIC_VOCABULARY = [
+  "EGO",
+  "PayLah",
+  "Apple Pay",
+  "Grab",
+  "SGD",
+  "kg",
+  "reps",
+  "bench press",
+  "incline Smith",
+  "T-bar row",
+  "lat pulldown",
+  "personal calendar",
+  "work calendar",
+  "to-do list",
+];
+
+export function buildTranscriptionSystemPrompt(contactNames: string[]): string {
+  const vocabulary = [...STATIC_VOCABULARY, ...contactNames].join(", ");
+  return `You are an accurate audio transcription engine for EGO, a personal assistant.
+Transcribe the user's spoken voice note verbatim into clear, natural text.
+Do not add conversational replies, explanations, quotes, or markdown formatting.
+If currency or numbers are mentioned, write them naturally (e.g. "$5 for coffee", "tomorrow from 3 pm to 4 pm").
+Words and names you may hear (prefer these spellings when the audio matches): ${vocabulary}.
+Output ONLY the transcribed text.`;
+}
+
+async function loadContactNames(): Promise<string[]> {
+  try {
+    const memories = await Promise.race([
+      listAllMemories(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500)),
+    ]);
+    return memories
+      .filter((m) => m.category === "contact")
+      .map((m) => m.key)
+      .slice(0, 40);
+  } catch {
+    return [];
+  }
+}
 
 export async function transcribeTelegramVoiceNote(input: {
   audio: Uint8Array;
   mediaType: string;
+  contactNames?: string[];
 }): Promise<string> {
   if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
     throw new Error("GOOGLE_GENERATIVE_AI_API_KEY is missing.");
@@ -19,11 +63,7 @@ export async function transcribeTelegramVoiceNote(input: {
 
   const result = await generateText({
     model: google("gemini-3.6-flash"),
-    system: `You are an accurate audio transcription engine for a personal assistant.
-Transcribe the user's spoken voice note verbatim into clear, natural text.
-Do not add conversational replies, explanations, quotes, or markdown formatting.
-If currency or numbers are mentioned, write them naturally (e.g. "$5 for coffee", "tomorrow from 3 pm to 4 pm").
-Output ONLY the transcribed text.`,
+    system: buildTranscriptionSystemPrompt(input.contactNames ?? []),
     messages: [
       {
         role: "user",
@@ -68,10 +108,14 @@ export async function handleVoiceNoteAction(params: {
   await sendTelegramMessage(chatId, "🎧 Listening to your voice note...");
 
   try {
-    const downloaded = await downloadTelegramAudio(fileId, mimeType);
+    const [downloaded, contactNames] = await Promise.all([
+      downloadTelegramAudio(fileId, mimeType),
+      loadContactNames(),
+    ]);
     const transcription = await transcribeTelegramVoiceNote({
       audio: downloaded.data,
       mediaType: downloaded.mediaType,
+      contactNames,
     });
 
     if (!transcription) {

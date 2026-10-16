@@ -34,6 +34,9 @@ import { runFinanceAgent } from "@/lib/agent/finance-agent";
 import { answerWithSearch } from "@/lib/search";
 import { handleVoiceNoteAction } from "@/lib/voice-transcribe";
 import { handleWorkoutSessionMessage } from "@/lib/workout/workout-session";
+import { isEgoEnabled } from "@/lib/agent/ego-flag";
+import type { InputMode } from "@/lib/agent/input-mode";
+import { handleEgoText } from "@/lib/telegram/ego-pipeline";
 
 const FINANCE_HINT =
   /\$|\b(transaction|expense|income|spent|spend|paid|budget|category|amount|paylah|wrong|mistake|typo|record(ed)?|cost)\b/i;
@@ -218,6 +221,7 @@ export async function POST(request: Request) {
     }
 
     let text = (message.text || message.caption)?.trim() ?? "";
+    let inputMode: InputMode = "text";
 
     // 2.5 Handle Voice Notes & Audio Memos
     if (!text && (message.voice || message.audio)) {
@@ -236,6 +240,7 @@ export async function POST(request: Request) {
           }
 
           text = transcription;
+          inputMode = "voice";
         } catch (voiceError) {
           log("telegram.voice_transcribe.failed", {
             updateId,
@@ -260,6 +265,15 @@ export async function POST(request: Request) {
       actionType: message.voice || message.audio ? "voice_transcribed" : "incoming_text",
     }).catch(() => {});
 
+    // EGO orchestrator: one tool-calling agent replaces the regex fast-paths and the
+    // intent classifier below. Set EGO_ORCHESTRATOR=off to fall back to the old pipeline.
+    if (isEgoEnabled()) {
+      const egoResult = await handleEgoText({ message, chatId, updateId, text, inputMode });
+      if (egoResult.completionStatus) {
+        await markUpdateCompleted(updateId, egoResult.completionStatus);
+      }
+      return Response.json({ ok: true });
+    }
 
     // 2.9 Guided PH3 workout: consumes workout start phrases, day commands, and every
     // message while a session is active (until the user ends it).

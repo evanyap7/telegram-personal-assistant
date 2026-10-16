@@ -32,6 +32,7 @@ import {
 import { SECURITY_SYSTEM_GUARDRAIL } from "../lib/security";
 import { isEgoEnabled } from "../lib/agent/ego-flag";
 import { strictSetEntry } from "../lib/workout/workout-session";
+import { buildTranscriptionSystemPrompt } from "../lib/voice-transcribe";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -491,6 +492,17 @@ section("workout set shortcut: fires only with an active session and a strict we
   for (const notASet of ["hello", "100", "fix my last set", "what's the weather", "skip squats", ""]) {
     assert.equal(strictSetEntry(notASet, state), null, `"${notASet}" must go to the orchestrator`);
   }
+});
+
+section("transcription prompt carries domain vocabulary and the user's contact names", () => {
+  const p = buildTranscriptionSystemPrompt(["Priya", "Wei Jie"]);
+  assert.match(p, /PayLah/);
+  assert.match(p, /T-bar row/);
+  assert.match(p, /Priya/);
+  assert.match(p, /Wei Jie/);
+  assert.match(p, /Output ONLY the transcribed text/);
+  const bare = buildTranscriptionSystemPrompt([]);
+  assert.match(bare, /PayLah/);
 });
 
 // ---- runner ----
