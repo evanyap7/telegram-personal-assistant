@@ -1,8 +1,8 @@
 import {
   addTransaction,
   addTransactionsBatch,
-  FinanceSummary,
-  FinanceTransaction,
+  type FinanceSummary,
+  type FinanceTransaction,
   getFinanceSummary,
   getLatestTransaction,
   getTransactionById,

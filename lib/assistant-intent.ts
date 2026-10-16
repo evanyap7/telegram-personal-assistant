@@ -57,7 +57,7 @@ const calendarBatchAddSchema = z.object({
   events: z.array(calendarBatchEventSchema).min(1).max(30),
 });
 
-const intentSchema = z.union([
+export const intentSchema = z.union([
   z.object({
     action: z.literal("finance_add"),
     type: z.enum(["income", "expense"]),
@@ -239,6 +239,19 @@ const intentSchema = z.union([
 
 export type AssistantIntent = z.infer<typeof intentSchema>;
 
+type SchemaWithAction = { shape: { action: { value: string } } };
+
+function actionOf(option: unknown): string {
+  const o = option as Partial<SchemaWithAction> & { options?: SchemaWithAction[] };
+  const object = o.shape ? (o as SchemaWithAction) : (o.options as SchemaWithAction[])[0];
+  return object.shape.action.value;
+}
+
+/** Action name to its zod schema, derived from the union so it can never drift from it. */
+export const intentSchemaByAction: Record<string, z.ZodType> = Object.fromEntries(
+  intentSchema.options.map((option) => [actionOf(option), option as z.ZodType])
+);
+
 export type ConversationContext = {
   messageTime?: Date | string | number;
   repliedMessageText?: string;
@@ -304,6 +317,43 @@ export function messageMentionsDate(message: string): boolean {
   return datePatterns.some((pattern) => pattern.test(lower));
 }
 
+export function buildConversationContextBlock(context?: ConversationContext): string {
+  if (!context) return "";
+  const items: string[] = [];
+  if (context.recentChatHistory && context.recentChatHistory.length > 0) {
+    const historyLines = context.recentChatHistory
+      .map((h) => `${h.role === "user" ? "User" : "Assistant"}: ${h.text}`)
+      .join("\n");
+    items.push(`Recent conversation turns:\n${historyLines}`);
+  }
+  if (context.repliedMessageText) {
+    items.push(`Replied-to message:\n"""\n${context.repliedMessageText}\n"""`);
+  }
+  if (context.activePendingCalendar) {
+    const p = context.activePendingCalendar;
+    const loc = p.location ? `\n- Location: "${p.location}"` : "";
+    const rem = p.reminderMinutes ? `\n- Reminder: ${p.reminderMinutes} minutes before` : "";
+    items.push(
+      `Active pending calendar confirmation:\n- Calendar: ${p.calendarName}\n- Title: "${p.title}"\n- All-day: ${p.allDay}\n- Timing: ${p.allDay ? p.date : `${p.start} to ${p.end}`}${loc}${rem}`
+    );
+  }
+  if (context.recentCalendarEvent) {
+    const r = context.recentCalendarEvent;
+    const loc = r.location ? `\n- Location: "${r.location}"` : "";
+    items.push(
+      `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}${loc}\n- Event ID: ${r.eventId ?? "none"}`
+    );
+  }
+  if (context.recentTransaction) {
+    const t = context.recentTransaction;
+    items.push(
+      `Most recently created/modified finance transaction:\n- Transaction ID: ${t.transactionId}\n- Type: ${t.type}\n- Amount: ${t.amount} ${t.currency}\n- Category: ${t.category}\n- Description: "${t.description}"\n- Timestamp: ${t.timestamp}`
+    );
+  }
+  if (items.length === 0) return "";
+  return `\n\n--- Conversation Context ---\n${items.join("\n\n")}\n-----------------------------`;
+}
+
 export async function parseAssistantIntent(
   userMessage: string,
   context?: ConversationContext
@@ -328,43 +378,7 @@ export async function parseAssistantIntent(
     hour12: true,
   }).format(now);
 
-  let contextBlock = "";
-  if (context) {
-    const items: string[] = [];
-    if (context.recentChatHistory && context.recentChatHistory.length > 0) {
-      const historyLines = context.recentChatHistory
-        .map((h) => `${h.role === "user" ? "User" : "Assistant"}: ${h.text}`)
-        .join("\n");
-      items.push(`Recent conversation turns:\n${historyLines}`);
-    }
-    if (context.repliedMessageText) {
-      items.push(`Replied-to message:\n"""\n${context.repliedMessageText}\n"""`);
-    }
-    if (context.activePendingCalendar) {
-      const p = context.activePendingCalendar;
-      const loc = p.location ? `\n- Location: "${p.location}"` : "";
-      const rem = p.reminderMinutes ? `\n- Reminder: ${p.reminderMinutes} minutes before` : "";
-      items.push(
-        `Active pending calendar confirmation:\n- Calendar: ${p.calendarName}\n- Title: "${p.title}"\n- All-day: ${p.allDay}\n- Timing: ${p.allDay ? p.date : `${p.start} to ${p.end}`}${loc}${rem}`
-      );
-    }
-    if (context.recentCalendarEvent) {
-      const r = context.recentCalendarEvent;
-      const loc = r.location ? `\n- Location: "${r.location}"` : "";
-      items.push(
-        `Most recently created calendar event:\n- Calendar: ${r.calendarName}\n- Title: "${r.title}"\n- Timing: ${r.allDay ? r.date : `${r.start} to ${r.end}`}${loc}\n- Event ID: ${r.eventId ?? "none"}`
-      );
-    }
-    if (context.recentTransaction) {
-      const t = context.recentTransaction;
-      items.push(
-        `Most recently created/modified finance transaction:\n- Transaction ID: ${t.transactionId}\n- Type: ${t.type}\n- Amount: ${t.amount} ${t.currency}\n- Category: ${t.category}\n- Description: "${t.description}"\n- Timestamp: ${t.timestamp}`
-      );
-    }
-    if (items.length > 0) {
-      contextBlock = `\n\n--- Conversation Context ---\n${items.join("\n\n")}\n-----------------------------`;
-    }
-  }
+  const contextBlock = buildConversationContextBlock(context);
 
   const systemPrompt = buildIntentSystemPrompt(currentDate, currentTime, contextBlock);
 

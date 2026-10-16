@@ -114,6 +114,10 @@ export class HandlerRegistry {
     return this;
   }
 
+  registeredActions(): string[] {
+    return [...this.intentHandlers.keys()];
+  }
+
   async dispatchIntent(
     ctx: IntentContext,
     intent: AssistantIntent
