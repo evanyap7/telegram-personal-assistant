@@ -14,6 +14,13 @@ import {
   intentSchemaByAction,
 } from "../lib/assistant-intent";
 import { defaultRegistry } from "../lib/handlers/dispatcher";
+import {
+  EXCLUDED_INTENT_ACTIONS,
+  TOOL_DESCRIPTIONS,
+  buildEgoTools,
+  type EgoToolDeps,
+} from "../lib/agent/ego-tools";
+import type { AssistantIntent } from "../lib/assistant-intent";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -94,6 +101,232 @@ section("registry exposes its registered actions and each has a schema", () => {
   for (const action of registered) {
     assert.ok(action in intentSchemaByAction, `${action} is registered but has no schema`);
   }
+});
+
+type ToolResult = Record<string, unknown>;
+
+function makeDeps(overrides: Partial<EgoToolDeps> = {}) {
+  const calls = {
+    dispatched: [] as AssistantIntent[],
+    notified: 0,
+    toolCalls: [] as string[],
+    finance: [] as string[],
+    workout: [] as Array<{ kind: string; request: string; location?: string }>,
+  };
+  const deps: EgoToolDeps = {
+    dispatchIntent: async (intent) => {
+      calls.dispatched.push(intent);
+      return { handled: true, completionStatus: "stub_status" };
+    },
+    askFinance: async (request) => {
+      calls.finance.push(request);
+      return true;
+    },
+    askWorkout: async (input) => {
+      calls.workout.push(input);
+      return true;
+    },
+    search: async () => "Canberra is the capital of Australia.",
+    processPendingImage: async () => true,
+    markNotified: () => {
+      calls.notified += 1;
+    },
+    onToolCall: (name) => calls.toolCalls.push(name),
+    ...overrides,
+  };
+  return { deps, calls };
+}
+
+async function runTool(
+  tools: ReturnType<typeof buildEgoTools>,
+  name: string,
+  input: Record<string, unknown>
+): Promise<ToolResult> {
+  const t = tools[name] as unknown as {
+    execute: (i: unknown, o: unknown) => Promise<ToolResult>;
+  };
+  assert.ok(t, `tool ${name} should exist`);
+  return t.execute(input, { toolCallId: "test", messages: [] });
+}
+
+section("every registered intent is a tool or explicitly excluded (drift check)", () => {
+  const { deps } = makeDeps();
+  const tools = buildEgoTools(deps);
+  for (const action of defaultRegistry.registeredActions()) {
+    assert.ok(
+      action in tools || EXCLUDED_INTENT_ACTIONS.has(action),
+      `${action} is registered in the dispatcher but has no EGO tool and is not excluded`
+    );
+  }
+  for (const action of EXCLUDED_INTENT_ACTIONS) {
+    assert.ok(!(action in tools), `${action} is excluded but still has a tool`);
+  }
+  for (const action of ["finance_add", "budget_set", "workout_start", "workout_log", "workout_view"]) {
+    assert.ok(EXCLUDED_INTENT_ACTIONS.has(action), `${action} must go through a delegate agent`);
+  }
+});
+
+section("delegate and utility tools exist and every tool has a description", () => {
+  const { deps } = makeDeps();
+  const tools = buildEgoTools(deps);
+  for (const name of ["askFinanceAgent", "askWorkoutAgent", "webSearch", "processPendingImage"]) {
+    assert.ok(name in tools, `missing ${name}`);
+  }
+  for (const [name, t] of Object.entries(tools)) {
+    const description = (t as { description?: string }).description;
+    assert.ok(description && description.length > 10, `${name} needs a description`);
+  }
+  for (const action of Object.keys(TOOL_DESCRIPTIONS)) {
+    assert.ok(action in tools, `TOOL_DESCRIPTIONS has ${action} but there is no such tool`);
+  }
+});
+
+section("registry tool validates, applies defaults, dispatches and marks notified", async () => {
+  const { deps, calls } = makeDeps();
+  const tools = buildEgoTools(deps);
+  const result = await runTool(tools, "todo_add", { task: "buy milk" });
+  assert.equal(result.ok, true);
+  assert.equal(result.userNotified, true);
+  assert.equal(calls.dispatched.length, 1);
+  const dispatched = calls.dispatched[0] as Extract<AssistantIntent, { action: "todo_add" }>;
+  assert.equal(dispatched.action, "todo_add");
+  assert.equal(dispatched.task, "buy milk");
+  assert.equal(dispatched.priority, "medium");
+  assert.equal(calls.notified, 1);
+  assert.deepEqual(calls.toolCalls, ["todo_add"]);
+});
+
+section("tool failure honesty: handler throw or not-handled returns ok:false and does not notify", async () => {
+  const throwing = makeDeps({
+    dispatchIntent: async () => {
+      throw new Error("sheets is down");
+    },
+  });
+  const r1 = await runTool(buildEgoTools(throwing.deps), "todo_view", { timeframe: "today" });
+  assert.equal(r1.ok, false);
+  assert.match(String(r1.error), /sheets is down/);
+  assert.equal(throwing.calls.notified, 0);
+
+  const unhandled = makeDeps({ dispatchIntent: async () => ({ handled: false }) });
+  const r2 = await runTool(buildEgoTools(unhandled.deps), "todo_view", { timeframe: "today" });
+  assert.equal(r2.ok, false);
+  assert.equal(unhandled.calls.notified, 0);
+});
+
+section("malformed model arguments return a readable error and never reach the handler", async () => {
+  const { deps, calls } = makeDeps();
+  const tools = buildEgoTools(deps);
+
+  const missingRequired = await runTool(tools, "todo_complete", {});
+  assert.equal(missingRequired.ok, false);
+  assert.match(String(missingRequired.error), /query/);
+
+  const timedNoEnd = await runTool(tools, "calendar_add", {
+    calendarName: "personal",
+    allDay: false,
+    title: "Dentist",
+    start: "2026-10-17T15:00:00+08:00",
+  });
+  assert.equal(timedNoEnd.ok, false);
+  assert.match(String(timedNoEnd.error), /end/);
+
+  const badOffset = await runTool(tools, "calendar_add", {
+    calendarName: "personal",
+    allDay: false,
+    title: "Dentist",
+    start: "2026-10-17T15:00:00Z",
+    end: "2026-10-17T16:00:00Z",
+  });
+  assert.equal(badOffset.ok, false);
+
+  assert.equal(calls.dispatched.length, 0);
+  assert.equal(calls.notified, 0);
+});
+
+section("calendar tools accept the flat model-friendly shapes", async () => {
+  const { deps, calls } = makeDeps();
+  const tools = buildEgoTools(deps);
+
+  const allDay = await runTool(tools, "calendar_add", {
+    calendarName: "personal",
+    allDay: true,
+    title: "Gym",
+    date: "2026-10-17",
+  });
+  assert.equal(allDay.ok, true);
+
+  const timed = await runTool(tools, "calendar_add", {
+    calendarName: "work",
+    allDay: false,
+    title: "Standup",
+    start: "2026-10-17T09:00:00+08:00",
+    end: "2026-10-17T09:30:00+08:00",
+  });
+  assert.equal(timed.ok, true);
+
+  const batch = await runTool(tools, "calendar_batch_add", {
+    calendarName: "personal",
+    events: [
+      { allDay: true, title: "Trip", date: "2026-10-20" },
+      {
+        allDay: false,
+        title: "Dinner",
+        start: "2026-10-21T19:00:00+08:00",
+        end: "2026-10-21T20:00:00+08:00",
+      },
+    ],
+  });
+  assert.equal(batch.ok, true);
+  assert.deepEqual(
+    calls.dispatched.map((i) => i.action),
+    ["calendar_add", "calendar_add", "calendar_batch_add"]
+  );
+});
+
+section("delegate tools: finance and workout report handled / not handled correctly", async () => {
+  const { deps, calls } = makeDeps();
+  const tools = buildEgoTools(deps);
+
+  const fin = await runTool(tools, "askFinanceAgent", { request: "log $6 lunch" });
+  assert.equal(fin.ok, true);
+  assert.deepEqual(calls.finance, ["log $6 lunch"]);
+  assert.equal(calls.notified, 1);
+
+  const wo = await runTool(tools, "askWorkoutAgent", {
+    kind: "start",
+    request: "going to the gym",
+    location: "school",
+  });
+  assert.equal(wo.ok, true);
+  assert.deepEqual(calls.workout[0], { kind: "start", request: "going to the gym", location: "school" });
+  assert.equal(calls.notified, 2);
+
+  const declined = makeDeps({ askFinance: async () => false });
+  const notFinance = await runTool(buildEgoTools(declined.deps), "askFinanceAgent", {
+    request: "what's the weather",
+  });
+  assert.equal(notFinance.ok, false);
+  assert.equal(declined.calls.notified, 0);
+});
+
+section("webSearch returns the answer without notifying; pending image notifies only when handled", async () => {
+  const { deps, calls } = makeDeps();
+  const tools = buildEgoTools(deps);
+  const search = await runTool(tools, "webSearch", { query: "capital of Australia" });
+  assert.equal(search.ok, true);
+  assert.match(String(search.answer), /Canberra/);
+  assert.equal(calls.notified, 0);
+
+  const img = await runTool(tools, "processPendingImage", { instruction: "log this receipt" });
+  assert.equal(img.ok, true);
+  assert.equal(calls.notified, 1);
+
+  const none = makeDeps({ processPendingImage: async () => false });
+  const noImg = await runTool(buildEgoTools(none.deps), "processPendingImage", {
+    instruction: "log this",
+  });
+  assert.equal(noImg.ok, false);
+  assert.equal(none.calls.notified, 0);
 });
 
 // ---- runner ----
