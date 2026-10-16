@@ -25,6 +25,7 @@ import {
   type UsageRow,
   type LedgerState,
 } from "../lib/ai/ledger";
+import { CREDITS_USAGE, parseCreditsCommand } from "../lib/ai/commands";
 import fs from "node:fs";
 import path from "node:path";
 import { NO_WEB_FOOTER, searchSystemPrompt } from "../lib/search";
@@ -635,6 +636,39 @@ section("search prompts differ by provider and Claude is honest about having no 
   assert.match(searchSystemPrompt("gemini"), /2-3 sentences/);
   assert.match(searchSystemPrompt("anthropic"), /cannot browse/i);
   assert.match(NO_WEB_FOOTER, /no live web data/i);
+});
+
+section("/credits parsing", () => {
+  assert.equal(parseCreditsCommand("hello"), null);
+  assert.equal(parseCreditsCommand("/creditsx"), null);
+  assert.equal(parseCreditsCommand("/todo"), null);
+  assert.deepEqual(parseCreditsCommand("/credits"), { kind: "show" });
+  assert.deepEqual(parseCreditsCommand("/credits@ego_bot"), { kind: "show" });
+  assert.deepEqual(parseCreditsCommand("/credits set gemini 25"), {
+    kind: "set",
+    provider: "gemini",
+    amountUsd: 25,
+  });
+  assert.deepEqual(parseCreditsCommand("/credits set Perplexity $10.50"), {
+    kind: "set",
+    provider: "perplexity",
+    amountUsd: 10.5,
+  });
+  assert.deepEqual(parseCreditsCommand("/credits set gemini 0"), {
+    kind: "set",
+    provider: "gemini",
+    amountUsd: 0,
+  });
+  for (const bad of [
+    "/credits set",
+    "/credits set gemini",
+    "/credits set gemini abc",
+    "/credits set gemini -5",
+    "/credits set claude 5",
+    "/credits nonsense",
+  ]) {
+    assert.deepEqual(parseCreditsCommand(bad), { kind: "usage_error", message: CREDITS_USAGE }, bad);
+  }
 });
 
 // ---- runner ----

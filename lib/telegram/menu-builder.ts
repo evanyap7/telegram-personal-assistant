@@ -20,6 +20,7 @@ export const BOT_COMMANDS: Array<{ command: string; description: string }> = [
   { command: "inbox", description: "Triage unread Gmail inbox" },
   { command: "sync", description: "Sync recent DBS & Grab transactions" },
   { command: "export", description: "Export monthly transactions CSV" },
+  { command: "credits", description: "AI credit balances & Claude fallback" },
   { command: "help", description: "Show the EGO guide" },
 ];
 
@@ -52,6 +53,7 @@ export function getCompactDashboardText(): string {
     "• 💰 *Finances*: Monthly spending, budget caps & sync",
     "• 🏋️ *Workouts*: School/CSC progressive overload tracking",
     "• 📋 *Tasks*: Single & batch to-dos, reminders & habits",
+    "• 🧠 *Credits*: /credits shows AI balances and the Claude fallback",
   ].join("\n");
 }
 

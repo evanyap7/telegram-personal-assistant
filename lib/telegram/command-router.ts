@@ -60,6 +60,7 @@ import { handleWorkoutViewAction } from "../workout/workout-handler";
 import { startPH3Workout } from "../workout/workout-session";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
 import { executeLatestUndo } from "../undo";
+import { handleCreditsCommand, parseCreditsCommand } from "../ai/commands";
 
 export interface CommandContext {
   chatId: number;
@@ -86,6 +87,12 @@ export async function dispatchCommand(
   ) {
     await sendTelegramMessage(chatId, getCompactDashboardText(), getCompactDashboardMarkup());
     return { handled: true, completionStatus: "menu_dashboard" };
+  }
+
+  // AI credit balances and Claude fallback
+  if (parseCreditsCommand(text)) {
+    await handleCreditsCommand({ chatId, text });
+    return { handled: true, completionStatus: "credits" };
   }
 
   // Set Commands
