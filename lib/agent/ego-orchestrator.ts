@@ -9,7 +9,11 @@ import {
   dropCurrentTurn,
   toConversationMessages,
 } from "@/lib/agent/ego-prompt";
-import { createReplyTracker, resolveFinalReply } from "@/lib/agent/ego-reply";
+import {
+  createReplyTracker,
+  resolveFailureReply,
+  resolveFinalReply,
+} from "@/lib/agent/ego-reply";
 import type { InputMode } from "@/lib/agent/input-mode";
 import type { ConversationContext } from "@/lib/assistant-intent";
 import type { FormattedChatTurn } from "@/lib/chat-history";
@@ -71,6 +75,7 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
         repliedToText: input.repliedToText,
         history: priorHistory,
         inputMode,
+        messageDate: input.messageDate,
       });
       return result.handled;
     },
@@ -138,7 +143,18 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
     temperature: 0,
   });
 
-  const result = await agent.generate({ messages: toConversationMessages(input.history, text) });
+  let result;
+  try {
+    result = await agent.generate({ messages: toConversationMessages(input.history, text) });
+  } catch (error) {
+    // A tool may already have changed something and messaged the user; a generic
+    // "try again" from the route would invite a duplicate.
+    const partial = resolveFailureReply(tracker.notified);
+    if (!partial) throw error;
+    console.error("EGO run failed after tools already ran:", error);
+    await sendTelegramMessage(chatId, partial, undefined, null);
+    return { completionStatus: "ego_partial_failure" };
+  }
 
   const reply = resolveFinalReply({ text: result.text, notified: tracker.notified });
   if (reply) {

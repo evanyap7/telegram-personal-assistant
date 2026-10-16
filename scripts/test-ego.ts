@@ -34,6 +34,9 @@ import { isEgoEnabled } from "../lib/agent/ego-flag";
 import { strictSetEntry } from "../lib/workout/workout-session";
 import { buildTranscriptionSystemPrompt } from "../lib/voice-transcribe";
 import { EGO_EVAL_CASES } from "./ego-eval-cases";
+import { addTransactionWithConversion, buildBudgetAlertLines } from "../lib/agent/finance-add";
+import { resolveAgentReply } from "../lib/agent/agent-reply";
+import { PARTIAL_FAILURE_REPLY, resolveFailureReply } from "../lib/agent/ego-reply";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -525,6 +528,137 @@ section("routing eval fixtures only expect tools that exist", () => {
   }
   assert.ok(EGO_EVAL_CASES.some((c) => c.inputMode === "voice"), "include voice phrasings");
   assert.ok(EGO_EVAL_CASES.some((c) => c.workoutActive), "include an active-workout case");
+});
+
+// ---- final-review fix pass ----
+
+section("finance add converts non-SGD amounts to SGD and notes it (ledger is SGD)", async () => {
+  const added: Array<Record<string, unknown>> = [];
+  const deps = {
+    convert: async (amount: number, currency: string) => ({
+      originalAmount: amount,
+      originalCurrency: currency,
+      sgdAmount: 27,
+      rate: 1.35,
+      isEstimated: false,
+    }),
+    add: async (input: Record<string, unknown>) => {
+      added.push(input);
+      return { transactionId: "t1", timestamp: "2026-10-16 12:00", sheetName: "s" };
+    },
+  };
+  const stamp = new Date("2026-10-16T04:00:00Z");
+
+  const usd = await addTransactionWithConversion(
+    { type: "expense", amount: 20, currency: "USD", category: "Dining", description: "dinner", transactionTimestamp: stamp },
+    deps as never
+  );
+  assert.equal(added[0].amount, 27);
+  assert.equal(added[0].currency, "SGD");
+  assert.match(String(added[0].description), /^dinner \(.*USD/);
+  assert.equal(added[0].transactionTimestamp, stamp);
+  assert.equal(usd.effectiveAmount, 27);
+  assert.equal(usd.effectiveCurrency, "SGD");
+  assert.match(usd.conversionNotice, /USD/);
+
+  const sgd = await addTransactionWithConversion(
+    { type: "expense", amount: 6, currency: "sgd", category: "Dining", description: "lunch" },
+    deps as never
+  );
+  assert.equal(added[1].amount, 6);
+  assert.equal(added[1].description, "lunch");
+  assert.equal(sgd.conversionNotice, "");
+});
+
+section("budget alert lines carry the 50/80/100% and category-cap alerts for expenses only", () => {
+  const status = (extra: Record<string, unknown>) =>
+    ({ hasBudget: true, remaining: 40.5, formattedNotice: "n", ...extra }) as never;
+  assert.deepEqual(buildBudgetAlertLines(undefined, "expense"), []);
+  assert.deepEqual(buildBudgetAlertLines(status({ hasBudget: false, thresholdCrossed: 100 }), "expense"), []);
+  assert.deepEqual(buildBudgetAlertLines(status({ thresholdCrossed: 100 }), "income"), []);
+  assert.deepEqual(buildBudgetAlertLines(status({}), "expense"), []);
+  assert.deepEqual(buildBudgetAlertLines(status({ thresholdCrossed: 100 }), "expense"), [
+    "🚨 Alert: You have exceeded 100% of your monthly budget!",
+  ]);
+  assert.deepEqual(buildBudgetAlertLines(status({ thresholdCrossed: 80 }), "expense"), [
+    "⚠️ Alert: You have reached 80% of your monthly budget ($40.50 remaining).",
+  ]);
+  assert.deepEqual(buildBudgetAlertLines(status({ thresholdCrossed: 50 }), "expense"), [
+    "ℹ️ Note: You have reached 50% of your monthly budget.",
+  ]);
+  assert.deepEqual(
+    buildBudgetAlertLines(status({ categoryCapAlerts: ["Dining cap reached"] }), "expense"),
+    ["Dining cap reached"]
+  );
+});
+
+section("agent reply: a mutation is never reported as 'not handled'", () => {
+  assert.deepEqual(resolveAgentReply({ reply: "", mutated: false, sentinel: "NOT_FINANCE" }), { kind: "decline" });
+  assert.deepEqual(resolveAgentReply({ reply: "NOT_FINANCE", mutated: false, sentinel: "NOT_FINANCE" }), { kind: "decline" });
+  assert.deepEqual(resolveAgentReply({ reply: "", mutated: true, sentinel: "NOT_FINANCE" }), { kind: "send", text: "Done." });
+  assert.deepEqual(resolveAgentReply({ reply: "NOT_FINANCE", mutated: true, sentinel: "NOT_FINANCE" }), { kind: "send", text: "Done." });
+  assert.deepEqual(resolveAgentReply({ reply: "Changed $6 to $12", mutated: true, sentinel: "NOT_FINANCE" }), {
+    kind: "send",
+    text: "Changed $6 to $12",
+  });
+  assert.deepEqual(resolveAgentReply({ reply: "You spent $40", mutated: false, sentinel: "NOT_FINANCE" }), {
+    kind: "send",
+    text: "You spent $40",
+  });
+});
+
+section("if the model run fails after tools already messaged the user, send a softer message instead of 'try again'", () => {
+  assert.equal(resolveFailureReply(false), null);
+  assert.equal(resolveFailureReply(true), PARTIAL_FAILURE_REPLY);
+  assert.match(PARTIAL_FAILURE_REPLY, /check/i);
+  assert.ok(!/try again/i.test(PARTIAL_FAILURE_REPLY));
+});
+
+section("handler outcomes that already told the user it failed are not reported as success", async () => {
+  for (const status of [
+    "calendar_move_failed",
+    "finance_modify_not_found",
+    "calendar_delete_search_empty",
+    "todo_delete_search_empty",
+  ]) {
+    const { deps, calls } = makeDeps({
+      dispatchIntent: async () => ({ handled: true, completionStatus: status }),
+    });
+    const r = await runTool(buildEgoTools(deps), "todo_view", { timeframe: "today" });
+    assert.equal(r.ok, false, status);
+    assert.equal(r.userNotified, true, status);
+    assert.equal(calls.notified, 1, status);
+    assert.match(String(r.error), /already told the user/i);
+  }
+});
+
+section("a delegate that throws warns that it may have partly completed", async () => {
+  const { deps, calls } = makeDeps({
+    askFinance: async () => {
+      throw new Error("sheets timeout");
+    },
+  });
+  const r = await runTool(buildEgoTools(deps), "askFinanceAgent", { request: "log $6 lunch" });
+  assert.equal(r.ok, false);
+  assert.match(String(r.error), /sheets timeout/);
+  assert.match(String(r.error), /partly completed/i);
+  assert.equal(calls.notified, 0);
+});
+
+section("web search output is wrapped as untrusted data and the guardrail names it", async () => {
+  const { deps } = makeDeps();
+  const r = await runTool(buildEgoTools(deps), "webSearch", { query: "capital of Australia" });
+  assert.ok(String(r.answer).startsWith("<untrusted_web_result>"));
+  assert.ok(String(r.answer).trimEnd().endsWith("</untrusted_web_result>"));
+  assert.match(String(r.answer), /Canberra/);
+  assert.match(SECURITY_SYSTEM_GUARDRAIL, /search results/i);
+  assert.match(SECURITY_SYSTEM_GUARDRAIL, /replied-to/i);
+});
+
+section("finance prompt tells the agent to relay conversion notices and budget alerts", () => {
+  const p = buildFinanceInstructions({ today: "2026-10-16", targetTransaction: null });
+  assert.match(p, /budgetAlerts/);
+  assert.match(p, /conversionNotice/);
 });
 
 // ---- runner ----

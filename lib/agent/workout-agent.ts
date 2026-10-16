@@ -5,6 +5,7 @@ import { sendTelegramMessage } from "@/lib/telegram";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import { getRecentChatHistory } from "@/lib/chat-history";
 import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
+import { resolveAgentReply } from "@/lib/agent/agent-reply";
 import { clearPH3Session, getDayPlan, type PH3DayPlan } from "@/lib/workout/ph3-program";
 import {
   buildSetPrompt,
@@ -449,10 +450,10 @@ export async function runWorkoutAgent(params: {
   const result = await agent.generate({
     messages: [...history, { role: "user" as const, content: text }],
   });
-  const reply = result.text.trim();
-
   if (handedOff) return { handled: true };
-  if (!reply || (reply === NOT_WORKOUT && !mutated)) return { handled: false };
+  const decision = resolveAgentReply({ reply: result.text, mutated, sentinel: NOT_WORKOUT });
+  if (decision.kind === "decline") return { handled: false };
+  const reply = decision.text;
 
   if (allDone) {
     await sendTelegramMessage(chatId, reply, undefined, null);

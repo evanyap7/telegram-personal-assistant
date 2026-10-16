@@ -2,7 +2,6 @@ import { google } from "@ai-sdk/google";
 import { ToolLoopAgent, tool, isStepCount } from "ai";
 import { z } from "zod";
 import {
-  addTransaction,
   getFinanceSummary,
   getTransactionById,
   queryFilteredTransactions,
@@ -20,6 +19,8 @@ import { sendTelegramMessage } from "@/lib/telegram";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import type { FormattedChatTurn } from "@/lib/chat-history";
 import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
+import { resolveAgentReply } from "@/lib/agent/agent-reply";
+import { addTransactionWithConversion, buildBudgetAlertLines } from "@/lib/agent/finance-add";
 
 const MAX_SEARCH_RESULTS = 15;
 const NOT_FINANCE = "NOT_FINANCE";
@@ -73,7 +74,7 @@ Logging rules:
 - Only pass a date to addTransaction or updateTransaction when the user's current message names a specific date or relative day ("yesterday", "last Friday", "on 3 Sep"). Otherwise omit it.
 - If the amount is missing, ask for it instead of guessing.
 - NEVER invent dishes, items, drinks, products or merchants. If the input is generic ("spent $10", "paid $15"), the description is "Expense" (or "Income") and the category is "Other". Only use a specific description when the user said it ("spent $5 on iced latte" is "iced latte", Dining).
-- If addTransaction returns a budgetNotice, add it on its own line after your confirmation.
+- If addTransaction returns a conversionNotice, a budgetNotice or any budgetAlerts, add each on its own line after your confirmation, word for word. The amount and currency it returns are what was actually recorded (foreign currencies are converted to SGD); report those, not the original.
 - A user who replies to a transaction with what it was ("supper", "it was lunch", "make it $12", "it was $12 not $6", "change category to Dining") wants that transaction edited, not a new one logged.
 
 Budget rules:
@@ -97,6 +98,8 @@ export async function runFinanceAgent(params: {
   repliedToText?: string;
   history: FormattedChatTurn[];
   inputMode?: InputMode;
+  /** When the user sent the message; new transactions are stamped with it. */
+  messageDate?: Date;
 }): Promise<FinanceAgentResult> {
   const { chatId, userId } = params;
   let lastUndoToken: string | null = null;
@@ -205,18 +208,29 @@ export async function runFinanceAgent(params: {
         date: z.string().date().optional().describe("YYYY-MM-DD, defaults to today"),
       }),
       execute: async ({ date, ...input }) => {
-        const added = await addTransaction({ ...input, explicitDate: date });
+        const result = await addTransactionWithConversion({
+          ...input,
+          explicitDate: date,
+          transactionTimestamp: params.messageDate,
+        });
+        const { added } = result;
         lastUndoToken = await registerUndoAction(userId, {
           type: "finance_transaction_created",
-          description: `${input.description} ($${input.amount.toFixed(2)})`,
+          description: `${result.effectiveDescription} ($${result.effectiveAmount.toFixed(2)} ${result.effectiveCurrency})`,
           data: { transactionId: added.transactionId },
         });
         mutated = true;
+        const trackBudget = added.budgetStatus?.hasBudget && input.type === "expense";
         return {
           ok: true,
           transactionId: added.transactionId,
           date: added.timestamp,
-          budgetNotice: added.budgetStatus?.formattedNotice ?? null,
+          amount: result.effectiveAmount,
+          currency: result.effectiveCurrency,
+          description: result.effectiveDescription,
+          conversionNotice: result.conversionNotice || null,
+          budgetNotice: trackBudget ? added.budgetStatus?.formattedNotice ?? null : null,
+          budgetAlerts: buildBudgetAlertLines(added.budgetStatus, input.type),
         };
       },
     }),
@@ -287,15 +301,14 @@ export async function runFinanceAgent(params: {
   ];
 
   const result = await agent.generate({ messages });
-  const reply = result.text.trim();
-
-  if (!reply || (reply === NOT_FINANCE && !mutated)) {
+  const decision = resolveAgentReply({ reply: result.text, mutated, sentinel: NOT_FINANCE });
+  if (decision.kind === "decline") {
     return { handled: false };
   }
 
   await sendTelegramMessage(
     chatId,
-    reply,
+    decision.text,
     mutated && lastUndoToken ? buildUndoInlineKeyboard(lastUndoToken) : undefined,
     null
   );
