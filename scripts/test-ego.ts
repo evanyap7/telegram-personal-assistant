@@ -30,6 +30,8 @@ import {
   toConversationMessages,
 } from "../lib/agent/ego-prompt";
 import { SECURITY_SYSTEM_GUARDRAIL } from "../lib/security";
+import { isEgoEnabled } from "../lib/agent/ego-flag";
+import { strictSetEntry } from "../lib/workout/workout-session";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -463,6 +465,32 @@ section("conversation messages drop the duplicated current turn and end with the
     { role: "assistant", content: "Hi" },
     { role: "user", content: "spent $5" },
   ]);
+});
+
+section("EGO_ORCHESTRATOR flag: on by default, off only when set to off", () => {
+  assert.equal(isEgoEnabled({}), true);
+  assert.equal(isEgoEnabled({ EGO_ORCHESTRATOR: "" }), true);
+  assert.equal(isEgoEnabled({ EGO_ORCHESTRATOR: "on" }), true);
+  assert.equal(isEgoEnabled({ EGO_ORCHESTRATOR: "off" }), false);
+  assert.equal(isEgoEnabled({ EGO_ORCHESTRATOR: " OFF " }), false);
+});
+
+section("workout set shortcut: fires only with an active session and a strict weight x reps match", () => {
+  const state = {
+    day: 1,
+    week: 1,
+    dayTitle: "Day 1 Upper",
+    exIdx: 0,
+    setIdx: 0,
+    logged: [],
+    startedAt: "2026-10-16T12:00:00+08:00",
+  };
+  assert.deepEqual(strictSetEntry("100 x 5", state), { weightKg: 100, reps: 5 });
+  assert.deepEqual(strictSetEntry(" bw x 10 ", state), { weightKg: 0, reps: 10 });
+  assert.equal(strictSetEntry("100 x 5", null), null, "no session means no shortcut");
+  for (const notASet of ["hello", "100", "fix my last set", "what's the weather", "skip squats", ""]) {
+    assert.equal(strictSetEntry(notASet, state), null, `"${notASet}" must go to the orchestrator`);
+  }
 });
 
 // ---- runner ----

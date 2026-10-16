@@ -755,3 +755,28 @@ export async function handleWorkoutSessionMessage(params: {
   await handleLoggedSet(chatId, state, entry);
   return true;
 }
+
+/** A plain "weight x reps" message while a session is active; null otherwise. */
+export function strictSetEntry(
+  text: string,
+  state: WorkoutSessionState | null
+): { weightKg: number; reps: number } | null {
+  return state ? parseSetInput(text.trim()) : null;
+}
+
+/**
+ * Records a plain "weight x reps" message straight into the active session, skipping
+ * the orchestrator (the most frequent message in a workout). Returns true if consumed.
+ */
+export async function handleStrictSetShortcut(params: {
+  chatId: number;
+  text: string;
+}): Promise<boolean> {
+  // Cheap check first: most messages are not sets, so don't load the session for them.
+  if (!parseSetInput(params.text.trim())) return false;
+  const state = await loadSession();
+  const entry = strictSetEntry(params.text, state);
+  if (!state || !entry) return false;
+  await handleLoggedSet(params.chatId, state, entry);
+  return true;
+}
