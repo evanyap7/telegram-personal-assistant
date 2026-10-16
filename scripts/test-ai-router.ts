@@ -604,11 +604,7 @@ section("handle and provider-option helpers", () => {
 });
 
 /** Files still allowed to call google()/perplexity() directly. Task 5 empties this list. */
-const NOT_YET_MIGRATED = [
-  "lib/agent/finance-agent.ts",
-  "lib/agent/workout-agent.ts",
-  "lib/agent/ego-orchestrator.ts",
-];
+const NOT_YET_MIGRATED: string[] = [];
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];

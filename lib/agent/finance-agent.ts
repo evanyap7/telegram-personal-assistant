@@ -1,4 +1,4 @@
-import { google } from "@ai-sdk/google";
+import { recordModelUsage, withModelFallback } from "@/lib/ai/router";
 import { ToolLoopAgent, tool, isStepCount } from "ai";
 import { z } from "zod";
 import {
@@ -276,17 +276,11 @@ export async function runFinanceAgent(params: {
     }),
   };
 
-  const agent = new ToolLoopAgent({
-    model: google("gemini-3.6-flash"),
-    instructions: buildFinanceInstructions({
-      today: new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Singapore" }),
-      targetTransaction: params.targetTransaction,
-      repliedToText: params.repliedToText,
-      inputMode: params.inputMode,
-    }),
-    tools,
-    stopWhen: isStepCount(8),
-    temperature: 0,
+  const instructions = buildFinanceInstructions({
+    today: new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Singapore" }),
+    targetTransaction: params.targetTransaction,
+    repliedToText: params.repliedToText,
+    inputMode: params.inputMode,
   });
 
   // The incoming message is logged to chat history before this runs, so it
@@ -300,7 +294,23 @@ export async function runFinanceAgent(params: {
     { role: "user" as const, content: params.text },
   ];
 
-  const result = await agent.generate({ messages });
+  const { result } = await withModelFallback(
+    "agent",
+    async (handle) => {
+      const agent = new ToolLoopAgent({
+        model: handle.model,
+        instructions,
+        tools,
+        stopWhen: isStepCount(8),
+        providerOptions: handle.providerOptions,
+        ...handle.sampling(0),
+      });
+      const generated = await agent.generate({ messages });
+      await recordModelUsage(handle, generated.totalUsage);
+      return generated;
+    },
+    { canRetry: () => !mutated }
+  );
   const decision = resolveAgentReply({ reply: result.text, mutated, sentinel: NOT_FINANCE });
   if (decision.kind === "decline") {
     return { handled: false };

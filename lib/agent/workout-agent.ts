@@ -1,4 +1,4 @@
-import { google } from "@ai-sdk/google";
+import { recordModelUsage, withModelFallback } from "@/lib/ai/router";
 import { ToolLoopAgent, tool, isStepCount } from "ai";
 import { z } from "zod";
 import { sendTelegramMessage } from "@/lib/telegram";
@@ -429,13 +429,7 @@ export async function runWorkoutAgent(params: {
     }),
   };
 
-  const agent = new ToolLoopAgent({
-    model: google("gemini-3.6-flash"),
-    instructions: buildWorkoutInstructions(plan, state, inputMode),
-    tools,
-    stopWhen: isStepCount(8),
-    temperature: 0,
-  });
+  const instructions = buildWorkoutInstructions(plan, state, inputMode);
 
   let history: Array<{ role: "user" | "assistant"; content: string }> = [];
   try {
@@ -447,9 +441,25 @@ export async function runWorkoutAgent(params: {
     // History is a nicety; the session state is what matters.
   }
 
-  const result = await agent.generate({
-    messages: [...history, { role: "user" as const, content: text }],
-  });
+  const { result } = await withModelFallback(
+    "agent",
+    async (handle) => {
+      const agent = new ToolLoopAgent({
+        model: handle.model,
+        instructions,
+        tools,
+        stopWhen: isStepCount(8),
+        providerOptions: handle.providerOptions,
+        ...handle.sampling(0),
+      });
+      const generated = await agent.generate({
+        messages: [...history, { role: "user" as const, content: text }],
+      });
+      await recordModelUsage(handle, generated.totalUsage);
+      return generated;
+    },
+    { canRetry: () => !mutated }
+  );
   if (handedOff) return { handled: true };
   const decision = resolveAgentReply({ reply: result.text, mutated, sentinel: NOT_WORKOUT });
   if (decision.kind === "decline") return { handled: false };

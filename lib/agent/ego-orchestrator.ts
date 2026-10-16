@@ -1,4 +1,4 @@
-import { google } from "@ai-sdk/google";
+import { recordModelUsage, withModelFallback } from "@/lib/ai/router";
 import { ToolLoopAgent, isStepCount } from "ai";
 import { runFinanceAgent } from "@/lib/agent/finance-agent";
 import { runWorkoutAgent } from "@/lib/agent/workout-agent";
@@ -128,24 +128,36 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
       : undefined,
   };
 
-  const agent = new ToolLoopAgent({
-    model: google("gemini-3.6-flash"),
-    instructions: buildEgoInstructions({
-      now: input.messageDate,
-      inputMode,
-      context,
-      workoutLine: describeWorkoutContext(workoutState),
-      hasPendingImage: input.hasPendingImage,
-      repliedToPhoto: Boolean(input.repliedPhotoFileIds?.length),
-    }),
-    tools,
-    stopWhen: isStepCount(10),
-    temperature: 0,
+  const instructions = buildEgoInstructions({
+    now: input.messageDate,
+    inputMode,
+    context,
+    workoutLine: describeWorkoutContext(workoutState),
+    hasPendingImage: input.hasPendingImage,
+    repliedToPhoto: Boolean(input.repliedPhotoFileIds?.length),
   });
 
   let result;
   try {
-    result = await agent.generate({ messages: toConversationMessages(input.history, text) });
+    ({ result } = await withModelFallback(
+      "agent",
+      async (handle) => {
+        const agent = new ToolLoopAgent({
+          model: handle.model,
+          instructions,
+          tools,
+          stopWhen: isStepCount(10),
+          providerOptions: handle.providerOptions,
+          ...handle.sampling(0),
+        });
+        const generated = await agent.generate({
+          messages: toConversationMessages(input.history, text),
+        });
+        await recordModelUsage(handle, generated.totalUsage);
+        return generated;
+      },
+      { canRetry: () => toolsUsed.length === 0 && !tracker.notified }
+    ));
   } catch (error) {
     // A tool may already have changed something and messaged the user; a generic
     // "try again" from the route would invite a duplicate.

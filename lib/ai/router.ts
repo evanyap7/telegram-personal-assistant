@@ -17,7 +17,8 @@ import { createSheetsLedgerStore } from "./sheets-store";
 
 type GenerateTextParams = Parameters<typeof generateText>[0];
 export type RoutedParams = Omit<GenerateTextParams, "model">;
-type ProviderOptions = Record<string, Record<string, unknown>>;
+/** Derived from the AI SDK so provider option values stay JSON-compatible. */
+type ProviderOptions = NonNullable<GenerateTextParams["providerOptions"]>;
 
 /** Claude 5.5 models think by default, and thinking counts toward max tokens, so tiny limits cut answers off. */
 export const CLAUDE_MIN_OUTPUT_TOKENS = 4096;
