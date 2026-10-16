@@ -6,6 +6,7 @@
  * Usage: npm run check:ai-live
  */
 import { anthropic } from "@ai-sdk/anthropic";
+import { perplexity } from "@ai-sdk/perplexity";
 import { generateText } from "ai";
 import { createRouter, buildHandle } from "../lib/ai/router";
 import { loadEnvLocal } from "./bench/util";
@@ -30,8 +31,9 @@ async function run() {
       checkWarnings: async () => {},
       alertDepleted: async () => {},
     },
-    available: () => ({ anthropic: true, perplexity: false, gemini: false }),
-    makeModel: (c) => claudeModel(c.modelId),
+    available: () => ({ anthropic: true, perplexity: Boolean(process.env.PERPLEXITY_API_KEY), gemini: false }),
+    makeModel: (c) =>
+      c.provider === "perplexity" ? (perplexity(c.modelId) as never) : claudeModel(c.modelId),
     generate: generateText,
   });
 
@@ -88,8 +90,28 @@ async function run() {
     console.error("  ❌ vision:", error instanceof Error ? error.message : error);
   }
 
+  // Search: Perplexity Sonar through the router (skipped when no key is set).
+  if (process.env.PERPLEXITY_API_KEY) {
+    try {
+      const handle = buildHandle({ provider: "perplexity", modelId: "sonar" }, "search", (cand) =>
+        perplexity(cand.modelId) as never
+      );
+      const result = await router.runText(handle, {
+        prompt: "In one short sentence, what is the capital of France?",
+        maxOutputTokens: 200,
+      });
+      if (!/paris/i.test(result.text)) throw new Error(`unexpected reply: ${result.text}`);
+      console.log(`  ✅ sonar [search] -> "${result.text.trim().slice(0, 60)}"`);
+    } catch (error) {
+      failed = true;
+      console.error("  ❌ sonar:", error instanceof Error ? error.message : error);
+    }
+  } else {
+    console.log("  ⏭️  PERPLEXITY_API_KEY not set, skipping the Sonar check.");
+  }
+
   if (failed) process.exit(1);
-  console.log("\n  🎉 Claude tiers respond through the router.\n");
+  console.log("\n  🎉 Claude tiers and search respond through the router.\n");
 }
 
 run().catch((err) => {

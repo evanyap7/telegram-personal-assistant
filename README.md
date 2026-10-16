@@ -4,7 +4,7 @@
 
 Hey! 👋 This is my personal Telegram assistant bot that essentially runs my daily life — handling my expenses, scheduling, nagging to-dos, email drafts, habit streaks, bill splitting, and memory recall without me ever having to open five different apps.
 
-I built this full-stack serverless bot using **Next.js**, **TypeScript**, **Google Gemini 3.6 Flash**, **Perplexity Sonar**, the **Vercel AI SDK**, and **Vercel**. It hooks directly into my **Telegram**, **Google Sheets**, **Google Calendar**, and **Gmail**.
+I built this full-stack serverless bot using **Next.js**, **TypeScript**, **Anthropic Claude (Haiku, Sonnet, Opus)**, **Perplexity Sonar**, the **Vercel AI SDK**, and **Vercel**. It hooks directly into my **Telegram**, **Google Sheets**, **Google Calendar**, and **Gmail**.
 
 It started as a rigid intent router (one model call picks one fixed action). For finance and workouts it is now **agentic**: tool-calling agents search my data, decide what to change, and undo it if I ask, so I can just say *"change that to $15"* or *"delete my last set"* instead of editing a Google Sheet by hand. See [Agentic layer](#-agentic-layer-tool-calling-agents).
 
@@ -44,7 +44,7 @@ Say `workout` and the bot reads today's day from my PH3 training program sheet, 
 - **Free Slots Finder (`/freeslots [date]`)**: Ask *"when am I free tomorrow?"* or `/freeslots` to scan personal and work calendars and compute available open windows between 9 AM and 9 PM SGT.
 - **Natural Language Rescheduling**: Say *"move my gym session to 5pm tomorrow"* or *"reschedule dentist to next Monday"* — automatically shifts the event in Google Calendar without manual entry.
 - **Leave-Now Travel Alerts**: Analyzes upcoming event locations and calculates Singapore transit times and buffer intervals (e.g. 45m for Changi, 25m for CBD, 40m for NUS, 0m for Zoom/Meet), pinging you when it's time to head out.
-- **Flyer & Email Screenshot OCR**: Screenshot an event flyer or meeting invite and send it to the bot — Gemini extracts start/end times and location into Google Calendar.
+- **Flyer & Email Screenshot OCR**: Screenshot an event flyer or meeting invite and send it to the bot — Claude extracts start/end times and location into Google Calendar.
 - **Upcoming Event Reminders**: Before an event starts, receive a Telegram ping with countdown, venue location, and a direct Google Calendar link.
 
 ### 4. ⏰ Persistent 30-Minute To-Do Reminders (The "Nag" Feature)
@@ -122,16 +122,16 @@ Automated scheduled summaries delivered to Telegram:
 
 ---
 
-## 🔁 Claude fallback and credit tracking
+## 🔁 Models and credit tracking
 
-EGO normally runs on Gemini (and Perplexity for search). It tracks how much of each balance is left and moves work to Claude when a provider is almost out.
+EGO runs every text job on Claude. Haiku handles simple jobs (classifying and parsing), Sonnet runs the orchestrator, agents and image reading, and Opus is the last resort when a cheaper tier fails or runs out. Web search uses Perplexity Sonar; when Perplexity is out, search falls back to Claude and says it has no live web data.
 
-- **Tell it your balances:** `/credits set gemini 25.00` and `/credits set perplexity 10.00` (the current dashboard balance in USD). `/credits` shows the estimate, the current mode and what Claude has cost.
-- **When it switches:** a provider at 5% or less of its balance (or one that reports its credits depleted) has its work moved to Claude. When both are at 5% or less, everything moves and EGO tells you in Telegram. Claude Haiku handles simple jobs, Sonnet runs the orchestrator, agents and image reading, and Opus is the last resort. It switches back when you re-set a balance after a top-up.
-- **Voice notes always use Gemini** (Claude cannot take audio); when Gemini is out, EGO asks you to type instead.
-- **In Claude mode, web search answers come from Claude's own knowledge** and say so.
-- **Setup:** set `ANTHROPIC_API_KEY` in `.env.local` and in Vercel. The first `/credits` (or the first model call) creates the `AICredits` and `AIUsage` sheets.
-- **Tests:** `npm run test:ai-router` (offline), `npm run check:ai-live` (a few cents), and `EGO_EVAL_MODEL=anthropic:claude-sonnet-5-5 npm run eval:ego`.
+- **Voice notes use Google (Gemini) transcription**, because Claude and Perplexity cannot take audio. It is the only thing Gemini does; when it is out, EGO asks you to type instead.
+- **Keys:** `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, and `GOOGLE_GENERATIVE_AI_API_KEY` (voice only; leave it out if you drop voice notes).
+- **Tell it your balances:** `/credits set claude 20.00` and `/credits set perplexity 8.94` (the current dashboard balance in USD). `/credits` shows the estimated balances and what each has cost.
+- **Warnings:** EGO messages you in Telegram once at 10% left and once at 5% left for each of Claude and Perplexity. If Claude reports its credits depleted, you get an urgent alert (at most once every 30 minutes). Re-setting a balance after a top-up re-arms the warnings.
+- **Setup:** the first `/credits` (or the first model call) creates the `AICredits` and `AIUsage` sheets.
+- **Tests:** `npm run test:ai-router` (offline), `npm run check:ai-live` (a few cents), and `npm run eval:ego` (defaults to Sonnet; set `EGO_EVAL_MODEL=claude-haiku-5-5` to try Haiku).
 
 ## 🧠 The EGO orchestrator
 
@@ -166,7 +166,7 @@ How it fits together:
 | --- | --- |
 | **Backend Framework** | Next.js (App Router, Route Handlers), Node.js, TypeScript |
 | **Hosting & Serverless** | Vercel Serverless Functions |
-| **AI Models** | Google Gemini 3.6 Flash & Perplexity Sonar via Vercel AI SDK |
+| **AI Models** | Anthropic Claude (Haiku, Sonnet, Opus), Perplexity Sonar search and Google speech transcription for voice notes, via Vercel AI SDK |
 | **Agents** | Vercel AI SDK `ToolLoopAgent` with Zod-typed tools (finance + workout) |
 | **Modular Dispatcher** | Intent Registry & Domain Handlers (`lib/handlers/`) |
 | **Universal Undo** | Single-use undo tokens persisted in the `PendingActions` sheet (survive serverless cold starts) for calendar, todo, finance, workout and subscription actions |
