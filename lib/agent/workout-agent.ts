@@ -4,6 +4,7 @@ import { z } from "zod";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import { getRecentChatHistory } from "@/lib/chat-history";
+import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
 import { clearPH3Session, getDayPlan, type PH3DayPlan } from "@/lib/workout/ph3-program";
 import {
   buildSetPrompt,
@@ -101,13 +102,18 @@ function resolveSet(
     : { setIdx };
 }
 
-function buildInstructions(plan: PH3DayPlan, state: WorkoutSessionState): string {
-  return `You are the workout agent inside a personal Telegram assistant. The user is in the middle of a guided lifting session following a fixed program (PH3). You keep the session log correct by calling tools, and you understand natural language about it: logging, fixing, deleting, skipping, reordering.
+export function buildWorkoutInstructions(
+  plan: PH3DayPlan,
+  state: WorkoutSessionState,
+  inputMode?: InputMode
+): string {
+  const spoken = spokenInputNote(inputMode);
+  return `You are the workout agent inside EGO, a personal Telegram assistant. The user is in the middle of a guided lifting session following a fixed program (PH3). You keep the session log correct by calling tools, and you understand natural language about it: logging, fixing, deleting, skipping, reordering.
 
 Session state when the message arrived:
 ${JSON.stringify(snapshot(plan, state))}
 
-How to work:
+${spoken ? `${spoken}\n\n` : ""}How to work:
 - The program is the default plan, but the user's words override it. They can skip sets or exercises, do exercises in a different order, redo a set, or add an extra set.
 - Weights are in kg. "bw" means bodyweight (weightKg 0).
 - "Skip" means they won't do it. "Delete" or "remove" on a set that is already logged means erase the entry: if they also say they'll redo it, use redo: true, otherwise it is skipped. "Delete" on a set not yet done means skip it.
@@ -126,8 +132,9 @@ export type WorkoutAgentResult = { handled: false } | { handled: true };
 export async function runWorkoutAgent(params: {
   chatId: number;
   text: string;
+  inputMode?: InputMode;
 }): Promise<WorkoutAgentResult> {
-  const { chatId, text } = params;
+  const { chatId, text, inputMode } = params;
   const state = await loadSession();
   if (!state) return { handled: false };
   const plan = await getDayPlan(state.day);
@@ -423,7 +430,7 @@ export async function runWorkoutAgent(params: {
 
   const agent = new ToolLoopAgent({
     model: google("gemini-3.6-flash"),
-    instructions: buildInstructions(plan, state),
+    instructions: buildWorkoutInstructions(plan, state, inputMode),
     tools,
     stopWhen: isStepCount(8),
     temperature: 0,

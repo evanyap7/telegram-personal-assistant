@@ -19,6 +19,7 @@ import { buildUndoInlineKeyboard, registerUndoAction } from "@/lib/undo";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import type { FormattedChatTurn } from "@/lib/chat-history";
+import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
 
 const MAX_SEARCH_RESULTS = 15;
 const NOT_FINANCE = "NOT_FINANCE";
@@ -35,24 +36,26 @@ function compactTransaction(t: FinanceTransaction) {
   };
 }
 
-function buildInstructions(input: {
+export function buildFinanceInstructions(input: {
   today: string;
   targetTransaction: FinanceTransaction | null;
   repliedToText?: string;
+  inputMode?: InputMode;
 }): string {
   const focus = input.targetTransaction
     ? `The transaction the user most likely means by "this", "that" or "the last one" (they swipe-replied to it, or it is the most recent):\n${JSON.stringify(
         compactTransaction(input.targetTransaction)
       )}`
     : "There is no obvious 'current' transaction.";
+  const spoken = spokenInputNote(input.inputMode);
 
-  return `You are the finance agent inside a personal Telegram assistant. The user tracks money in a Google Sheet. You fix mistakes and answer questions by calling tools.
+  return `You are the finance agent inside EGO, a personal Telegram assistant. The user tracks money in a Google Sheet. You log, fix and answer questions by calling tools.
 
 Today is ${input.today} (Singapore time). Default currency is SGD.
 
 ${focus}
 ${input.repliedToText ? `The user is replying to this message: "${input.repliedToText}"` : ""}
-
+${spoken ? `\n${spoken}\n` : ""}
 How to work:
 - Never guess a transactionId. Take it from the focus transaction above or from searchTransactions.
 - To edit or delete something, find it first. If several transactions plausibly match and the user's words don't settle it, ask which one instead of picking.
@@ -63,6 +66,21 @@ How to work:
 - Only report what tools returned. If a tool fails, say so plainly.
 - If the request has nothing to do with money, transactions or the budget, reply with exactly: ${NOT_FINANCE}
 - Reply in plain text, short, no Markdown tables. Amounts as $12.50.
+
+Logging rules:
+- Treat "$" as SGD unless another currency is named. Use uppercase three-letter currency codes.
+- Use a sensible category: Dining, Transport, Groceries, Shopping, Entertainment, Health, Education, Utilities, Salary, or Other.
+- Only pass a date to addTransaction or updateTransaction when the user's current message names a specific date or relative day ("yesterday", "last Friday", "on 3 Sep"). Otherwise omit it.
+- If the amount is missing, ask for it instead of guessing.
+- NEVER invent dishes, items, drinks, products or merchants. If the input is generic ("spent $10", "paid $15"), the description is "Expense" (or "Income") and the category is "Other". Only use a specific description when the user said it ("spent $5 on iced latte" is "iced latte", Dining).
+- If addTransaction returns a budgetNotice, add it on its own line after your confirmation.
+- A user who replies to a transaction with what it was ("supper", "it was lunch", "make it $12", "it was $12 not $6", "change category to Dining") wants that transaction edited, not a new one logged.
+
+Budget rules:
+- "set my budget to $600" or "my budget is $450 a month": setBudget with that amount and no category.
+- "increase my budget to $700 instead", "lower the budget to 400": setBudget with the NEW total, not the difference.
+- "cap dining at $150", "limit shopping to $100 a month": setBudget with the amount and the category.
+- Asking to view the budget is getBudgetStatus, not setBudget.
 
 ${SECURITY_SYSTEM_GUARDRAIL}`;
 }
@@ -78,6 +96,7 @@ export async function runFinanceAgent(params: {
   targetTransaction: FinanceTransaction | null;
   repliedToText?: string;
   history: FormattedChatTurn[];
+  inputMode?: InputMode;
 }): Promise<FinanceAgentResult> {
   const { chatId, userId } = params;
   let lastUndoToken: string | null = null;
@@ -193,7 +212,12 @@ export async function runFinanceAgent(params: {
           data: { transactionId: added.transactionId },
         });
         mutated = true;
-        return { ok: true, transactionId: added.transactionId, date: added.timestamp };
+        return {
+          ok: true,
+          transactionId: added.transactionId,
+          date: added.timestamp,
+          budgetNotice: added.budgetStatus?.formattedNotice ?? null,
+        };
       },
     }),
 
@@ -240,10 +264,11 @@ export async function runFinanceAgent(params: {
 
   const agent = new ToolLoopAgent({
     model: google("gemini-3.6-flash"),
-    instructions: buildInstructions({
+    instructions: buildFinanceInstructions({
       today: new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Singapore" }),
       targetTransaction: params.targetTransaction,
       repliedToText: params.repliedToText,
+      inputMode: params.inputMode,
     }),
     tools,
     stopWhen: isStepCount(8),

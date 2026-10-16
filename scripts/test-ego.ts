@@ -21,6 +21,8 @@ import {
   type EgoToolDeps,
 } from "../lib/agent/ego-tools";
 import type { AssistantIntent } from "../lib/assistant-intent";
+import { buildFinanceInstructions } from "../lib/agent/finance-agent";
+import { buildWorkoutInstructions } from "../lib/agent/workout-agent";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -327,6 +329,58 @@ section("webSearch returns the answer without notifying; pending image notifies 
   });
   assert.equal(noImg.ok, false);
   assert.equal(none.calls.notified, 0);
+});
+
+section("finance agent instructions: voice note only for voice, plus ported finance rules", () => {
+  const base = { today: "2026-10-16", targetTransaction: null };
+  const voice = buildFinanceInstructions({ ...base, inputMode: "voice" });
+  const text = buildFinanceInstructions({ ...base, inputMode: "text" });
+  const unset = buildFinanceInstructions(base);
+  assert.ok(voice.includes(SPOKEN_INPUT_NOTE));
+  assert.ok(!text.includes(SPOKEN_INPUT_NOTE));
+  assert.ok(!unset.includes(SPOKEN_INPUT_NOTE));
+  assert.match(text, /inside EGO/);
+  assert.match(text, /treat "\$" as SGD/i);
+  assert.match(text, /NEVER invent/);
+  assert.match(text, /budgetNotice/);
+  assert.match(text, /NOT_FINANCE/);
+});
+
+section("workout agent instructions: voice note only for voice", () => {
+  const plan = {
+    day: 1,
+    week: 1,
+    blockTab: "Accumulation Block",
+    dayTitle: "Day 1 Upper",
+    isRestDay: false,
+    exercises: [
+      {
+        exercise: "Bench",
+        sets: [1, 2].map((n) => ({
+          setNumber: n,
+          weight: "",
+          reps: "",
+          weightCell: `A${n}`,
+          repsCell: `B${n}`,
+        })),
+      },
+    ],
+  };
+  const state = {
+    day: 1,
+    week: 1,
+    dayTitle: "Day 1 Upper",
+    exIdx: 0,
+    setIdx: 0,
+    logged: [],
+    startedAt: "2026-10-16T12:00:00+08:00",
+  };
+  const voice = buildWorkoutInstructions(plan, state, "voice");
+  const text = buildWorkoutInstructions(plan, state, "text");
+  assert.ok(voice.includes(SPOKEN_INPUT_NOTE));
+  assert.ok(!text.includes(SPOKEN_INPUT_NOTE));
+  assert.match(text, /inside EGO/);
+  assert.match(text, /NOT_WORKOUT/);
 });
 
 // ---- runner ----
