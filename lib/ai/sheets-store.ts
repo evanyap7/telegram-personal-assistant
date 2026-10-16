@@ -14,9 +14,23 @@ const CREDITS_VALUES = [
   ["", "", "", "", ""],
 ];
 
-/** The first version of this sheet had a different row 2 (and a "meta" row); row 2 is the tell. */
-export function needsLayoutMigration(a2: string | undefined): boolean {
-  return a2 !== "anthropic";
+/**
+ * The first version of this sheet had a different row 2 (and a "meta" row). Returns the
+ * rows to write for A1:E4, or null when nothing should change. Only an empty sheet or the
+ * old layout is touched; anything else is left alone rather than wiped. The old Perplexity
+ * row used the same columns, so its balance carries over.
+ */
+export function migrateCreditsRows(old: string[][]): string[][] | null {
+  const a2 = old[0]?.[0];
+  if (a2 === "anthropic") return null;
+  if (a2 !== undefined && a2 !== "" && a2 !== "gemini") return null;
+  const keep = old[1]?.[0] === "perplexity" ? old[1] : [];
+  return [
+    CREDITS_VALUES[0],
+    CREDITS_VALUES[1],
+    ["perplexity", keep[1] ?? "", keep[2] ?? "", "0", ""],
+    CREDITS_VALUES[3],
+  ];
 }
 
 function spreadsheetId(): string {
@@ -48,14 +62,15 @@ async function ensureSheets(): Promise<void> {
   } else {
     const head = await sheets.spreadsheets.values.get({
       spreadsheetId: id,
-      range: `${CREDITS_SHEET}!A2:A2`,
+      range: `${CREDITS_SHEET}!A2:E3`,
     });
-    if (needsLayoutMigration(head.data.values?.[0]?.[0])) {
+    const migrated = migrateCreditsRows((head.data.values ?? []) as string[][]);
+    if (migrated) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: id,
         range: `${CREDITS_SHEET}!A1:E4`,
         valueInputOption: "RAW",
-        requestBody: { values: CREDITS_VALUES },
+        requestBody: { values: migrated },
       });
     }
   }

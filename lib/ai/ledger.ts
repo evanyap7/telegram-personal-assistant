@@ -89,7 +89,11 @@ export function createLedger(deps: {
   notify: (text: string) => Promise<void>;
 }): Ledger {
   const { store, now, notify } = deps;
-  let cache: { at: number; statuses: Record<CreditProvider, BalanceStatus> } | null = null;
+  let cache: {
+    at: number;
+    setAt: Record<CreditProvider, string | undefined>;
+    statuses: Record<CreditProvider, BalanceStatus>;
+  } | null = null;
 
   async function loadStatuses(): Promise<Record<CreditProvider, BalanceStatus>> {
     const nowMs = now().getTime();
@@ -103,11 +107,20 @@ export function createLedger(deps: {
         spentUsd: balance ? sumSpent(usage, provider, balance.setAt) : 0,
       };
     }
-    cache = { at: nowMs, statuses };
+    cache = {
+      at: nowMs,
+      setAt: { anthropic: balances.anthropic?.setAt, perplexity: balances.perplexity?.setAt },
+      statuses,
+    };
     return statuses;
   }
 
   async function checkWarnings(): Promise<void> {
+    // Balances are one cheap read; if another instance re-set one, the cached spend is stale.
+    if (cache) {
+      const fresh = await store.readBalances();
+      if (CREDIT_PROVIDERS.some((p) => fresh[p]?.setAt !== cache?.setAt[p])) cache = null;
+    }
     const statuses = await loadStatuses();
     const alertState = await store.readAlertState();
     for (const provider of CREDIT_PROVIDERS) {

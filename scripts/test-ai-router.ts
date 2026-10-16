@@ -34,7 +34,7 @@ import {
   mergeProviderOptions,
   type RouterDeps,
 } from "../lib/ai/router";
-import { needsLayoutMigration } from "../lib/ai/sheets-store";
+import { migrateCreditsRows } from "../lib/ai/sheets-store";
 import { NO_WEB_FOOTER, searchSystemPrompt } from "../lib/search";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
@@ -344,11 +344,43 @@ section("ledger: /credits text shows percent left, unset hints and the footer", 
   assert.match(text, /10% and 5%/);
 });
 
-section("sheet layout: the old Gemini layout is migrated, the new one is kept", () => {
-  assert.equal(needsLayoutMigration("gemini"), true);
-  assert.equal(needsLayoutMigration(undefined), true);
-  assert.equal(needsLayoutMigration(""), true);
-  assert.equal(needsLayoutMigration("anthropic"), false);
+section("sheet layout: the old Gemini layout is migrated and keeps the Perplexity balance", () => {
+  const old = [
+    ["gemini", "25", "2026-10-01T00:00:00.000Z", "0", ""],
+    ["perplexity", "8.94", "2026-10-02T00:00:00.000Z", "5", "x"],
+  ];
+  const migrated = migrateCreditsRows(old);
+  assert.ok(migrated);
+  assert.deepEqual(migrated[1], ["anthropic", "", "", "0", ""]);
+  assert.deepEqual(migrated[2], ["perplexity", "8.94", "2026-10-02T00:00:00.000Z", "0", ""]);
+});
+
+section("sheet layout: the new layout and unrecognised sheets are left alone", () => {
+  assert.equal(migrateCreditsRows([["anthropic", "20", "t", "0", ""]]), null);
+  assert.equal(migrateCreditsRows([["something else", "1"]]), null, "never wipe a sheet we do not recognise");
+  const empty = migrateCreditsRows([]);
+  assert.ok(empty, "an empty sheet gets the headers");
+  assert.deepEqual(empty[1], ["anthropic", "", "", "0", ""]);
+});
+
+section("ledger: another instance's /credits set is seen within the cache window", async () => {
+  const m = memoryStore();
+  const c = clock("2026-10-17T00:00:00.000Z");
+  const notesA: string[] = [];
+  const notesB: string[] = [];
+  const a = createLedger({ store: m.store, now: c.now, notify: async (t) => void notesA.push(t) });
+  const b = createLedger({ store: m.store, now: c.now, notify: async (t) => void notesB.push(t) });
+  await a.setBalance("anthropic", 100);
+  c.advance(1000);
+  await a.recordUsage(row("anthropic", 97, c.iso()));
+  await b.checkWarnings(); // b caches Claude at 3% left
+  assert.equal(notesB.length, 1);
+  c.advance(1000);
+  await a.setBalance("anthropic", 50); // top-up: warnings re-armed
+  c.advance(1000);
+  await b.checkWarnings(); // still inside b's 60s cache
+  assert.equal(notesB.length, 1, "no false warning from stale cached spend");
+  assert.equal(m.alerts.anthropic.warnedLevel, 0, "the re-armed level is untouched");
 });
 
 function routerHarness(o: {
@@ -634,6 +666,7 @@ const GEMINI_ALLOWED_IN = [
   "lib/ai/mode.ts",
   "lib/ai/pricing.ts",
   "lib/ai/router.ts",
+  "lib/ai/sheets-store.ts", // recognises the legacy sheet layout by its "gemini" row
   "scripts/ai-live-check.ts",
 ];
 
