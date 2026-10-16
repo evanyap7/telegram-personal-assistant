@@ -16,13 +16,15 @@ import { EGO_EVAL_CASES } from "./ego-eval-cases";
 import { loadEnvLocal } from "./bench/util";
 
 const PASS_THRESHOLD = 0.85;
+/** Override to compare models, e.g. EGO_EVAL_MODEL=gemini-flash-lite-latest. Production uses gemini-3.6-flash. */
+const EVAL_MODEL = process.env.EGO_EVAL_MODEL ?? "gemini-3.6-flash";
 
 async function run() {
   loadEnvLocal();
   const dryRun = process.argv.includes("--dry-run") || !process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 
   console.log("\n=======================================================");
-  console.log(`  🧭 EGO Routing Eval ${dryRun ? "(dry run)" : "(live model)"}`);
+  console.log(`  🧭 EGO Routing Eval ${dryRun ? "(dry run)" : `(live: ${EVAL_MODEL})`}`);
   console.log("=======================================================\n");
 
   const used: string[] = [];
@@ -54,7 +56,7 @@ async function run() {
   for (const c of EGO_EVAL_CASES) {
     used.length = 0;
     const agent = new ToolLoopAgent({
-      model: google("gemini-3.6-flash"),
+      model: google(EVAL_MODEL),
       instructions: buildEgoInstructions({
         now: new Date(),
         inputMode: c.inputMode ?? "text",
