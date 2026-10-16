@@ -1,6 +1,5 @@
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
 import { z } from "zod";
+import { generateTextRouted } from "../ai/router";
 import {
   buildWorkoutPlanForLocation,
   calculateEstimated1RM,
@@ -62,8 +61,6 @@ export async function parseWorkoutText(
   const weekMatch = text.match(/week\s+(\d+)/i);
   const week = weekMatch ? parseInt(weekMatch[1], 10) : undefined;
 
-  // Use Gemini Flash with structured prompt to reliably parse all exercise sets
-  const model = google("gemini-2.5-flash");
   const prompt = [
     "You are an expert strength & conditioning data extraction assistant.",
     "Parse the following user workout log into a structured list of sets with exercise name, set number, weight in kg, and reps.",
@@ -80,14 +77,13 @@ export async function parseWorkoutText(
   ].join("\n");
 
   try {
-    const { text: responseText } = await generateText({
-      model,
+    const { result: parsedResult } = await generateTextRouted("parse", {
       prompt,
       system:
         "Respond with a single raw JSON object matching: { week?: number, location?: 'school'|'csc', routine: string, sets: [{ exercise: string, setNumber: number, weightKg: number, reps: number, isDropSet: boolean, isTempo: boolean, notes?: string }] }",
     });
 
-    const cleaned = responseText
+    const cleaned = parsedResult.text
       .trim()
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/i, "");

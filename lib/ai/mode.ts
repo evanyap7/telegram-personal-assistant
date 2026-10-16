@@ -116,7 +116,7 @@ export function classifyError(error: unknown): ErrorKind {
 // ---- candidate selection ----
 
 const gemini = (modelId: string): Candidate => ({ provider: "gemini", modelId });
-const perplexity = (modelId: string): Candidate => ({ provider: "perplexity", modelId });
+const perplexityCandidate = (modelId: string): Candidate => ({ provider: "perplexity", modelId });
 const claude = (modelId: string): Candidate => ({ provider: "anthropic", modelId });
 
 const HAIKU = "claude-haiku-5-5";
@@ -128,7 +128,7 @@ const PRIMARY: Record<Role, Candidate[]> = {
   parse: [gemini("gemini-flash-lite-latest"), gemini("gemini-3.6-flash")],
   agent: [gemini("gemini-3.6-flash")],
   vision: [gemini("gemini-3.6-flash")],
-  search: [perplexity("sonar"), gemini("gemini-3.6-flash")],
+  search: [perplexityCandidate("sonar"), gemini("gemini-3.6-flash")],
   audio: [gemini("gemini-3.6-flash")],
 };
 

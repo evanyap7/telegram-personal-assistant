@@ -1,6 +1,5 @@
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
 import { z } from "zod";
+import { generateTextRouted } from "./ai/router";
 
 const singaporeDateSchema = z.string().date();
 
@@ -122,8 +121,8 @@ export async function parseImageAssistantIntent(input: {
   mediaType?: string;
   images?: AssistantImageInput[];
 }): Promise<ImageAssistantIntent> {
-  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    throw new Error("GOOGLE_GENERATIVE_AI_API_KEY is missing.");
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    throw new Error("GOOGLE_GENERATIVE_AI_API_KEY or ANTHROPIC_API_KEY is missing.");
   }
 
   const imageList: AssistantImageInput[] =
@@ -141,8 +140,7 @@ export async function parseImageAssistantIntent(input: {
     timeZone: "Asia/Singapore",
   });
 
-  const result = await generateText({
-    model: google("gemini-3.6-flash"),
+  const { result } = await generateTextRouted("vision", {
     system: `You are a strict image-to-JSON parser for EGO, a private Telegram personal assistant.
 
 Read the user-provided image(s) and instruction. Return ONLY one valid JSON object.

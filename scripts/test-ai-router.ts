@@ -25,6 +25,9 @@ import {
   type UsageRow,
   type LedgerState,
 } from "../lib/ai/ledger";
+import fs from "node:fs";
+import path from "node:path";
+import { NO_WEB_FOOTER, searchSystemPrompt } from "../lib/search";
 import {
   CLAUDE_MIN_OUTPUT_TOKENS,
   NoModelAvailableError,
@@ -598,6 +601,44 @@ section("handle and provider-option helpers", () => {
     { anthropic: { a: 1, b: 2 }, google: { c: 3 } }
   );
   assert.equal(mergeProviderOptions(undefined, undefined), undefined);
+});
+
+/** Files still allowed to call google()/perplexity() directly. Task 5 empties this list. */
+const NOT_YET_MIGRATED = [
+  "lib/agent/finance-agent.ts",
+  "lib/agent/workout-agent.ts",
+  "lib/agent/ego-orchestrator.ts",
+];
+
+function sourceFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...sourceFiles(full));
+    else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+section("no file outside the router picks a Gemini/Perplexity model directly", () => {
+  const root = process.cwd();
+  const offenders: string[] = [];
+  for (const dir of ["app", "lib"]) {
+    for (const file of sourceFiles(path.join(root, dir))) {
+      const rel = path.relative(root, file);
+      if (rel === "lib/ai/router.ts" || NOT_YET_MIGRATED.includes(rel)) continue;
+      const text = fs.readFileSync(file, "utf8");
+      if (/\b(google|perplexity)\(\s*["'`]/.test(text)) offenders.push(rel);
+    }
+  }
+  assert.deepEqual(offenders, [], "route model calls through lib/ai/router");
+});
+
+section("search prompts differ by provider and Claude is honest about having no web access", () => {
+  assert.match(searchSystemPrompt("perplexity"), /3-4 sentences/);
+  assert.match(searchSystemPrompt("gemini"), /2-3 sentences/);
+  assert.match(searchSystemPrompt("anthropic"), /cannot browse/i);
+  assert.match(NO_WEB_FOOTER, /no live web data/i);
 });
 
 // ---- runner ----

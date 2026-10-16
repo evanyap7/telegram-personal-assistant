@@ -8,8 +8,7 @@ import { parseEmailTransaction } from "@/lib/paylah-sync";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { safeCompare } from "@/lib/security";
 import { parseSingaporeDate } from "@/lib/date-parser";
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
+import { generateTextRouted } from "@/lib/ai/router";
 
 const VALID_CATEGORIES = [
   "Dining",
@@ -247,8 +246,7 @@ async function inferCategoryWithAI(
   }
 
   try {
-    const result = await generateText({
-      model: google("gemini-flash-lite-latest"),
+    const { result } = await generateTextRouted("classifier", {
       system: `You are a financial transaction categorizer.
 Available categories: Dining, Transport, Groceries, Shopping, Entertainment, Utilities, Healthcare, General.
 Given a merchant name, optional item purchased, and optional category from Apple Pay, output ONLY the single best category name from the list. Do not add punctuation or explanation.`,

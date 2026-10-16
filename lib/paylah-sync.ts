@@ -8,8 +8,7 @@ import {
   releaseExternalId,
 } from "./finance";
 import { sendTelegramMessage } from "./telegram";
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
+import { generateTextRouted } from "./ai/router";
 import { SECURITY_SYSTEM_GUARDRAIL } from "./security";
 import { parseSingaporeDate } from "./date-parser";
 
@@ -510,22 +509,8 @@ Available categories: Dining, Transport, Groceries, Shopping, Entertainment, Uti
 Output ONLY the category name.`;
     const prompt = `Merchant: "${merchant}"\nItem: "${item || "None"}"`;
 
-    let text = "";
-    try {
-      const result = await generateText({
-        model: google("gemini-flash-lite-latest"),
-        system: systemPrompt,
-        prompt,
-      });
-      text = result.text;
-    } catch {
-      const result = await generateText({
-        model: google("gemini-3.6-flash"),
-        system: systemPrompt,
-        prompt,
-      });
-      text = result.text;
-    }
+    const { result } = await generateTextRouted("classifier", { system: systemPrompt, prompt });
+    const text = result.text;
 
     const matched = VALID_CATEGORIES.find(
       (c) => c.toLowerCase() === text.trim().toLowerCase()
@@ -609,26 +594,8 @@ export async function parseEmailTransaction(
       3000
     )}\n"""`;
 
-    let responseText = "";
-    try {
-      const result = await generateText({
-        model: google("gemini-flash-lite-latest"),
-        system: systemPrompt,
-        prompt,
-      });
-      responseText = result.text;
-    } catch (liteErr) {
-      console.warn(
-        "gemini-flash-lite-latest failed in parseEmailTransaction, falling back to gemini-3.6-flash:",
-        liteErr
-      );
-      const result = await generateText({
-        model: google("gemini-3.6-flash"),
-        system: systemPrompt,
-        prompt,
-      });
-      responseText = result.text;
-    }
+    const { result } = await generateTextRouted("parse", { system: systemPrompt, prompt });
+    const responseText = result.text;
 
     const cleaned = responseText
       .replace(/^```json\s*/i, "")

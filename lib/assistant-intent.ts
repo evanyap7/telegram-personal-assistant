@@ -1,7 +1,5 @@
-import { perplexity } from "@ai-sdk/perplexity";
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
 import { z } from "zod";
+import { generateTextRouted } from "./ai/router";
 import { SECURITY_SYSTEM_GUARDRAIL } from "./security";
 
 const singaporeDateTimeSchema = z
@@ -358,8 +356,14 @@ export async function parseAssistantIntent(
   userMessage: string,
   context?: ConversationContext
 ): Promise<AssistantIntent> {
-  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY && !process.env.PERPLEXITY_API_KEY) {
-    throw new Error("AI API keys are missing (GOOGLE_GENERATIVE_AI_API_KEY or PERPLEXITY_API_KEY).");
+  if (
+    !process.env.GOOGLE_GENERATIVE_AI_API_KEY &&
+    !process.env.PERPLEXITY_API_KEY &&
+    !process.env.ANTHROPIC_API_KEY
+  ) {
+    throw new Error(
+      "AI API keys are missing (GOOGLE_GENERATIVE_AI_API_KEY, PERPLEXITY_API_KEY or ANTHROPIC_API_KEY)."
+    );
   }
 
   const now = context?.messageTime ? new Date(context.messageTime) : new Date();
@@ -384,60 +388,20 @@ export async function parseAssistantIntent(
 
   let responseText = "";
   try {
-    const result = await generateText({
-      model: google("gemini-flash-lite-latest"),
+    const { result } = await generateTextRouted("classifier", {
       system: systemPrompt,
       prompt: userMessage,
       maxOutputTokens: 800,
       temperature: 0,
     });
     responseText = result.text;
-  } catch (primaryErr) {
-    console.warn(
-      "Primary model gemini-flash-lite-latest encountered an issue, falling back to gemini-3.6-flash:",
-      primaryErr
-    );
-    try {
-      const fallbackResult = await generateText({
-        model: google("gemini-3.6-flash"),
-        system: systemPrompt,
-        prompt: userMessage,
-        maxOutputTokens: 800,
-        temperature: 0,
-      });
-      responseText = fallbackResult.text;
-    } catch (fallbackErr) {
-      if (process.env.PERPLEXITY_API_KEY) {
-        console.warn(
-          "gemini-3.6-flash failed, falling back to perplexity(sonar):",
-          fallbackErr
-        );
-        try {
-          const perplexityResult = await generateText({
-            model: perplexity("sonar"),
-            system: systemPrompt,
-            prompt: userMessage,
-            maxOutputTokens: 800,
-            temperature: 0,
-          });
-          responseText = perplexityResult.text;
-        } catch (pxErr) {
-          console.error("All AI models failed in determineAssistantIntent:", pxErr);
-          return {
-            action: "unknown",
-            message:
-              "I'm temporarily having trouble connecting to the AI service. Please try again in a moment.",
-          };
-        }
-      } else {
-        console.error("All Gemini AI models failed in determineAssistantIntent:", fallbackErr);
-        return {
-          action: "unknown",
-          message:
-            "I'm temporarily having trouble connecting to the AI service. Please try again in a moment.",
-        };
-      }
-    }
+  } catch (error) {
+    console.error("All AI models failed in determineAssistantIntent:", error);
+    return {
+      action: "unknown",
+      message:
+        "I'm temporarily having trouble connecting to the AI service. Please try again in a moment.",
+    };
   }
 
   try {

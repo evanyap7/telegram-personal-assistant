@@ -1,5 +1,5 @@
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
+import { classifyError } from "./ai/mode";
+import { NoModelAvailableError, generateTextRouted } from "./ai/router";
 import { downloadTelegramAudio } from "./telegram-files";
 import { sendTelegramChatAction, sendTelegramMessage } from "./telegram";
 import { listAllMemories } from "./memory";
@@ -61,8 +61,7 @@ export async function transcribeTelegramVoiceNote(input: {
     mediaType = "audio/ogg";
   }
 
-  const result = await generateText({
-    model: google("gemini-3.6-flash"),
+  const { result } = await generateTextRouted("audio", {
     system: buildTranscriptionSystemPrompt(input.contactNames ?? []),
     messages: [
       {
@@ -129,9 +128,14 @@ export async function handleVoiceNoteAction(params: {
     await sendTelegramMessage(chatId, `🎤 Heard: “${transcription}”`);
     return transcription;
   } catch (voiceError) {
+    // Claude cannot take audio, so when Gemini is out there is no fallback for voice.
+    const unavailable =
+      voiceError instanceof NoModelAvailableError || classifyError(voiceError) === "depleted";
     await sendTelegramMessage(
       chatId,
-      "Sorry, I had trouble processing that voice note. Please try typing your message."
+      unavailable
+        ? "Voice notes are unavailable right now. Please type your message."
+        : "Sorry, I had trouble processing that voice note. Please try typing your message."
     );
     throw voiceError;
   }

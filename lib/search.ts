@@ -1,10 +1,30 @@
-import { perplexity } from "@ai-sdk/perplexity";
-import { google } from "@ai-sdk/google";
-import { generateText } from "ai";
+import type { Provider } from "./ai/mode";
+import { runText, withModelFallback } from "./ai/router";
 
 export interface SearchAnswerResult {
   answer: string;
-  source: "sonar" | "gemini" | "fallback";
+  source: "sonar" | "gemini" | "claude" | "fallback";
+}
+
+export const NO_WEB_FOOTER = "(No live web data right now, so this comes from my own knowledge.)";
+
+export function searchSystemPrompt(provider: Provider): string {
+  if (provider === "perplexity") {
+    return `You are EGO, an intelligent, concise personal assistant for a user in Singapore.
+Answer the user's question directly, accurately, and concisely.
+Keep responses under 3-4 sentences whenever possible, with practical, factual information.
+Include relevant times, opening hours, or numbers if requested.
+Do not add conversational fluff or unprompted disclaimers.`;
+  }
+  if (provider === "gemini") {
+    return `You are EGO, a helpful, concise personal assistant.
+Answer the user's question directly and concisely in 2-3 sentences.
+If it looks like a calendar event, expense, or to-do that wasn't recognized, suggest how to phrase it.`;
+  }
+  return `You are EGO, a helpful, concise personal assistant for a user in Singapore.
+Answer the user's question directly and concisely in 2-3 sentences from your own knowledge.
+You cannot browse the web, so if the question needs live information (current prices, opening hours, news) that you cannot confirm, say so plainly.
+If it looks like a calendar event, expense, or to-do that wasn't recognized, suggest how to phrase it.`;
 }
 
 export async function answerWithSearch(query: string): Promise<SearchAnswerResult> {
@@ -16,54 +36,24 @@ export async function answerWithSearch(query: string): Promise<SearchAnswerResul
     };
   }
 
-  // 1. Try Perplexity Sonar if API key is present (best for web search & real-time facts)
-  if (process.env.PERPLEXITY_API_KEY) {
-    try {
-      const result = await generateText({
-        model: perplexity("sonar"),
-        system: `You are EGO, an intelligent, concise personal assistant for a user in Singapore.
-Answer the user's question directly, accurately, and concisely.
-Keep responses under 3-4 sentences whenever possible, with practical, factual information.
-Include relevant times, opening hours, or numbers if requested.
-Do not add conversational fluff or unprompted disclaimers.`,
+  try {
+    const { result, handle } = await withModelFallback("search", async (h) => {
+      const generated = await runText(h, {
+        system: searchSystemPrompt(h.provider),
         prompt: trimmed,
-        maxOutputTokens: 500,
-        temperature: 0.2,
+        maxOutputTokens: h.provider === "perplexity" ? 500 : 400,
+        temperature: h.provider === "perplexity" ? 0.2 : 0.3,
       });
-
-      if (result.text?.trim()) {
-        return {
-          answer: result.text.trim(),
-          source: "sonar",
-        };
-      }
-    } catch (sonarErr) {
-      console.warn("Perplexity Sonar search failed, falling back to Gemini:", sonarErr);
+      if (!generated.text?.trim()) throw new Error("Search model returned an empty answer.");
+      return generated;
+    });
+    const text = result.text.trim();
+    if (handle.provider === "anthropic") {
+      return { answer: `${text}\n\n${NO_WEB_FOOTER}`, source: "claude" };
     }
-  }
-
-  // 2. Fallback to Gemini 3.6 Flash if Google key is present
-  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    try {
-      const result = await generateText({
-        model: google("gemini-3.6-flash"),
-        system: `You are EGO, a helpful, concise personal assistant.
-Answer the user's question directly and concisely in 2-3 sentences.
-If it looks like a calendar event, expense, or to-do that wasn't recognized, suggest how to phrase it.`,
-        prompt: trimmed,
-        maxOutputTokens: 400,
-        temperature: 0.3,
-      });
-
-      if (result.text?.trim()) {
-        return {
-          answer: result.text.trim(),
-          source: "gemini",
-        };
-      }
-    } catch (geminiErr) {
-      console.warn("Gemini fallback answer failed:", geminiErr);
-    }
+    return { answer: text, source: handle.provider === "perplexity" ? "sonar" : "gemini" };
+  } catch (error) {
+    console.warn("All search models failed:", error);
   }
 
   return {
