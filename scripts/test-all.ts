@@ -32,6 +32,7 @@ const SUITES = [
   { name: "Guided PH3 Workout Session", command: "npm run test:workout-session" },
   { name: "Multi-Item To-Do Batch Logging", command: "npm run test:todos-batch" },
   { name: "EGO Orchestrator (tools, replies, voice)", command: "npm run test:ego" },
+  { name: "AI Router (credits, fallback, tiers)", command: "npm run test:ai-router" },
   { name: "Assistant Intent Classification Fixtures", command: "npm run test:intents" },
 ];
 

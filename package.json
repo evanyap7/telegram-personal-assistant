@@ -25,9 +25,12 @@
     "test:todos-batch": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-todos-batch.ts",
     "test:ego": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-ego.ts",
     "eval:ego": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/eval-ego.ts",
+    "test:ai-router": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-ai-router.ts",
+    "check:ai-live": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/ai-live-check.ts",
     "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.81",
     "@ai-sdk/google": "^4.0.58",
     "@ai-sdk/open-responses": "^2.0.36",
     "@ai-sdk/perplexity": "^4.0.36",
