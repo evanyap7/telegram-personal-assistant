@@ -3,15 +3,8 @@ import { google } from "@ai-sdk/google";
 import { perplexity } from "@ai-sdk/perplexity";
 import { generateText, type LanguageModel } from "ai";
 import { sendTelegramMessage } from "../telegram";
-import { createLedger, type Ledger, type LedgerState } from "./ledger";
-import {
-  candidatesFor,
-  classifyError,
-  providerFlags,
-  type Candidate,
-  type Provider,
-  type Role,
-} from "./mode";
+import { createLedger, type Ledger } from "./ledger";
+import { candidatesFor, classifyError, type Candidate, type Provider, type Role } from "./mode";
 import { costUsd } from "./pricing";
 import { createSheetsLedgerStore } from "./sheets-store";
 
@@ -22,7 +15,9 @@ type ProviderOptions = NonNullable<GenerateTextParams["providerOptions"]>;
 
 /** Claude 5.5 models think by default, and thinking counts toward max tokens, so tiny limits cut answers off. */
 export const CLAUDE_MIN_OUTPUT_TOKENS = 4096;
-const USAGE_WRITE_TIMEOUT_MS = 2000;
+/** After Perplexity reports its credits depleted, search skips it for this long. */
+export const PERPLEXITY_COOLDOWN_MS = 30 * 60_000;
+const BOOKKEEPING_TIMEOUT_MS = 2000;
 
 export interface ModelHandle {
   model: LanguageModel;
@@ -83,27 +78,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 export interface RouterDeps {
-  ledger: Pick<Ledger, "getState" | "markDepleted" | "recordUsage">;
+  ledger: Pick<Ledger, "recordUsage" | "checkWarnings" | "alertDepleted">;
   available(): Record<Provider, boolean>;
   makeModel(c: Candidate): LanguageModel;
   generate: typeof generateText;
+  /** Milliseconds clock for the Perplexity breaker; defaults to Date.now. */
+  now?: () => number;
 }
 
-const DEFAULT_STATE: LedgerState = {
-  mode: "credits",
-  gemini: { startBalanceUsd: null, spentUsd: 0, depleted: false },
-  perplexity: { startBalanceUsd: null, spentUsd: 0, depleted: false },
-};
-
 export function createRouter(deps: RouterDeps) {
-  async function currentState(): Promise<LedgerState> {
-    try {
-      return await deps.ledger.getState();
-    } catch (error) {
-      console.warn("AI credit ledger unavailable; using default routing:", error);
-      return DEFAULT_STATE;
-    }
-  }
+  const clock = deps.now ?? (() => Date.now());
+  let perplexityDownUntil = 0;
 
   async function recordModelUsage(
     handle: ModelHandle,
@@ -121,8 +106,9 @@ export function createRouter(deps: RouterDeps) {
         costUsd: costUsd(handle.modelId, inputTokens, outputTokens),
         role: handle.role,
       }),
-      USAGE_WRITE_TIMEOUT_MS
+      BOOKKEEPING_TIMEOUT_MS
     ).catch(() => {});
+    await withTimeout(deps.ledger.checkWarnings(), BOOKKEEPING_TIMEOUT_MS).catch(() => {});
   }
 
   /** One text generation on one model, with Claude-safe parameters, then usage recording. */
@@ -148,24 +134,17 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /**
-   * Runs `attempt` on each candidate model for the role until one succeeds. Credits-depleted
-   * errors mark the provider and skip its remaining models. `canRetry` lets callers forbid a
-   * retry once side effects happened (agents that already ran a tool).
+   * Runs `attempt` on each candidate model for the role until one succeeds. A "credits
+   * depleted" error alerts the user (Claude, Perplexity) and skips that provider's remaining
+   * models; Perplexity also opens a 30-minute breaker. `canRetry` lets callers forbid a retry
+   * once side effects happened (agents that already ran a tool).
    */
   async function withModelFallback<T>(
     role: Role,
     attempt: (handle: ModelHandle) => Promise<T>,
     opts: { canRetry?: () => boolean } = {}
   ): Promise<{ result: T; handle: ModelHandle }> {
-    const state = await currentState();
-    const available = deps.available();
-    const candidates = candidatesFor(
-      role,
-      state.mode,
-      providerFlags(state.gemini, state.perplexity, role, available.anthropic),
-      available,
-      { gemini: state.gemini.depleted, perplexity: state.perplexity.depleted }
-    );
+    const candidates = candidatesFor(role, deps.available(), clock() < perplexityDownUntil);
     if (candidates.length === 0) throw new NoModelAvailableError(role);
 
     const skipped = new Set<Provider>();
@@ -180,9 +159,13 @@ export function createRouter(deps: RouterDeps) {
         lastError = error;
         if (classifyError(error) === "depleted") {
           skipped.add(candidate.provider);
-          if (candidate.provider !== "anthropic") {
-            await deps.ledger.markDepleted(candidate.provider).catch(() => {});
+          if (candidate.provider === "perplexity") {
+            perplexityDownUntil = clock() + PERPLEXITY_COOLDOWN_MS;
+            await deps.ledger.alertDepleted("perplexity").catch(() => {});
+          } else if (candidate.provider === "anthropic") {
+            await deps.ledger.alertDepleted("anthropic").catch(() => {});
           }
+          // Gemini (voice only) has no balance tracking, so it is just skipped.
         }
         const hasNext = candidates.slice(i + 1).some((next) => !skipped.has(next.provider));
         if (!hasNext || (opts.canRetry && !opts.canRetry())) throw error;
@@ -207,13 +190,13 @@ export function createRouter(deps: RouterDeps) {
 
 function makeModel(c: Candidate): LanguageModel {
   switch (c.provider) {
-    case "gemini":
-      return google(c.modelId);
     case "perplexity":
       return perplexity(c.modelId);
+    case "gemini":
+      return google(c.modelId);
     case "anthropic":
-      // @ai-sdk/anthropic bundles a newer copy of @ai-sdk/provider (4.0.28) than the other
-      // AI SDK packages (4.0.9). Same v4 spec at runtime; only the nominal types differ.
+      // @ai-sdk/anthropic bundles a newer copy of @ai-sdk/provider than the other AI SDK
+      // packages. Same v4 spec at runtime; only the nominal types differ.
       return anthropic(c.modelId) as unknown as LanguageModel;
   }
 }
@@ -232,9 +215,9 @@ export const aiLedger: Ledger = createLedger({
 const defaultRouter = createRouter({
   ledger: aiLedger,
   available: () => ({
-    gemini: Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY),
-    perplexity: Boolean(process.env.PERPLEXITY_API_KEY),
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+    perplexity: Boolean(process.env.PERPLEXITY_API_KEY),
+    gemini: Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY),
   }),
   makeModel,
   generate: generateText,

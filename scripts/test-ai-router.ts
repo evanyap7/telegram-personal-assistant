@@ -1,54 +1,52 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { CREDITS_USAGE, parseCreditsCommand } from "../lib/ai/commands";
 import {
-  SWITCH_THRESHOLD,
-  candidatesFor,
-  claudeChain,
-  classifyError,
-  decideMode,
-  isNearlyOut,
-  providerFlags,
-  remainingFraction,
-  remainingUsd,
-  type ProviderStatus,
-} from "../lib/ai/mode";
-import { costUsd, PERPLEXITY_REQUEST_FEE_USD } from "../lib/ai/pricing";
-import {
-  DEPLETED_COOLDOWN_MS,
+  ALERT_COOLDOWN_MS,
   STATE_TTL_MS,
   createLedger,
   sumSpent,
+  type AlertState,
   type BalanceRow,
   type CreditProvider,
-  type LedgerMeta,
   type LedgerStore,
   type UsageRow,
-  type LedgerState,
 } from "../lib/ai/ledger";
-import { CREDITS_USAGE, parseCreditsCommand } from "../lib/ai/commands";
-import fs from "node:fs";
-import path from "node:path";
-import { NO_WEB_FOOTER, searchSystemPrompt } from "../lib/search";
+import {
+  candidatesFor,
+  claudeChain,
+  classifyError,
+  isMoreSevere,
+  remainingFraction,
+  remainingUsd,
+  warningLevel,
+  type BalanceStatus,
+  type Provider,
+} from "../lib/ai/mode";
+import { PERPLEXITY_REQUEST_FEE_USD, costUsd } from "../lib/ai/pricing";
 import {
   CLAUDE_MIN_OUTPUT_TOKENS,
   NoModelAvailableError,
+  PERPLEXITY_COOLDOWN_MS,
   buildHandle,
   createRouter,
   mergeProviderOptions,
   type RouterDeps,
 } from "../lib/ai/router";
+import { needsLayoutMigration } from "../lib/ai/sheets-store";
+import { NO_WEB_FOOTER, searchSystemPrompt } from "../lib/search";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
   sections.push({ name, run });
 }
 
-const status = (start: number | null, spent: number, depleted = false): ProviderStatus => ({
+const status = (start: number | null, spent: number): BalanceStatus => ({
   startBalanceUsd: start,
   spentUsd: spent,
-  depleted,
 });
-const ALL = { gemini: true, perplexity: true, anthropic: true };
-const NONE_DEPLETED = { gemini: false, perplexity: false };
+const ALL = { anthropic: true, perplexity: true, gemini: true };
 
 // ---- sections ----
 
@@ -61,66 +59,19 @@ section("remaining balance and fraction", () => {
   assert.equal(remainingFraction(status(10, 12)), 0, "overspend never goes negative");
 });
 
-section("5% boundary: exactly 5.0% remaining is nearly out, 5.1% is not", () => {
-  assert.equal(SWITCH_THRESHOLD, 0.05);
-  assert.equal(isNearlyOut(status(100, 95)), true);
-  assert.equal(isNearlyOut(status(100, 94.9)), false);
-  assert.equal(isNearlyOut(status(25, 23.75)), true);
-  assert.equal(isNearlyOut(status(100, 0)), false);
-});
-
-section("unknown balance never triggers; zero balance and a depleted flag do", () => {
-  assert.equal(isNearlyOut(status(null, 999)), false);
-  assert.equal(isNearlyOut(status(0, 0)), true);
-  assert.equal(isNearlyOut(status(null, 0, true)), true, "a depleted marker counts even with no balance");
-});
-
-section("mode needs BOTH providers nearly out", () => {
-  const low = status(100, 96);
-  const healthy = status(100, 10);
-  assert.equal(decideMode(low, low), "claude");
-  assert.equal(decideMode(low, healthy), "credits");
-  assert.equal(decideMode(healthy, low), "credits");
-  assert.equal(decideMode(status(null, 0), low), "credits", "unknown balance blocks the early switch");
-  assert.equal(decideMode(status(null, 0, true), status(null, 0, true)), "claude");
-});
-
-section("exhausted vs nearly out, and per-provider skip flags (Gemini at $0, Perplexity healthy)", () => {
-  const geminiOut = status(0, 0);
-  const perplexityOk = status(8.94, 0);
-  assert.deepEqual(providerFlags(geminiOut, perplexityOk, "classifier", true), {
-    gemini: true,
-    perplexity: false,
-  });
-  assert.deepEqual(
-    providerFlags(status(100, 98), perplexityOk, "agent", true),
-    { gemini: true, perplexity: false },
-    "2% left: text jobs already skip Gemini"
-  );
-  assert.deepEqual(
-    providerFlags(status(100, 98), perplexityOk, "audio", true),
-    { gemini: false, perplexity: false },
-    "voice keeps using Gemini until it is truly exhausted"
-  );
-  assert.deepEqual(
-    providerFlags(geminiOut, perplexityOk, "audio", true),
-    { gemini: false, perplexity: false },
-    "an estimate of zero never blocks voice; only a real depletion error does"
-  );
-  assert.deepEqual(
-    providerFlags(status(null, 0, true), perplexityOk, "audio", true),
-    { gemini: true, perplexity: false },
-    "a real depletion error blocks voice"
-  );
-  assert.deepEqual(
-    providerFlags(status(100, 98), status(10, 9.8), "search", false),
-    { gemini: false, perplexity: false },
-    "no Claude key: only real depletion skips a provider"
-  );
-  assert.deepEqual(providerFlags(status(null, 0, true), perplexityOk, "agent", false), {
-    gemini: true,
-    perplexity: false,
-  });
+section("warning levels: exactly 10% and 5% fire, 10.1% and 5.1% do not", () => {
+  assert.equal(warningLevel(status(100, 89.9)), 0);
+  assert.equal(warningLevel(status(100, 90)), 10);
+  assert.equal(warningLevel(status(100, 94.9)), 10);
+  assert.equal(warningLevel(status(100, 95)), 5);
+  assert.equal(warningLevel(status(100, 100)), 5);
+  assert.equal(warningLevel(status(0, 0)), 5, "a zero balance is fully used up");
+  assert.equal(warningLevel(status(null, 999)), 0, "an unknown balance never warns");
+  assert.equal(isMoreSevere(5, 10), true);
+  assert.equal(isMoreSevere(10, 0), true);
+  assert.equal(isMoreSevere(10, 10), false);
+  assert.equal(isMoreSevere(0, 5), false);
+  assert.equal(isMoreSevere(10, 5), false);
 });
 
 section("error classification", () => {
@@ -130,7 +81,12 @@ section("error classification", () => {
     "depleted"
   );
   assert.equal(classifyError({ statusCode: 429, message: "insufficient credits on this key" }), "depleted");
-  assert.equal(classifyError({ statusCode: 403, message: "billing account disabled" }), "depleted");
+  assert.equal(
+    classifyError(
+      Object.assign(new Error("Your credit balance is too low to access the Anthropic API."), { statusCode: 400 })
+    ),
+    "depleted"
+  );
   assert.equal(
     classifyError({
       statusCode: 429,
@@ -139,16 +95,11 @@ section("error classification", () => {
     "transient",
     "a per-minute quota blip must not look like depletion"
   );
-  assert.equal(
-    classifyError({ statusCode: 429, message: "Quota exceeded for metric requests per minute" }),
-    "transient"
-  );
   assert.equal(classifyError({ statusCode: 429, message: "slow down" }), "transient");
   assert.equal(classifyError({ statusCode: 500 }), "transient");
   assert.equal(classifyError({ statusCode: 400, message: "bad request" }), "other");
-  assert.equal(classifyError({ statusCode: 401, message: "invalid api key" }), "other");
+  assert.equal(classifyError({ statusCode: 401, message: "invalid x-api-key" }), "other");
   assert.equal(classifyError(new Error("fetch failed")), "transient");
-  assert.equal(classifyError(new Error("Perplexity: insufficient credits")), "depleted");
   assert.equal(
     classifyError({
       message: "Failed after 3 attempts",
@@ -167,60 +118,25 @@ section("Claude tier chains follow Haiku, Sonnet, Opus by job", () => {
   assert.deepEqual(ids("agent"), ["claude-sonnet-5-5", "claude-opus-5-5"]);
   assert.deepEqual(ids("vision"), ["claude-sonnet-5-5", "claude-opus-5-5"]);
   assert.deepEqual(ids("search"), ["claude-sonnet-5-5", "claude-opus-5-5"]);
-  assert.deepEqual(ids("audio"), []);
+  assert.deepEqual(ids("audio"), [], "Claude cannot take audio");
   assert.ok(claudeChain("agent").every((c) => c.provider === "anthropic"));
 });
 
-section("candidates: credits mode uses Gemini/Perplexity first and Claude as the tail", () => {
-  const classifier = candidatesFor("classifier", "credits", NONE_DEPLETED, ALL).map((c) => c.modelId);
-  assert.deepEqual(classifier, [
-    "gemini-flash-lite-latest",
-    "gemini-3.6-flash",
-    "claude-haiku-5-5",
-    "claude-sonnet-5-5",
-    "claude-opus-5-5",
-  ]);
-  const search = candidatesFor("search", "credits", NONE_DEPLETED, ALL).map((c) => c.modelId);
-  assert.deepEqual(search, ["sonar", "gemini-3.6-flash", "claude-sonnet-5-5", "claude-opus-5-5"]);
-});
-
-section("candidates: claude mode skips Gemini/Perplexity except for audio", () => {
-  const agent = candidatesFor("agent", "claude", NONE_DEPLETED, ALL).map((c) => c.modelId);
-  assert.deepEqual(agent, ["claude-sonnet-5-5", "claude-opus-5-5"]);
-  const audio = candidatesFor("audio", "claude", NONE_DEPLETED, ALL).map((c) => c.modelId);
-  assert.deepEqual(audio, ["gemini-3.6-flash"]);
-});
-
-section("candidates: a provider skipped only on an estimate stays as a last resort after Claude", () => {
-  const skipGemini = { gemini: true, perplexity: false };
-  const noRealErrors = { gemini: false, perplexity: false };
-  assert.deepEqual(
-    candidatesFor("agent", "credits", skipGemini, ALL, noRealErrors).map((c) => c.modelId),
-    ["claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.6-flash"]
-  );
-  assert.deepEqual(
-    candidatesFor("agent", "claude", skipGemini, ALL, noRealErrors).map((c) => c.modelId),
-    ["claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.6-flash"],
-    "claude mode keeps the same safety net"
-  );
-  assert.deepEqual(
-    candidatesFor("agent", "credits", skipGemini, ALL, { gemini: true, perplexity: false }).map((c) => c.modelId),
-    ["claude-sonnet-5-5", "claude-opus-5-5"],
-    "a real depletion error removes the provider entirely"
-  );
-});
-
-section("candidates: a skipped provider is dropped; missing keys are filtered", () => {
-  const search = candidatesFor("search", "credits", { gemini: false, perplexity: true }, ALL).map((c) => c.modelId);
-  assert.deepEqual(search, ["gemini-3.6-flash", "claude-sonnet-5-5", "claude-opus-5-5"]);
-  const noClaudeKey = candidatesFor("agent", "credits", NONE_DEPLETED, { ...ALL, anthropic: false }).map(
-    (c) => c.modelId
-  );
-  assert.deepEqual(noClaudeKey, ["gemini-3.6-flash"], "no Claude key means no Claude candidates");
-  const audioDepleted = candidatesFor("audio", "credits", { gemini: true, perplexity: false }, ALL);
-  assert.deepEqual(audioDepleted, [], "audio has no fallback when Gemini is out");
-  const noClaudeInClaudeMode = candidatesFor("agent", "claude", NONE_DEPLETED, { ...ALL, anthropic: false });
-  assert.ok(noClaudeInClaudeMode.length > 0, "claude mode without a key falls back to the primaries");
+section("candidates: Claude for text, Perplexity first for search, Gemini only for audio", () => {
+  const ids = (role: Parameters<typeof claudeChain>[0], perplexityDown = false, available = ALL) =>
+    candidatesFor(role, available, perplexityDown).map((c) => c.modelId);
+  assert.deepEqual(ids("classifier"), ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]);
+  assert.deepEqual(ids("agent"), ["claude-sonnet-5-5", "claude-opus-5-5"]);
+  assert.deepEqual(ids("search"), ["sonar", "claude-sonnet-5-5", "claude-opus-5-5"]);
+  assert.deepEqual(ids("search", true), ["claude-sonnet-5-5", "claude-opus-5-5"], "breaker open");
+  assert.deepEqual(ids("search", false, { ...ALL, perplexity: false }), ["claude-sonnet-5-5", "claude-opus-5-5"]);
+  assert.deepEqual(ids("classifier", false, { ...ALL, anthropic: false }), [], "no Claude key, no candidates");
+  assert.deepEqual(ids("search", false, { ...ALL, anthropic: false }), ["sonar"], "search can still reach Perplexity");
+  assert.deepEqual(ids("audio"), ["gemini-3.6-flash"]);
+  assert.deepEqual(ids("audio", false, { ...ALL, gemini: false }), [], "audio never falls to Claude");
+  for (const role of ["classifier", "parse", "agent", "vision", "search"] as const) {
+    assert.ok(!ids(role).some((id) => id.startsWith("gemini")), `${role} must not use Gemini`);
+  }
 });
 
 section("pricing", () => {
@@ -236,7 +152,10 @@ section("pricing", () => {
 function memoryStore() {
   const balances: Partial<Record<CreditProvider, BalanceRow>> = {};
   const usage: UsageRow[] = [];
-  const meta: LedgerMeta = { announcedMode: "credits", depletedUntil: {} };
+  const alerts: Record<CreditProvider, AlertState> = {
+    anthropic: { warnedLevel: 0 },
+    perplexity: { warnedLevel: 0 },
+  };
   const calls = { readUsage: 0, appendUsage: 0 };
   let failAppend = false;
   const store: LedgerStore = {
@@ -245,16 +164,19 @@ function memoryStore() {
       calls.readUsage += 1;
       return [...usage];
     },
-    readMeta: async () => ({ announcedMode: meta.announcedMode, depletedUntil: { ...meta.depletedUntil } }),
+    readAlertState: async () => ({
+      anthropic: { ...alerts.anthropic },
+      perplexity: { ...alerts.perplexity },
+    }),
     setBalance: async (p, usd, setAt) => {
       balances[p] = { startBalanceUsd: usd, setAt };
-      delete meta.depletedUntil[p];
+      alerts[p] = { warnedLevel: 0 };
     },
-    setDepletedUntil: async (p, until) => {
-      meta.depletedUntil[p] = until;
+    setWarnedLevel: async (p, level) => {
+      alerts[p].warnedLevel = level;
     },
-    writeAnnouncedMode: async (m) => {
-      meta.announcedMode = m;
+    setAlertedAt: async (p, iso) => {
+      alerts[p].alertedAt = iso;
     },
     appendUsage: async (row) => {
       calls.appendUsage += 1;
@@ -262,222 +184,217 @@ function memoryStore() {
       usage.push(row);
     },
   };
-  return { store, balances, usage, meta, calls, failAppends: (v: boolean) => (failAppend = v) };
+  return { store, balances, usage, alerts, calls, failAppends: (v: boolean) => (failAppend = v) };
 }
 
 function clock(startIso: string) {
   let t = new Date(startIso).getTime();
-  return { now: () => new Date(t), advance: (ms: number) => (t += ms) };
+  return {
+    now: () => new Date(t),
+    advance: (ms: number) => (t += ms),
+    iso: () => new Date(t).toISOString(),
+  };
 }
 
-const row = (provider: UsageRow["provider"], costUsd: number, timestamp: string): UsageRow => ({
+const row = (provider: UsageRow["provider"], cost: number, timestamp: string): UsageRow => ({
   timestamp,
   provider,
   model: "m",
   inputTokens: 1,
   outputTokens: 1,
-  costUsd,
+  costUsd: cost,
   role: "agent",
 });
 
+function ledgerHarness() {
+  const m = memoryStore();
+  const c = clock("2026-10-17T00:00:00.000Z");
+  const notes: string[] = [];
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
+  return { m, c, notes, ledger };
+}
+
 section("sumSpent counts only the provider's spend since the balance was set", () => {
   const rows = [
-    row("gemini", 1, "2026-10-01T00:00:00.000Z"),
-    row("gemini", 2, "2026-10-10T00:00:00.000Z"),
+    row("anthropic", 1, "2026-10-01T00:00:00.000Z"),
+    row("anthropic", 2, "2026-10-10T00:00:00.000Z"),
     row("perplexity", 5, "2026-10-10T00:00:00.000Z"),
-    row("gemini", 4, "2026-10-12T00:00:00.000Z"),
+    row("anthropic", 4, "2026-10-12T00:00:00.000Z"),
   ];
-  assert.equal(sumSpent(rows, "gemini", "2026-10-05T00:00:00.000Z"), 6);
-  assert.equal(sumSpent(rows, "gemini", ""), 7);
-  assert.equal(sumSpent(rows, "anthropic", ""), 0);
+  assert.equal(sumSpent(rows, "anthropic", "2026-10-05T00:00:00.000Z"), 6);
+  assert.equal(sumSpent(rows, "anthropic", ""), 7);
+  assert.equal(sumSpent(rows, "gemini", ""), 0);
 });
 
-section("ledger: unknown balances stay in credits mode with no notice", async () => {
-  const m = memoryStore();
-  const notes: string[] = [];
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
-  const state = await ledger.getState();
-  assert.equal(state.mode, "credits");
-  assert.equal(state.gemini.startBalanceUsd, null);
-  assert.equal(notes.length, 0);
+section("ledger: an unknown balance never warns", async () => {
+  const h = ledgerHarness();
+  await h.ledger.recordUsage(row("anthropic", 50, h.c.iso()));
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 0);
 });
 
-section("ledger: both providers at 5% switches to claude and announces exactly once", async () => {
-  const m = memoryStore();
-  const notes: string[] = [];
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
-  await ledger.setBalance("gemini", 100);
-  await ledger.setBalance("perplexity", 10);
-  await ledger.recordUsage(row("gemini", 95.5, "2026-10-16T00:00:01.000Z"));
-  await ledger.recordUsage(row("perplexity", 9.6, "2026-10-16T00:00:02.000Z"));
-  c.advance(STATE_TTL_MS + 1);
-  const state = await ledger.getState();
-  assert.equal(state.mode, "claude");
-  assert.equal(notes.length, 1);
-  assert.match(notes[0], /Claude/);
-  c.advance(STATE_TTL_MS + 1);
-  await ledger.getState();
-  assert.equal(notes.length, 1, "no repeat notice while the mode stays the same");
-  assert.equal(m.meta.announcedMode, "claude");
+section("ledger: 10% then 5% each warn exactly once", async () => {
+  const h = ledgerHarness();
+  await h.ledger.setBalance("anthropic", 100);
+  h.c.advance(1000);
+  await h.ledger.recordUsage(row("anthropic", 91, h.c.iso()));
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0], /Claude/);
+  assert.match(h.notes[0], /10%/);
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 1, "the 10% level does not repeat");
+
+  h.c.advance(1000);
+  await h.ledger.recordUsage(row("anthropic", 5, h.c.iso()));
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 2);
+  assert.match(h.notes[1], /5%/);
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 2, "the 5% level does not repeat");
 });
 
-section("ledger: only one provider low keeps credits mode", async () => {
-  const m = memoryStore();
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
-  await ledger.setBalance("gemini", 100);
-  await ledger.setBalance("perplexity", 10);
-  await ledger.recordUsage(row("gemini", 99, "2026-10-16T00:00:01.000Z"));
-  c.advance(STATE_TTL_MS + 1);
-  assert.equal((await ledger.getState()).mode, "credits");
+section("ledger: jumping straight to 3% sends only the 5% warning", async () => {
+  const h = ledgerHarness();
+  await h.ledger.setBalance("perplexity", 10);
+  h.c.advance(1000);
+  await h.ledger.recordUsage(row("perplexity", 9.7, h.c.iso()));
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0], /Perplexity/);
+  assert.match(h.notes[0], /5%/);
 });
 
-section("ledger: a Gemini balance of zero is reported while Perplexity stays healthy", async () => {
-  const m = memoryStore();
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
-  await ledger.setBalance("gemini", 0);
-  await ledger.setBalance("perplexity", 8.94);
-  const state = await ledger.getState();
-  assert.equal(state.mode, "credits");
-  assert.equal(state.gemini.startBalanceUsd, 0);
-  assert.equal(state.perplexity.startBalanceUsd, 8.94);
+section("ledger: setting a balance re-arms both warnings", async () => {
+  const h = ledgerHarness();
+  await h.ledger.setBalance("anthropic", 100);
+  h.c.advance(1000);
+  await h.ledger.recordUsage(row("anthropic", 96, h.c.iso()));
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 1);
+
+  h.c.advance(1000);
+  await h.ledger.setBalance("anthropic", 50);
+  assert.equal(h.notes.length, 1, "a healthy new balance sends nothing");
+  h.c.advance(1000);
+  await h.ledger.recordUsage(row("anthropic", 46, h.c.iso()));
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.notes.length, 2, "8% left warns again after the re-set");
+  assert.match(h.notes[1], /10%/);
 });
 
-section("ledger: a top-up restarts counting and switches back with one notice", async () => {
-  const m = memoryStore();
-  const notes: string[] = [];
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
-  await ledger.setBalance("gemini", 100);
-  await ledger.setBalance("perplexity", 10);
-  await ledger.recordUsage(row("gemini", 98, "2026-10-16T00:00:01.000Z"));
-  await ledger.recordUsage(row("perplexity", 9.9, "2026-10-16T00:00:02.000Z"));
-  c.advance(STATE_TTL_MS + 1);
-  assert.equal((await ledger.getState()).mode, "claude");
-  c.advance(1000);
-  await ledger.setBalance("gemini", 50);
-  const after = await ledger.getState();
-  assert.equal(after.gemini.spentUsd, 0, "spend before the new balance does not count");
-  assert.equal(after.mode, "credits");
-  assert.equal(notes.length, 2);
-  assert.match(notes[1], /topped up|back on Gemini/i);
+section("ledger: setting a balance of zero warns immediately", async () => {
+  const h = ledgerHarness();
+  await h.ledger.setBalance("perplexity", 0);
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0], /5%/);
 });
 
-section("ledger: depletion marker notifies once, lasts 30 minutes, then lapses", async () => {
-  const m = memoryStore();
-  const notes: string[] = [];
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
-  await ledger.markDepleted("gemini");
-  assert.equal(notes.length, 1);
-  assert.match(notes[0], /Gemini/);
-  assert.equal((await ledger.getState()).gemini.depleted, true);
-  await ledger.markDepleted("gemini");
-  assert.equal(notes.length, 1, "already marked, so no second notice");
-  c.advance(DEPLETED_COOLDOWN_MS + 1000);
-  assert.equal((await ledger.getState()).gemini.depleted, false);
+section("ledger: a depletion alert is rate-limited to one per 30 minutes", async () => {
+  const h = ledgerHarness();
+  await h.ledger.alertDepleted("anthropic");
+  assert.equal(h.notes.length, 1);
+  assert.match(h.notes[0], /Claude/);
+  assert.match(h.notes[0], /\/credits set claude/);
+  h.c.advance(ALERT_COOLDOWN_MS - 1000);
+  await h.ledger.alertDepleted("anthropic");
+  assert.equal(h.notes.length, 1, "still inside the cool-down");
+  h.c.advance(2000);
+  await h.ledger.alertDepleted("anthropic");
+  assert.equal(h.notes.length, 2);
+  await h.ledger.alertDepleted("perplexity");
+  assert.equal(h.notes.length, 3, "each provider has its own cool-down");
+  assert.match(h.notes[2], /Perplexity/);
 });
 
 section("ledger: state is cached for a minute", async () => {
-  const m = memoryStore();
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
-  await ledger.getState();
-  await ledger.getState();
-  assert.equal(m.calls.readUsage, 1);
-  c.advance(STATE_TTL_MS + 1);
-  await ledger.getState();
-  assert.equal(m.calls.readUsage, 2);
+  const h = ledgerHarness();
+  await h.ledger.checkWarnings();
+  await h.ledger.checkWarnings();
+  assert.equal(h.m.calls.readUsage, 1);
+  h.c.advance(STATE_TTL_MS + 1);
+  await h.ledger.checkWarnings();
+  assert.equal(h.m.calls.readUsage, 2);
 });
 
 section("ledger: a failing usage write never throws", async () => {
-  const m = memoryStore();
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
-  m.failAppends(true);
-  await ledger.recordUsage(row("gemini", 1, "2026-10-16T00:00:01.000Z"));
-  assert.equal(m.calls.appendUsage, 1);
+  const h = ledgerHarness();
+  h.m.failAppends(true);
+  await h.ledger.recordUsage(row("anthropic", 1, h.c.iso()));
+  assert.equal(h.m.calls.appendUsage, 1);
 });
 
-section("ledger: /credits text shows percent left, unset hints and Claude spend", async () => {
-  const m = memoryStore();
-  const c = clock("2026-10-16T00:00:00.000Z");
-  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
-  await ledger.setBalance("gemini", 100);
-  await ledger.recordUsage(row("gemini", 25, "2026-10-16T00:00:01.000Z"));
-  await ledger.recordUsage(row("anthropic", 1.5, "2026-10-16T00:00:02.000Z"));
-  c.advance(STATE_TTL_MS + 1);
-  const text = await ledger.describe();
-  assert.match(text, /Gemini: about \$75\.00 left of \$100\.00 \(75\.0%\)/);
+section("ledger: /credits text shows percent left, unset hints and the footer", async () => {
+  const h = ledgerHarness();
+  await h.ledger.setBalance("anthropic", 100);
+  h.c.advance(1000);
+  await h.ledger.recordUsage(row("anthropic", 25, h.c.iso()));
+  h.c.advance(STATE_TTL_MS + 1);
+  const text = await h.ledger.describe();
+  assert.match(text, /Claude: about \$75\.00 left of \$100\.00 \(75\.0%\)/);
   assert.match(text, /Perplexity: balance not set/);
   assert.match(text, /\/credits set perplexity/);
-  assert.match(text, /Claude spend so far: \$1\.50/);
-  assert.match(text, /5%/);
+  assert.match(text, /10% and 5%/);
 });
 
-function routerHarness(overrides: {
-  mode?: LedgerState["mode"];
-  geminiDepleted?: boolean;
-  geminiBalance?: { start: number; spent: number };
-  perplexityDepleted?: boolean;
+section("sheet layout: the old Gemini layout is migrated, the new one is kept", () => {
+  assert.equal(needsLayoutMigration("gemini"), true);
+  assert.equal(needsLayoutMigration(undefined), true);
+  assert.equal(needsLayoutMigration(""), true);
+  assert.equal(needsLayoutMigration("anthropic"), false);
+});
+
+function routerHarness(o: {
   failOn?: Record<string, unknown>;
-  available?: Partial<Record<"gemini" | "perplexity" | "anthropic", boolean>>;
-  getStateThrows?: boolean;
+  available?: Partial<Record<Provider, boolean>>;
+  ledgerFails?: boolean;
 } = {}) {
   const generated: Array<Record<string, unknown>> = [];
   const used: UsageRow[] = [];
-  const depletedMarks: string[] = [];
-  const state: LedgerState = {
-    mode: overrides.mode ?? "credits",
-    gemini: {
-      startBalanceUsd: overrides.geminiBalance?.start ?? 100,
-      spentUsd: overrides.geminiBalance?.spent ?? 10,
-      depleted: overrides.geminiDepleted ?? false,
-    },
-    perplexity: { startBalanceUsd: 10, spentUsd: 1, depleted: overrides.perplexityDepleted ?? false },
-  };
+  const alerts: string[] = [];
+  const clockMs = { t: 1_000_000 };
+  let warningChecks = 0;
   const deps: RouterDeps = {
     ledger: {
-      getState: async () => {
-        if (overrides.getStateThrows) throw new Error("sheets unreachable");
-        return state;
+      recordUsage: async (r) => {
+        if (o.ledgerFails) throw new Error("sheets down");
+        used.push(r);
       },
-      markDepleted: async (p) => void depletedMarks.push(p),
-      recordUsage: async (r) => void used.push(r),
+      checkWarnings: async () => {
+        warningChecks += 1;
+        if (o.ledgerFails) throw new Error("sheets down");
+      },
+      alertDepleted: async (p) => void alerts.push(p),
     },
-    available: () => ({ gemini: true, perplexity: true, anthropic: true, ...(overrides.available ?? {}) }),
+    available: () => ({ anthropic: true, perplexity: true, gemini: true, ...(o.available ?? {}) }),
     makeModel: (c) => ({ specificationVersion: "test", provider: c.provider, modelId: c.modelId }) as never,
     generate: (async (params: Record<string, unknown>) => {
       generated.push(params);
       const modelId = (params.model as { modelId: string }).modelId;
-      const failure = overrides.failOn?.[modelId];
+      const failure = o.failOn?.[modelId];
       if (failure) throw failure;
       return { text: `ok from ${modelId}`, usage: { inputTokens: 1000, outputTokens: 500 } };
     }) as never,
+    now: () => clockMs.t,
   };
-  return { router: createRouter(deps), generated, used, depletedMarks };
+  return { router: createRouter(deps), generated, used, alerts, clockMs, checks: () => warningChecks };
 }
 
 const modelOf = (p: Record<string, unknown>) => (p.model as { modelId: string }).modelId;
-
-section("router: credits mode uses the first Gemini model and keeps temperature", async () => {
-  const h = routerHarness();
-  const { result, handle } = await h.router.generateTextRouted("classifier", {
-    prompt: "hi",
-    temperature: 0,
-    maxOutputTokens: 800,
-  });
-  assert.equal(handle.modelId, "gemini-flash-lite-latest");
-  assert.equal((result as { text: string }).text, "ok from gemini-flash-lite-latest");
-  assert.equal(h.generated[0].temperature, 0);
-  assert.equal(h.generated[0].maxOutputTokens, 800);
+const perplexityOut = Object.assign(new Error("insufficient credits"), { statusCode: 429 });
+const claudeOut = Object.assign(new Error("Your credit balance is too low to access the Anthropic API."), {
+  statusCode: 400,
 });
 
-section("router: claude mode uses Haiku for the classifier, strips temperature, floors tokens, sets low effort", async () => {
-  const h = routerHarness({ mode: "claude" });
+section("router: classifier uses Haiku, strips temperature, floors tokens, sets low effort", async () => {
+  const h = routerHarness();
   const { handle } = await h.router.generateTextRouted("classifier", {
     prompt: "hi",
     temperature: 0,
@@ -487,121 +404,129 @@ section("router: claude mode uses Haiku for the classifier, strips temperature, 
   const params = h.generated[0];
   assert.equal("temperature" in params, false, "Claude models reject non-default sampling");
   assert.equal(params.maxOutputTokens, CLAUDE_MIN_OUTPUT_TOKENS, "always-on thinking needs headroom");
-  assert.deepEqual(
-    (params.providerOptions as { anthropic: { effort: string } }).anthropic.effort,
-    "low"
-  );
+  assert.equal((params.providerOptions as { anthropic: { effort: string } }).anthropic.effort, "low");
 });
 
-section("router: agent role starts at Sonnet in claude mode, without forced effort", async () => {
-  const h = routerHarness({ mode: "claude" });
+section("router: agent role starts at Sonnet without forced effort", async () => {
+  const h = routerHarness();
   const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
   assert.equal(handle.modelId, "claude-sonnet-5-5");
   assert.equal(h.generated[0].providerOptions, undefined);
 });
 
-section("router: Gemini at a $0 balance sends text jobs straight to Claude while Perplexity search stays", async () => {
-  const h = routerHarness({ geminiBalance: { start: 0, spent: 0 } });
-  const agent = await h.router.generateTextRouted("agent", { prompt: "hi" });
-  assert.equal(agent.handle.modelId, "claude-sonnet-5-5");
-  const classifier = await h.router.generateTextRouted("classifier", { prompt: "hi" });
-  assert.equal(classifier.handle.modelId, "claude-haiku-5-5");
-  const search = await h.router.generateTextRouted("search", { prompt: "hi" });
-  assert.equal(search.handle.modelId, "sonar", "Perplexity still has credit");
-  assert.ok(
-    h.generated.every((p) => !modelOf(p).startsWith("gemini")),
-    "no wasted call to the empty Gemini account"
+section("router: search goes to Perplexity first and keeps its temperature", async () => {
+  const h = routerHarness();
+  const { handle } = await h.router.generateTextRouted("search", {
+    prompt: "q",
+    temperature: 0.2,
+    maxOutputTokens: 500,
+  });
+  assert.equal(handle.modelId, "sonar");
+  assert.equal(h.generated[0].temperature, 0.2);
+  assert.equal(h.generated[0].maxOutputTokens, 500);
+});
+
+section("router: audio uses Gemini only, keeps temperature, and is logged as Gemini", async () => {
+  const h = routerHarness();
+  const { handle } = await h.router.generateTextRouted("audio", {
+    prompt: "x",
+    temperature: 0,
+    maxOutputTokens: 500,
+  });
+  assert.equal(handle.modelId, "gemini-3.6-flash");
+  assert.equal(h.generated[0].temperature, 0);
+  assert.equal(h.generated[0].maxOutputTokens, 500);
+  assert.equal(h.used[0].provider, "gemini");
+  assert.equal(h.used[0].role, "audio");
+});
+
+section("router: when Gemini fails, audio fails loudly instead of going to Claude (no alert for Gemini)", async () => {
+  const h = routerHarness({ failOn: { "gemini-3.6-flash": perplexityOut } });
+  await assert.rejects(() => h.router.generateTextRouted("audio", { prompt: "x" }), /credits/);
+  assert.deepEqual(h.generated.map(modelOf), ["gemini-3.6-flash"], "Claude is never tried for audio");
+  assert.deepEqual(h.alerts, [], "Gemini credits are not tracked, so no alert");
+
+  const noKey = routerHarness({ available: { gemini: false } });
+  await assert.rejects(
+    () => noKey.router.generateTextRouted("audio", { prompt: "x" }),
+    (err: unknown) => err instanceof NoModelAvailableError
   );
 });
 
-section("router: Gemini nearly out (2% left) skips text jobs but still serves voice", async () => {
-  const h = routerHarness({ geminiBalance: { start: 100, spent: 98 } });
-  const text = await h.router.generateTextRouted("agent", { prompt: "hi" });
-  assert.equal(text.handle.provider, "anthropic");
-  const voice = await h.router.generateTextRouted("audio", { prompt: "x" });
-  assert.equal(voice.handle.modelId, "gemini-3.6-flash");
+section("router: Perplexity depletion falls to Claude, alerts once, and opens a 30-minute breaker", async () => {
+  const h = routerHarness({ failOn: { sonar: perplexityOut } });
+  const first = await h.router.generateTextRouted("search", { prompt: "q" });
+  assert.equal(first.handle.modelId, "claude-sonnet-5-5");
+  assert.deepEqual(h.alerts, ["perplexity"]);
+  assert.deepEqual(h.generated.map(modelOf), ["sonar", "claude-sonnet-5-5"]);
+
+  await h.router.generateTextRouted("search", { prompt: "q2" });
+  assert.deepEqual(
+    h.generated.map(modelOf),
+    ["sonar", "claude-sonnet-5-5", "claude-sonnet-5-5"],
+    "no second call to Perplexity while the breaker is open"
+  );
+
+  h.clockMs.t += PERPLEXITY_COOLDOWN_MS + 1;
+  await h.router.generateTextRouted("search", { prompt: "q3" });
+  assert.equal(modelOf(h.generated[3]), "sonar", "Perplexity is probed again after the cool-down");
 });
 
-section("router: voice still tries Gemini when only the estimate says zero", async () => {
-  const h = routerHarness({ geminiBalance: { start: 0, spent: 0 } });
-  const voice = await h.router.generateTextRouted("audio", { prompt: "x" });
-  assert.equal(voice.handle.modelId, "gemini-3.6-flash");
-});
-
-section("router: if Claude is unusable (bad key) a Gemini that is only estimated empty still answers", async () => {
-  const badKey = Object.assign(new Error("invalid x-api-key"), { statusCode: 401 });
-  const h = routerHarness({
-    geminiBalance: { start: 0, spent: 0 },
-    failOn: { "claude-sonnet-5-5": badKey, "claude-opus-5-5": badKey },
-  });
-  const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
-  assert.equal(handle.modelId, "gemini-3.6-flash");
-  assert.deepEqual(h.generated.map(modelOf), ["claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.6-flash"]);
-  assert.deepEqual(h.depletedMarks, [], "a bad Claude key is not a depletion");
-});
-
-section("router: depletion on Gemini marks it once, skips its other models and falls to Claude", async () => {
-  const h = routerHarness({
-    failOn: { "gemini-flash-lite-latest": { statusCode: 429, message: "Your prepayment credits are depleted" } },
-  });
-  const { handle } = await h.router.generateTextRouted("classifier", { prompt: "hi" });
-  assert.equal(handle.modelId, "claude-haiku-5-5");
-  assert.deepEqual(h.depletedMarks, ["gemini"]);
-  assert.deepEqual(h.generated.map(modelOf), ["gemini-flash-lite-latest", "claude-haiku-5-5"], "gemini-3.6-flash is skipped");
-});
-
-section("router: a transient error tries the next Gemini model before Claude", async () => {
-  const h = routerHarness({ failOn: { "gemini-flash-lite-latest": { statusCode: 500 } } });
-  const { handle } = await h.router.generateTextRouted("classifier", { prompt: "hi" });
-  assert.equal(handle.modelId, "gemini-3.6-flash");
-  assert.deepEqual(h.depletedMarks, []);
+section("router: a transient Perplexity error falls to Claude without opening the breaker", async () => {
+  const h = routerHarness({ failOn: { sonar: { statusCode: 500 } } });
+  const first = await h.router.generateTextRouted("search", { prompt: "q" });
+  assert.equal(first.handle.modelId, "claude-sonnet-5-5");
+  assert.deepEqual(h.alerts, []);
+  await h.router.generateTextRouted("search", { prompt: "q2" });
+  assert.equal(modelOf(h.generated[2]), "sonar", "Perplexity is tried again right away");
 });
 
 section("router: Claude tiers escalate Haiku to Sonnet to Opus, then the last error is thrown", async () => {
   const boom = Object.assign(new Error("bad"), { statusCode: 400 });
-  const h = routerHarness({
-    mode: "claude",
-    failOn: { "claude-haiku-5-5": boom, "claude-sonnet-5-5": boom },
-  });
+  const h = routerHarness({ failOn: { "claude-haiku-5-5": boom, "claude-sonnet-5-5": boom } });
   const { handle } = await h.router.generateTextRouted("classifier", { prompt: "hi" });
   assert.equal(handle.modelId, "claude-opus-5-5");
 
   const all = routerHarness({
-    mode: "claude",
     failOn: { "claude-haiku-5-5": boom, "claude-sonnet-5-5": boom, "claude-opus-5-5": boom },
   });
   await assert.rejects(() => all.router.generateTextRouted("classifier", { prompt: "hi" }), /bad/);
 });
 
-section("router: no retry once canRetry says a tool already ran", async () => {
-  const h = routerHarness({ failOn: { "gemini-3.6-flash": { statusCode: 500 } } });
+section("router: Claude out of credit alerts the user, stops escalating and throws", async () => {
+  const h = routerHarness({ failOn: { "claude-haiku-5-5": claudeOut } });
   await assert.rejects(
-    () => h.router.withModelFallback("agent", async (handle) => h.router.runText(handle, { prompt: "hi" }), { canRetry: () => false }),
+    () => h.router.generateTextRouted("classifier", { prompt: "hi" }),
+    /credit balance is too low/
+  );
+  assert.deepEqual(h.alerts, ["anthropic"]);
+  assert.deepEqual(h.generated.map(modelOf), ["claude-haiku-5-5"], "Sonnet and Opus are not tried");
+});
+
+section("router: no retry once canRetry says a tool already ran", async () => {
+  const h = routerHarness({ failOn: { "claude-sonnet-5-5": { statusCode: 500 } } });
+  await assert.rejects(
+    () =>
+      h.router.withModelFallback("agent", async (handle) => h.router.runText(handle, { prompt: "hi" }), {
+        canRetry: () => false,
+      }),
     (err: unknown) => (err as { statusCode?: number }).statusCode === 500
   );
   assert.equal(h.generated.length, 1, "no second model was tried");
 });
 
-section("router: audio never uses Claude, even in claude mode", async () => {
-  const ok = routerHarness({ mode: "claude" });
-  const { handle } = await ok.router.generateTextRouted("audio", { prompt: "x" });
-  assert.equal(handle.provider, "gemini");
-
-  const depleted = routerHarness({ geminiDepleted: true });
+section("router: no Claude key means no model for Claude roles", async () => {
+  const h = routerHarness({ available: { anthropic: false } });
   await assert.rejects(
-    () => depleted.router.generateTextRouted("audio", { prompt: "x" }),
+    () => h.router.generateTextRouted("classifier", { prompt: "hi" }),
     (err: unknown) => err instanceof NoModelAvailableError
   );
+  const search = await h.router.generateTextRouted("search", { prompt: "q" });
+  assert.equal(search.handle.modelId, "sonar");
 });
 
-section("router: ledger failure falls back to default routing instead of throwing", async () => {
-  const h = routerHarness({ getStateThrows: true });
-  const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
-  assert.equal(handle.modelId, "gemini-3.6-flash");
-});
-
-section("router: records usage with the computed cost", async () => {
-  const h = routerHarness({ mode: "claude" });
+section("router: records usage with the computed cost and checks warnings after each call", async () => {
+  const h = routerHarness();
   await h.router.generateTextRouted("agent", { prompt: "hi" });
   assert.equal(h.used.length, 1);
   assert.equal(h.used[0].provider, "anthropic");
@@ -610,96 +535,94 @@ section("router: records usage with the computed cost", async () => {
   assert.equal(h.used[0].outputTokens, 500);
   assert.ok(Math.abs(h.used[0].costUsd - (1000 / 1e6) * 2 - (500 / 1e6) * 10) < 1e-12);
   assert.equal(h.used[0].role, "agent");
+  assert.equal(h.checks(), 1);
 });
 
-section("router: a missing Claude key keeps Gemini even when it is nearly out", async () => {
-  const h = routerHarness({
-    mode: "claude",
-    geminiBalance: { start: 100, spent: 98 },
-    available: { anthropic: false },
-  });
-  const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
-  assert.equal(handle.provider, "gemini");
+section("router: ledger failures never break a model call", async () => {
+  const h = routerHarness({ ledgerFails: true });
+  const { result } = await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal((result as { text: string }).text, "ok from claude-sonnet-5-5");
 });
 
 section("handle and provider-option helpers", () => {
   const claudeHandle = buildHandle({ provider: "anthropic", modelId: "claude-haiku-5-5" }, "parse", () => ({}) as never);
   assert.deepEqual(claudeHandle.sampling(0), {});
-  const geminiHandle = buildHandle({ provider: "gemini", modelId: "gemini-3.6-flash" }, "agent", () => ({}) as never);
-  assert.deepEqual(geminiHandle.sampling(0), { temperature: 0 });
-  assert.equal(geminiHandle.providerOptions, undefined);
-  assert.deepEqual(
-    mergeProviderOptions({ anthropic: { a: 1 } }, { anthropic: { b: 2 }, google: { c: 3 } }),
-    { anthropic: { a: 1, b: 2 }, google: { c: 3 } }
-  );
+  assert.equal(claudeHandle.isClaude, true);
+  const sonarHandle = buildHandle({ provider: "perplexity", modelId: "sonar" }, "search", () => ({}) as never);
+  assert.deepEqual(sonarHandle.sampling(0.2), { temperature: 0.2 });
+  assert.equal(sonarHandle.providerOptions, undefined);
+  assert.deepEqual(mergeProviderOptions({ anthropic: { a: 1 } }, { anthropic: { b: 2 }, other: { c: 3 } }), {
+    anthropic: { a: 1, b: 2 },
+    other: { c: 3 },
+  });
   assert.equal(mergeProviderOptions(undefined, undefined), undefined);
 });
 
-/** Files still allowed to call google()/perplexity() directly. Task 5 empties this list. */
-const NOT_YET_MIGRATED: string[] = [];
+section("/credits parsing: Claude and Perplexity only", () => {
+  assert.equal(parseCreditsCommand("hello"), null);
+  assert.equal(parseCreditsCommand("/creditsx"), null);
+  assert.equal(parseCreditsCommand("/todo"), null);
+  assert.deepEqual(parseCreditsCommand("/credits"), { kind: "show" });
+  assert.deepEqual(parseCreditsCommand("/credits@ego_bot"), { kind: "show" });
+  assert.deepEqual(parseCreditsCommand("/credits set claude 20"), {
+    kind: "set",
+    provider: "anthropic",
+    amountUsd: 20,
+  });
+  assert.deepEqual(parseCreditsCommand("/credits set Anthropic $12.5"), {
+    kind: "set",
+    provider: "anthropic",
+    amountUsd: 12.5,
+  });
+  assert.deepEqual(parseCreditsCommand("/credits set perplexity 8.94"), {
+    kind: "set",
+    provider: "perplexity",
+    amountUsd: 8.94,
+  });
+  assert.deepEqual(parseCreditsCommand("/credits set claude 0"), {
+    kind: "set",
+    provider: "anthropic",
+    amountUsd: 0,
+  });
+  for (const bad of [
+    "/credits set",
+    "/credits set claude",
+    "/credits set claude abc",
+    "/credits set claude -5",
+    "/credits set gemini 5",
+    "/credits nonsense",
+  ]) {
+    assert.deepEqual(parseCreditsCommand(bad), { kind: "usage_error", message: CREDITS_USAGE }, bad);
+  }
+});
+
+section("search prompts: Perplexity answers with the web, Claude says it cannot browse", () => {
+  assert.match(searchSystemPrompt("perplexity"), /3-4 sentences/);
+  assert.match(searchSystemPrompt("anthropic"), /cannot browse/i);
+  assert.match(NO_WEB_FOOTER, /no live web data/i);
+});
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+    else if (/\.(ts|tsx|mjs)$/.test(entry.name)) out.push(full);
   }
   return out;
 }
 
-section("no file outside the router picks a Gemini/Perplexity model directly", () => {
+section("no file outside the router picks a Claude, Perplexity or Gemini model directly", () => {
   const root = process.cwd();
   const offenders: string[] = [];
   for (const dir of ["app", "lib"]) {
     for (const file of sourceFiles(path.join(root, dir))) {
       const rel = path.relative(root, file);
-      if (rel === "lib/ai/router.ts" || NOT_YET_MIGRATED.includes(rel)) continue;
-      const text = fs.readFileSync(file, "utf8");
-      if (/\b(google|perplexity)\(\s*["'`]/.test(text)) offenders.push(rel);
+      if (rel === "lib/ai/router.ts") continue;
+      if (/\b(anthropic|perplexity|google)\(\s*["'`]/.test(fs.readFileSync(file, "utf8"))) offenders.push(rel);
     }
   }
   assert.deepEqual(offenders, [], "route model calls through lib/ai/router");
-});
-
-section("search prompts differ by provider and Claude is honest about having no web access", () => {
-  assert.match(searchSystemPrompt("perplexity"), /3-4 sentences/);
-  assert.match(searchSystemPrompt("gemini"), /2-3 sentences/);
-  assert.match(searchSystemPrompt("anthropic"), /cannot browse/i);
-  assert.match(NO_WEB_FOOTER, /no live web data/i);
-});
-
-section("/credits parsing", () => {
-  assert.equal(parseCreditsCommand("hello"), null);
-  assert.equal(parseCreditsCommand("/creditsx"), null);
-  assert.equal(parseCreditsCommand("/todo"), null);
-  assert.deepEqual(parseCreditsCommand("/credits"), { kind: "show" });
-  assert.deepEqual(parseCreditsCommand("/credits@ego_bot"), { kind: "show" });
-  assert.deepEqual(parseCreditsCommand("/credits set gemini 25"), {
-    kind: "set",
-    provider: "gemini",
-    amountUsd: 25,
-  });
-  assert.deepEqual(parseCreditsCommand("/credits set Perplexity $10.50"), {
-    kind: "set",
-    provider: "perplexity",
-    amountUsd: 10.5,
-  });
-  assert.deepEqual(parseCreditsCommand("/credits set gemini 0"), {
-    kind: "set",
-    provider: "gemini",
-    amountUsd: 0,
-  });
-  for (const bad of [
-    "/credits set",
-    "/credits set gemini",
-    "/credits set gemini abc",
-    "/credits set gemini -5",
-    "/credits set claude 5",
-    "/credits nonsense",
-  ]) {
-    assert.deepEqual(parseCreditsCommand(bad), { kind: "usage_error", message: CREDITS_USAGE }, bad);
-  }
 });
 
 // ---- runner ----

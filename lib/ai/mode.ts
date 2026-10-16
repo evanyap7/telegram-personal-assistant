@@ -1,15 +1,12 @@
-export type Provider = "gemini" | "perplexity" | "anthropic";
+export type Provider = "anthropic" | "perplexity" | "gemini";
 export type Role = "classifier" | "parse" | "agent" | "vision" | "search" | "audio";
-export type Mode = "credits" | "claude";
 export type ErrorKind = "depleted" | "transient" | "other";
 
-export interface ProviderStatus {
+export interface BalanceStatus {
   /** What the user said the dashboard balance was when they last ran /credits set; null if never set. */
   startBalanceUsd: number | null;
   /** Estimated spend since that balance was set. */
   spentUsd: number;
-  /** A depletion error was seen recently (circuit breaker). */
-  depleted: boolean;
 }
 
 export interface Candidate {
@@ -17,44 +14,32 @@ export interface Candidate {
   modelId: string;
 }
 
-/** A provider at or below this fraction of its balance is treated as nearly out. */
-export const SWITCH_THRESHOLD = 0.05;
+/** 0 = no warning yet; 10 = at most 10% left; 5 = at most 5% left. */
+export type WarningLevel = 0 | 10 | 5;
 
-export function remainingUsd(s: ProviderStatus): number | null {
+const SEVERITY: Record<WarningLevel, number> = { 0: 0, 10: 1, 5: 2 };
+
+export function isMoreSevere(a: WarningLevel, b: WarningLevel): boolean {
+  return SEVERITY[a] > SEVERITY[b];
+}
+
+export function remainingUsd(s: BalanceStatus): number | null {
   return s.startBalanceUsd === null ? null : s.startBalanceUsd - s.spentUsd;
 }
 
-export function remainingFraction(s: ProviderStatus): number | null {
+export function remainingFraction(s: BalanceStatus): number | null {
   if (s.startBalanceUsd === null) return null;
   if (s.startBalanceUsd <= 0) return 0;
   return Math.max(0, (s.startBalanceUsd - s.spentUsd) / s.startBalanceUsd);
 }
 
-export function isNearlyOut(s: ProviderStatus, threshold: number = SWITCH_THRESHOLD): boolean {
-  if (s.depleted) return true;
+/** The most severe warning level reached. An unknown balance never warns. */
+export function warningLevel(s: BalanceStatus): WarningLevel {
   const fraction = remainingFraction(s);
-  return fraction !== null && fraction <= threshold + 1e-9;
-}
-
-/** Global Claude mode: both providers nearly out. */
-export function decideMode(gemini: ProviderStatus, perplexity: ProviderStatus): Mode {
-  return isNearlyOut(gemini) && isNearlyOut(perplexity) ? "claude" : "credits";
-}
-
-/**
- * Which providers a role should skip right now. Text jobs skip a provider as soon as its
- * estimate says it is nearly out, so its work moves to Claude before it starts failing.
- * Balances are only estimates, so wherever Claude cannot take over (voice, or no Claude key)
- * a provider is skipped only after it has really refused a call (a depletion error).
- */
-export function providerFlags(
-  gemini: ProviderStatus,
-  perplexity: ProviderStatus,
-  role: Role,
-  claudeAvailable: boolean
-): { gemini: boolean; perplexity: boolean } {
-  const skip = role === "audio" || !claudeAvailable ? (s: ProviderStatus) => s.depleted : isNearlyOut;
-  return { gemini: skip(gemini), perplexity: skip(perplexity) };
+  if (fraction === null) return 0;
+  if (fraction <= 0.05 + 1e-9) return 5;
+  if (fraction <= 0.1 + 1e-9) return 10;
+  return 0;
 }
 
 // ---- error classification ----
@@ -108,22 +93,11 @@ export function classifyError(error: unknown): ErrorKind {
 
 // ---- candidate selection ----
 
-const gemini = (modelId: string): Candidate => ({ provider: "gemini", modelId });
-const perplexityCandidate = (modelId: string): Candidate => ({ provider: "perplexity", modelId });
 const claude = (modelId: string): Candidate => ({ provider: "anthropic", modelId });
 
 const HAIKU = "claude-haiku-5-5";
 const SONNET = "claude-sonnet-5-5";
 const OPUS = "claude-opus-5-5";
-
-const PRIMARY: Record<Role, Candidate[]> = {
-  classifier: [gemini("gemini-flash-lite-latest"), gemini("gemini-3.6-flash")],
-  parse: [gemini("gemini-flash-lite-latest"), gemini("gemini-3.6-flash")],
-  agent: [gemini("gemini-3.6-flash")],
-  vision: [gemini("gemini-3.6-flash")],
-  search: [perplexityCandidate("sonar"), gemini("gemini-3.6-flash")],
-  audio: [gemini("gemini-3.6-flash")],
-};
 
 export function claudeChain(role: Role): Candidate[] {
   switch (role) {
@@ -140,25 +114,22 @@ export function claudeChain(role: Role): Candidate[] {
 }
 
 /**
- * Ordered models to try for a role. In claude mode Claude goes first; otherwise
- * Gemini/Perplexity go first with Claude as the tail. Audio never uses Claude.
- * `skipped` marks providers to leave out (see providerFlags). A provider skipped only on an
- * estimate (`depleted` says it has not really refused a call) is kept as a last resort behind
- * Claude, so a broken Claude key can never leave a working provider unused.
+ * Ordered models to try for a role: Claude's tier chain, with Perplexity Sonar first for
+ * search unless its breaker is open or its key is missing. Audio is the one job Claude
+ * cannot do, so it uses Gemini and never falls to Claude.
  */
 export function candidatesFor(
   role: Role,
-  mode: Mode,
-  skipped: { gemini: boolean; perplexity: boolean },
   available: Record<Provider, boolean>,
-  depleted: { gemini: boolean; perplexity: boolean } = skipped
+  perplexityDown: boolean
 ): Candidate[] {
+  if (role === "audio") {
+    return available.gemini ? [{ provider: "gemini", modelId: "gemini-3.6-flash" }] : [];
+  }
   const claudeCandidates = available.anthropic ? claudeChain(role) : [];
-  const isSkipped = (c: Candidate) => c.provider !== "anthropic" && skipped[c.provider];
-  const primaries = PRIMARY[role].filter((c) => available[c.provider] && !isSkipped(c));
-  const lastResort = PRIMARY[role].filter(
-    (c) => available[c.provider] && isSkipped(c) && c.provider !== "anthropic" && !depleted[c.provider]
-  );
-  if (mode === "claude" && claudeCandidates.length > 0) return [...claudeCandidates, ...lastResort];
-  return [...primaries, ...claudeCandidates, ...lastResort];
+  const web: Candidate[] =
+    role === "search" && available.perplexity && !perplexityDown
+      ? [{ provider: "perplexity", modelId: "sonar" }]
+      : [];
+  return [...web, ...claudeCandidates];
 }

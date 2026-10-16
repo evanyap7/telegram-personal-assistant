@@ -1,15 +1,17 @@
 import {
-  SWITCH_THRESHOLD,
-  decideMode,
+  isMoreSevere,
   remainingFraction,
   remainingUsd,
-  type Mode,
+  warningLevel,
+  type BalanceStatus,
   type Provider,
-  type ProviderStatus,
+  type WarningLevel,
 } from "./mode";
 import { PRICING_AS_OF } from "./pricing";
 
-export type CreditProvider = "gemini" | "perplexity";
+/** Providers whose credit balance EGO tracks and warns about. */
+export type CreditProvider = "anthropic" | "perplexity";
+export const CREDIT_PROVIDERS: CreditProvider[] = ["anthropic", "perplexity"];
 
 export interface UsageRow {
   timestamp: string;
@@ -26,39 +28,38 @@ export interface BalanceRow {
   setAt: string;
 }
 
-export interface LedgerMeta {
-  announcedMode: Mode;
-  depletedUntil: Partial<Record<CreditProvider, string>>;
+export interface AlertState {
+  warnedLevel: WarningLevel;
+  /** When the last real-depletion alert was sent (ISO). */
+  alertedAt?: string;
 }
 
 export interface LedgerStore {
   readBalances(): Promise<Partial<Record<CreditProvider, BalanceRow>>>;
   readUsage(): Promise<UsageRow[]>;
-  readMeta(): Promise<LedgerMeta>;
+  readAlertState(): Promise<Record<CreditProvider, AlertState>>;
+  /** Sets a new balance and re-arms the warnings (warnedLevel back to 0, alertedAt cleared). */
   setBalance(provider: CreditProvider, usd: number, setAtIso: string): Promise<void>;
-  setDepletedUntil(provider: CreditProvider, untilIso: string): Promise<void>;
-  writeAnnouncedMode(mode: Mode): Promise<void>;
+  setWarnedLevel(provider: CreditProvider, level: WarningLevel): Promise<void>;
+  setAlertedAt(provider: CreditProvider, iso: string): Promise<void>;
   appendUsage(row: UsageRow): Promise<void>;
 }
 
-export interface LedgerState {
-  mode: Mode;
-  gemini: ProviderStatus;
-  perplexity: ProviderStatus;
-}
-
 export interface Ledger {
-  getState(): Promise<LedgerState>;
-  markDepleted(provider: CreditProvider): Promise<void>;
   recordUsage(row: UsageRow): Promise<void>;
+  /** Sends a Telegram warning when a balance first reaches 10% or 5% left. */
+  checkWarnings(): Promise<void>;
+  /** Urgent alert after a real "credits depleted" error; at most one per 30 minutes per provider. */
+  alertDepleted(provider: CreditProvider): Promise<void>;
   setBalance(provider: CreditProvider, usd: number): Promise<void>;
   describe(): Promise<string>;
 }
 
 export const STATE_TTL_MS = 60_000;
-export const DEPLETED_COOLDOWN_MS = 30 * 60_000;
+export const ALERT_COOLDOWN_MS = 30 * 60_000;
 
-const PROVIDER_NAME: Record<CreditProvider, string> = { gemini: "Gemini", perplexity: "Perplexity" };
+const NAME: Record<CreditProvider, string> = { anthropic: "Claude", perplexity: "Perplexity" };
+const COMMAND_NAME: Record<CreditProvider, string> = { anthropic: "claude", perplexity: "perplexity" };
 
 /** Sum of recorded cost for one provider at or after `sinceIso` ("" means all time). ISO strings compare lexicographically. */
 export function sumSpent(rows: UsageRow[], provider: Provider, sinceIso: string): number {
@@ -69,22 +70,17 @@ export function sumSpent(rows: UsageRow[], provider: Provider, sinceIso: string)
   return total;
 }
 
-function percentLeft(s: ProviderStatus): string {
-  if (s.depleted) return "depleted";
-  const fraction = remainingFraction(s);
-  return fraction === null ? "balance not set" : `${(fraction * 100).toFixed(1)}% left`;
-}
-
-export function modeChangeMessage(to: Mode, gemini: ProviderStatus, perplexity: ProviderStatus): string {
-  if (to === "claude") {
-    return `⚠️ Gemini (${percentLeft(gemini)}) and Perplexity (${percentLeft(perplexity)}) credits are almost used up. EGO is now using Claude (Haiku, Sonnet, Opus). Voice notes still use Gemini. After you top up, send /credits set gemini <balance> and /credits set perplexity <balance> to switch back.`;
-  }
-  return "✅ Credits topped up. EGO is back on Gemini and Perplexity.";
+export function warningMessage(provider: CreditProvider, level: WarningLevel, status: BalanceStatus): string {
+  const left = remainingUsd(status);
+  const dollars = left === null ? "" : ` (about $${Math.max(0, left).toFixed(2)})`;
+  return `⚠️ ${NAME[provider]} credits are down to ${level}% or less${dollars}. Top up soon, then send /credits set ${COMMAND_NAME[provider]} <new balance> so EGO keeps counting from the right number.`;
 }
 
 export function depletedMessage(provider: CreditProvider): string {
-  const name = PROVIDER_NAME[provider];
-  return `⚠️ ${name} says its credits are used up. EGO is sending ${name}'s work to Claude for now. After a top-up, send /credits set ${provider} <balance>.`;
+  if (provider === "anthropic") {
+    return "🚨 Claude says its credits are used up, so EGO cannot answer right now. Top up in the Anthropic console, then send /credits set claude <new balance>.";
+  }
+  return "⚠️ Perplexity says its credits are used up. EGO will answer web questions from Claude's own knowledge until you top up. After topping up, send /credits set perplexity <new balance>.";
 }
 
 export function createLedger(deps: {
@@ -93,49 +89,42 @@ export function createLedger(deps: {
   notify: (text: string) => Promise<void>;
 }): Ledger {
   const { store, now, notify } = deps;
-  let cache: { at: number; state: LedgerState } | null = null;
+  let cache: { at: number; statuses: Record<CreditProvider, BalanceStatus> } | null = null;
 
-  async function getState(): Promise<LedgerState> {
+  async function loadStatuses(): Promise<Record<CreditProvider, BalanceStatus>> {
     const nowMs = now().getTime();
-    if (cache && nowMs - cache.at < STATE_TTL_MS) return cache.state;
-
-    const [balances, usage, meta] = await Promise.all([
-      store.readBalances(),
-      store.readUsage(),
-      store.readMeta(),
-    ]);
-    const nowIso = now().toISOString();
-
-    const statusFor = (provider: CreditProvider): ProviderStatus => {
+    if (cache && nowMs - cache.at < STATE_TTL_MS) return cache.statuses;
+    const [balances, usage] = await Promise.all([store.readBalances(), store.readUsage()]);
+    const statuses = {} as Record<CreditProvider, BalanceStatus>;
+    for (const provider of CREDIT_PROVIDERS) {
       const balance = balances[provider];
-      const until = meta.depletedUntil[provider];
-      return {
+      statuses[provider] = {
         startBalanceUsd: balance ? balance.startBalanceUsd : null,
         spentUsd: balance ? sumSpent(usage, provider, balance.setAt) : 0,
-        depleted: Boolean(until && until > nowIso),
       };
-    };
-
-    const gemini = statusFor("gemini");
-    const perplexity = statusFor("perplexity");
-    const state: LedgerState = { mode: decideMode(gemini, perplexity), gemini, perplexity };
-    cache = { at: nowMs, state };
-
-    if (state.mode !== meta.announcedMode) {
-      // Claim the change before notifying so a second instance is less likely to repeat it.
-      await store.writeAnnouncedMode(state.mode);
-      await notify(modeChangeMessage(state.mode, gemini, perplexity)).catch(() => {});
     }
-    return state;
+    cache = { at: nowMs, statuses };
+    return statuses;
   }
 
-  async function markDepleted(provider: CreditProvider): Promise<void> {
-    const meta = await store.readMeta();
-    const nowIso = now().toISOString();
-    const existing = meta.depletedUntil[provider];
-    if (existing && existing > nowIso) return;
-    await store.setDepletedUntil(provider, new Date(now().getTime() + DEPLETED_COOLDOWN_MS).toISOString());
-    cache = null;
+  async function checkWarnings(): Promise<void> {
+    const statuses = await loadStatuses();
+    const alertState = await store.readAlertState();
+    for (const provider of CREDIT_PROVIDERS) {
+      const level = warningLevel(statuses[provider]);
+      if (isMoreSevere(level, alertState[provider].warnedLevel)) {
+        // Claim the level before notifying so a second instance is less likely to repeat it.
+        await store.setWarnedLevel(provider, level);
+        await notify(warningMessage(provider, level, statuses[provider])).catch(() => {});
+      }
+    }
+  }
+
+  async function alertDepleted(provider: CreditProvider): Promise<void> {
+    const state = await store.readAlertState();
+    const last = state[provider].alertedAt;
+    if (last && new Date(last).getTime() + ALERT_COOLDOWN_MS > now().getTime()) return;
+    await store.setAlertedAt(provider, now().toISOString());
     await notify(depletedMessage(provider)).catch(() => {});
   }
 
@@ -150,30 +139,29 @@ export function createLedger(deps: {
   async function setBalance(provider: CreditProvider, usd: number): Promise<void> {
     await store.setBalance(provider, usd, now().toISOString());
     cache = null;
-    await getState();
+    await checkWarnings();
   }
 
   async function describe(): Promise<string> {
-    const [state, usage] = await Promise.all([getState(), store.readUsage()]);
-    const line = (name: string, provider: CreditProvider, s: ProviderStatus) => {
+    const statuses = await loadStatuses();
+    const line = (provider: CreditProvider) => {
+      const s = statuses[provider];
       const left = remainingUsd(s);
       const fraction = remainingFraction(s);
       if (left === null || fraction === null || s.startBalanceUsd === null) {
-        return `• ${name}: balance not set (send /credits set ${provider} <dashboard balance>)`;
+        return `• ${NAME[provider]}: balance not set (send /credits set ${COMMAND_NAME[provider]} <dashboard balance>)`;
       }
-      return `• ${name}: about $${Math.max(0, left).toFixed(2)} left of $${s.startBalanceUsd.toFixed(2)} (${(
+      return `• ${NAME[provider]}: about $${Math.max(0, left).toFixed(2)} left of $${s.startBalanceUsd.toFixed(2)} (${(
         fraction * 100
-      ).toFixed(1)}%)${s.depleted ? " - reported depleted" : ""}`;
+      ).toFixed(1)}%)`;
     };
     return [
       "🧠 AI credits (estimates from tracked usage)",
-      `Mode: ${state.mode === "claude" ? "Claude fallback is ON" : "Gemini + Perplexity"}`,
-      line("Gemini", "gemini", state.gemini),
-      line("Perplexity", "perplexity", state.perplexity),
-      `• Claude spend so far: $${sumSpent(usage, "anthropic", "").toFixed(2)}`,
-      `A provider moves to Claude when it is at ${SWITCH_THRESHOLD * 100}% or less. Prices assumed as of ${PRICING_AS_OF}.`,
+      line("anthropic"),
+      line("perplexity"),
+      `EGO warns you at 10% and 5% left. Prices assumed as of ${PRICING_AS_OF}.`,
     ].join("\n");
   }
 
-  return { getState, markDepleted, recordUsage, setBalance, describe };
+  return { recordUsage, checkWarnings, alertDepleted, setBalance, describe };
 }

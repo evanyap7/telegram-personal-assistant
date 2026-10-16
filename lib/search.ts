@@ -3,7 +3,7 @@ import { runText, withModelFallback } from "./ai/router";
 
 export interface SearchAnswerResult {
   answer: string;
-  source: "sonar" | "gemini" | "claude" | "fallback";
+  source: "sonar" | "claude" | "fallback";
 }
 
 export const NO_WEB_FOOTER = "(No live web data right now, so this comes from my own knowledge.)";
@@ -15,11 +15,6 @@ Answer the user's question directly, accurately, and concisely.
 Keep responses under 3-4 sentences whenever possible, with practical, factual information.
 Include relevant times, opening hours, or numbers if requested.
 Do not add conversational fluff or unprompted disclaimers.`;
-  }
-  if (provider === "gemini") {
-    return `You are EGO, a helpful, concise personal assistant.
-Answer the user's question directly and concisely in 2-3 sentences.
-If it looks like a calendar event, expense, or to-do that wasn't recognized, suggest how to phrase it.`;
   }
   return `You are EGO, a helpful, concise personal assistant for a user in Singapore.
 Answer the user's question directly and concisely in 2-3 sentences from your own knowledge.
@@ -51,7 +46,7 @@ export async function answerWithSearch(query: string): Promise<SearchAnswerResul
     if (handle.provider === "anthropic") {
       return { answer: `${text}\n\n${NO_WEB_FOOTER}`, source: "claude" };
     }
-    return { answer: text, source: handle.provider === "perplexity" ? "sonar" : "gemini" };
+    return { answer: text, source: "sonar" };
   } catch (error) {
     console.warn("All search models failed:", error);
   }

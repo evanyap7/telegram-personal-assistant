@@ -26,11 +26,9 @@ async function run() {
 
   const router = createRouter({
     ledger: {
-      getState: async () => {
-        throw new Error("not used");
-      },
-      markDepleted: async () => {},
       recordUsage: async () => {},
+      checkWarnings: async () => {},
+      alertDepleted: async () => {},
     },
     available: () => ({ gemini: false, perplexity: false, anthropic: true }),
     makeModel: (c) => claudeModel(c.modelId),

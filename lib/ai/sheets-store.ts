@@ -1,17 +1,23 @@
 import { getSheetsClient } from "../google";
-import type {
-  BalanceRow,
-  CreditProvider,
-  LedgerMeta,
-  LedgerStore,
-  UsageRow,
-} from "./ledger";
-import type { Mode, Provider } from "./mode";
+import type { AlertState, BalanceRow, CreditProvider, LedgerStore, UsageRow } from "./ledger";
+import type { Provider, WarningLevel } from "./mode";
 
 const CREDITS_SHEET = "AICredits";
 const USAGE_SHEET = "AIUsage";
-// AICredits rows: 2 = gemini, 3 = perplexity, 4 = meta (announced mode lives in column E).
-const ROW: Record<CreditProvider | "meta", number> = { gemini: 2, perplexity: 3, meta: 4 };
+// AICredits rows: 2 = anthropic, 3 = perplexity. Columns: provider | startBalanceUsd | setAt | warnedLevel | alertedAt
+const ROW: Record<CreditProvider, number> = { anthropic: 2, perplexity: 3 };
+
+const CREDITS_VALUES = [
+  ["provider", "startBalanceUsd", "setAt", "warnedLevel", "alertedAt"],
+  ["anthropic", "", "", "0", ""],
+  ["perplexity", "", "", "0", ""],
+  ["", "", "", "", ""],
+];
+
+/** The first version of this sheet had rows gemini / perplexity / meta; row 2 is the tell. */
+export function needsLayoutMigration(a2: string | undefined): boolean {
+  return a2 !== "anthropic";
+}
 
 function spreadsheetId(): string {
   const id = process.env.GOOGLE_SHEET_ID;
@@ -37,15 +43,21 @@ async function ensureSheets(): Promise<void> {
       spreadsheetId: id,
       range: `${CREDITS_SHEET}!A1:E4`,
       valueInputOption: "RAW",
-      requestBody: {
-        values: [
-          ["provider", "startBalanceUsd", "setAt", "depletedUntil", "announcedMode"],
-          ["gemini", "", "", "", ""],
-          ["perplexity", "", "", "", ""],
-          ["meta", "", "", "", "credits"],
-        ],
-      },
+      requestBody: { values: CREDITS_VALUES },
     });
+  } else {
+    const head = await sheets.spreadsheets.values.get({
+      spreadsheetId: id,
+      range: `${CREDITS_SHEET}!A2:A2`,
+    });
+    if (needsLayoutMigration(head.data.values?.[0]?.[0])) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: id,
+        range: `${CREDITS_SHEET}!A1:E4`,
+        valueInputOption: "RAW",
+        requestBody: { values: CREDITS_VALUES },
+      });
+    }
   }
 
   if (!titles.includes(USAGE_SHEET)) {
@@ -69,9 +81,14 @@ async function readCredits(): Promise<string[][]> {
   await ensureSheets();
   const res = await getSheetsClient().spreadsheets.values.get({
     spreadsheetId: spreadsheetId(),
-    range: `${CREDITS_SHEET}!A2:E4`,
+    range: `${CREDITS_SHEET}!A2:E3`,
   });
   return (res.data.values ?? []) as string[][];
+}
+
+function toLevel(raw: string | undefined): WarningLevel {
+  const n = parseInt(raw ?? "", 10);
+  return n === 5 ? 5 : n === 10 ? 10 : 0;
 }
 
 export function createSheetsLedgerStore(): LedgerStore {
@@ -79,7 +96,7 @@ export function createSheetsLedgerStore(): LedgerStore {
     async readBalances() {
       const rows = await readCredits();
       const out: Partial<Record<CreditProvider, BalanceRow>> = {};
-      (["gemini", "perplexity"] as const).forEach((provider, i) => {
+      (["anthropic", "perplexity"] as const).forEach((provider, i) => {
         const r = rows[i] ?? [];
         const balance = parseFloat(r[1] ?? "");
         if (Number.isFinite(balance) && r[2]) out[provider] = { startBalanceUsd: balance, setAt: r[2] };
@@ -96,7 +113,7 @@ export function createSheetsLedgerStore(): LedgerStore {
       return ((res.data.values ?? []) as string[][]).map(
         (r): UsageRow => ({
           timestamp: r[0] ?? "",
-          provider: (r[1] ?? "gemini") as Provider,
+          provider: (r[1] ?? "anthropic") as Provider,
           model: r[2] ?? "",
           inputTokens: Number(r[3]) || 0,
           outputTokens: Number(r[4]) || 0,
@@ -106,42 +123,42 @@ export function createSheetsLedgerStore(): LedgerStore {
       );
     },
 
-    async readMeta() {
+    async readAlertState() {
       const rows = await readCredits();
-      const depletedUntil: LedgerMeta["depletedUntil"] = {};
-      if (rows[0]?.[3]) depletedUntil.gemini = rows[0][3];
-      if (rows[1]?.[3]) depletedUntil.perplexity = rows[1][3];
-      const announced: Mode = rows[2]?.[4] === "claude" ? "claude" : "credits";
-      return { announcedMode: announced, depletedUntil };
+      const state = (i: number): AlertState => ({
+        warnedLevel: toLevel(rows[i]?.[3]),
+        alertedAt: rows[i]?.[4] || undefined,
+      });
+      return { anthropic: state(0), perplexity: state(1) };
     },
 
     async setBalance(provider, usd, setAtIso) {
       await ensureSheets();
       await getSheetsClient().spreadsheets.values.update({
         spreadsheetId: spreadsheetId(),
-        range: `${CREDITS_SHEET}!B${ROW[provider]}:D${ROW[provider]}`,
+        range: `${CREDITS_SHEET}!B${ROW[provider]}:E${ROW[provider]}`,
         valueInputOption: "RAW",
-        requestBody: { values: [[usd, setAtIso, ""]] },
+        requestBody: { values: [[usd, setAtIso, "0", ""]] },
       });
     },
 
-    async setDepletedUntil(provider, untilIso) {
+    async setWarnedLevel(provider, level) {
       await ensureSheets();
       await getSheetsClient().spreadsheets.values.update({
         spreadsheetId: spreadsheetId(),
         range: `${CREDITS_SHEET}!D${ROW[provider]}`,
         valueInputOption: "RAW",
-        requestBody: { values: [[untilIso]] },
+        requestBody: { values: [[String(level)]] },
       });
     },
 
-    async writeAnnouncedMode(mode) {
+    async setAlertedAt(provider, iso) {
       await ensureSheets();
       await getSheetsClient().spreadsheets.values.update({
         spreadsheetId: spreadsheetId(),
-        range: `${CREDITS_SHEET}!E${ROW.meta}`,
+        range: `${CREDITS_SHEET}!E${ROW[provider]}`,
         valueInputOption: "RAW",
-        requestBody: { values: [[mode]] },
+        requestBody: { values: [[iso]] },
       });
     },
 
