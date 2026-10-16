@@ -13,6 +13,17 @@ import {
   type ProviderStatus,
 } from "../lib/ai/mode";
 import { costUsd, PERPLEXITY_REQUEST_FEE_USD } from "../lib/ai/pricing";
+import {
+  DEPLETED_COOLDOWN_MS,
+  STATE_TTL_MS,
+  createLedger,
+  sumSpent,
+  type BalanceRow,
+  type CreditProvider,
+  type LedgerMeta,
+  type LedgerStore,
+  type UsageRow,
+} from "../lib/ai/ledger";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -186,6 +197,191 @@ section("pricing", () => {
   assert.equal(costUsd("sonar", 0, 0), PERPLEXITY_REQUEST_FEE_USD, "Sonar adds its per-request fee");
   assert.ok(costUsd("some-future-model", 1_000_000, 1_000_000) > 0, "unknown models use a conservative price");
   assert.equal(costUsd("claude-haiku-5-5", 0, 0), 0);
+});
+
+function memoryStore() {
+  const balances: Partial<Record<CreditProvider, BalanceRow>> = {};
+  const usage: UsageRow[] = [];
+  const meta: LedgerMeta = { announcedMode: "credits", depletedUntil: {} };
+  const calls = { readUsage: 0, appendUsage: 0 };
+  let failAppend = false;
+  const store: LedgerStore = {
+    readBalances: async () => ({ ...balances }),
+    readUsage: async () => {
+      calls.readUsage += 1;
+      return [...usage];
+    },
+    readMeta: async () => ({ announcedMode: meta.announcedMode, depletedUntil: { ...meta.depletedUntil } }),
+    setBalance: async (p, usd, setAt) => {
+      balances[p] = { startBalanceUsd: usd, setAt };
+      delete meta.depletedUntil[p];
+    },
+    setDepletedUntil: async (p, until) => {
+      meta.depletedUntil[p] = until;
+    },
+    writeAnnouncedMode: async (m) => {
+      meta.announcedMode = m;
+    },
+    appendUsage: async (row) => {
+      calls.appendUsage += 1;
+      if (failAppend) throw new Error("sheets down");
+      usage.push(row);
+    },
+  };
+  return { store, balances, usage, meta, calls, failAppends: (v: boolean) => (failAppend = v) };
+}
+
+function clock(startIso: string) {
+  let t = new Date(startIso).getTime();
+  return { now: () => new Date(t), advance: (ms: number) => (t += ms) };
+}
+
+const row = (provider: UsageRow["provider"], costUsd: number, timestamp: string): UsageRow => ({
+  timestamp,
+  provider,
+  model: "m",
+  inputTokens: 1,
+  outputTokens: 1,
+  costUsd,
+  role: "agent",
+});
+
+section("sumSpent counts only the provider's spend since the balance was set", () => {
+  const rows = [
+    row("gemini", 1, "2026-10-01T00:00:00.000Z"),
+    row("gemini", 2, "2026-10-10T00:00:00.000Z"),
+    row("perplexity", 5, "2026-10-10T00:00:00.000Z"),
+    row("gemini", 4, "2026-10-12T00:00:00.000Z"),
+  ];
+  assert.equal(sumSpent(rows, "gemini", "2026-10-05T00:00:00.000Z"), 6);
+  assert.equal(sumSpent(rows, "gemini", ""), 7);
+  assert.equal(sumSpent(rows, "anthropic", ""), 0);
+});
+
+section("ledger: unknown balances stay in credits mode with no notice", async () => {
+  const m = memoryStore();
+  const notes: string[] = [];
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
+  const state = await ledger.getState();
+  assert.equal(state.mode, "credits");
+  assert.equal(state.gemini.startBalanceUsd, null);
+  assert.equal(notes.length, 0);
+});
+
+section("ledger: both providers at 5% switches to claude and announces exactly once", async () => {
+  const m = memoryStore();
+  const notes: string[] = [];
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
+  await ledger.setBalance("gemini", 100);
+  await ledger.setBalance("perplexity", 10);
+  await ledger.recordUsage(row("gemini", 95.5, "2026-10-16T00:00:01.000Z"));
+  await ledger.recordUsage(row("perplexity", 9.6, "2026-10-16T00:00:02.000Z"));
+  c.advance(STATE_TTL_MS + 1);
+  const state = await ledger.getState();
+  assert.equal(state.mode, "claude");
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /Claude/);
+  c.advance(STATE_TTL_MS + 1);
+  await ledger.getState();
+  assert.equal(notes.length, 1, "no repeat notice while the mode stays the same");
+  assert.equal(m.meta.announcedMode, "claude");
+});
+
+section("ledger: only one provider low keeps credits mode", async () => {
+  const m = memoryStore();
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
+  await ledger.setBalance("gemini", 100);
+  await ledger.setBalance("perplexity", 10);
+  await ledger.recordUsage(row("gemini", 99, "2026-10-16T00:00:01.000Z"));
+  c.advance(STATE_TTL_MS + 1);
+  assert.equal((await ledger.getState()).mode, "credits");
+});
+
+section("ledger: a Gemini balance of zero is reported while Perplexity stays healthy", async () => {
+  const m = memoryStore();
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
+  await ledger.setBalance("gemini", 0);
+  await ledger.setBalance("perplexity", 8.94);
+  const state = await ledger.getState();
+  assert.equal(state.mode, "credits");
+  assert.equal(state.gemini.startBalanceUsd, 0);
+  assert.equal(state.perplexity.startBalanceUsd, 8.94);
+});
+
+section("ledger: a top-up restarts counting and switches back with one notice", async () => {
+  const m = memoryStore();
+  const notes: string[] = [];
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
+  await ledger.setBalance("gemini", 100);
+  await ledger.setBalance("perplexity", 10);
+  await ledger.recordUsage(row("gemini", 98, "2026-10-16T00:00:01.000Z"));
+  await ledger.recordUsage(row("perplexity", 9.9, "2026-10-16T00:00:02.000Z"));
+  c.advance(STATE_TTL_MS + 1);
+  assert.equal((await ledger.getState()).mode, "claude");
+  c.advance(1000);
+  await ledger.setBalance("gemini", 50);
+  const after = await ledger.getState();
+  assert.equal(after.gemini.spentUsd, 0, "spend before the new balance does not count");
+  assert.equal(after.mode, "credits");
+  assert.equal(notes.length, 2);
+  assert.match(notes[1], /topped up|back on Gemini/i);
+});
+
+section("ledger: depletion marker notifies once, lasts 30 minutes, then lapses", async () => {
+  const m = memoryStore();
+  const notes: string[] = [];
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async (t) => void notes.push(t) });
+  await ledger.markDepleted("gemini");
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /Gemini/);
+  assert.equal((await ledger.getState()).gemini.depleted, true);
+  await ledger.markDepleted("gemini");
+  assert.equal(notes.length, 1, "already marked, so no second notice");
+  c.advance(DEPLETED_COOLDOWN_MS + 1000);
+  assert.equal((await ledger.getState()).gemini.depleted, false);
+});
+
+section("ledger: state is cached for a minute", async () => {
+  const m = memoryStore();
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
+  await ledger.getState();
+  await ledger.getState();
+  assert.equal(m.calls.readUsage, 1);
+  c.advance(STATE_TTL_MS + 1);
+  await ledger.getState();
+  assert.equal(m.calls.readUsage, 2);
+});
+
+section("ledger: a failing usage write never throws", async () => {
+  const m = memoryStore();
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
+  m.failAppends(true);
+  await ledger.recordUsage(row("gemini", 1, "2026-10-16T00:00:01.000Z"));
+  assert.equal(m.calls.appendUsage, 1);
+});
+
+section("ledger: /credits text shows percent left, unset hints and Claude spend", async () => {
+  const m = memoryStore();
+  const c = clock("2026-10-16T00:00:00.000Z");
+  const ledger = createLedger({ store: m.store, now: c.now, notify: async () => {} });
+  await ledger.setBalance("gemini", 100);
+  await ledger.recordUsage(row("gemini", 25, "2026-10-16T00:00:01.000Z"));
+  await ledger.recordUsage(row("anthropic", 1.5, "2026-10-16T00:00:02.000Z"));
+  c.advance(STATE_TTL_MS + 1);
+  const text = await ledger.describe();
+  assert.match(text, /Gemini: about \$75\.00 left of \$100\.00 \(75\.0%\)/);
+  assert.match(text, /Perplexity: balance not set/);
+  assert.match(text, /\/credits set perplexity/);
+  assert.match(text, /Claude spend so far: \$1\.50/);
+  assert.match(text, /5%/);
 });
 
 // ---- runner ----
