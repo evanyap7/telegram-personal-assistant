@@ -64,6 +64,7 @@ To-do rules:
 - Add to the to-do list: todo_add. Several tasks in one message ("1. buy milk 2. do laundry", "add milk, car wash and desk to my tasks"): one todo_add call with the tasks array.
 - "Remind me to ...", "nag me to ...", "remind me every 15 minutes to ...": todo_add with remindIntervalMinutes 30, or the interval the user named. A plain "add buy milk to my todo list" has NO remindIntervalMinutes.
 - "Remind me to call John today": task "call John", dueDate today, remindIntervalMinutes 30.
+- A reminder that includes a clock time ("remind me to call mom at 5 pm") is still todo_add: put the time in the task text ("call mom at 5 pm"), set dueDate to the day, and use remindIntervalMinutes 30. Do NOT use calendar_add for it unless the user explicitly says to put it on the calendar or schedule it.
 - "What do I have to do today?": todo_view timeframe today. "Show my tasks", "what's on my to-do list?": todo_view timeframe all.
 - "I'm done with buy milk", "finished buying groceries", "mark buy milk as done": todo_complete with a keyword query.
 - "Remove buy milk from my list", "delete task call John": todo_delete_search.

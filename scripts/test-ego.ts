@@ -33,6 +33,7 @@ import { SECURITY_SYSTEM_GUARDRAIL } from "../lib/security";
 import { isEgoEnabled } from "../lib/agent/ego-flag";
 import { strictSetEntry } from "../lib/workout/workout-session";
 import { buildTranscriptionSystemPrompt } from "../lib/voice-transcribe";
+import { EGO_EVAL_CASES } from "./ego-eval-cases";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -448,6 +449,13 @@ section("ego prompt: includes pending-calendar context, excludes chat history, a
   assert.match(p, /processPendingImage/);
 });
 
+section("ego prompt: a reminder with a clock time is still a to-do, not a calendar event", () => {
+  const p = buildEgoInstructions(promptBase);
+  assert.match(p, /remind me to call mom at 5 pm/i);
+  assert.match(p, /still todo_add/i);
+  assert.match(p, /unless the user (explicitly )?(says|asks)[^.]*calendar/i);
+});
+
 section("workout context line", () => {
   assert.match(describeWorkoutContext(null), /no active workout/i);
   assert.match(describeWorkoutContext({ day: 2, logged: [{}] }), /1 set logged/);
@@ -503,6 +511,20 @@ section("transcription prompt carries domain vocabulary and the user's contact n
   assert.match(p, /Output ONLY the transcribed text/);
   const bare = buildTranscriptionSystemPrompt([]);
   assert.match(bare, /PayLah/);
+});
+
+section("routing eval fixtures only expect tools that exist", () => {
+  const { deps } = makeDeps();
+  const tools = buildEgoTools(deps);
+  assert.ok(EGO_EVAL_CASES.length >= 30, "keep at least 30 routing cases");
+  for (const c of EGO_EVAL_CASES) {
+    for (const name of c.expectTools) {
+      assert.ok(name in tools, `eval case "${c.message}" expects unknown tool ${name}`);
+    }
+    if (c.expectNone) assert.equal(c.expectTools.length, 0, `"${c.message}" is expectNone`);
+  }
+  assert.ok(EGO_EVAL_CASES.some((c) => c.inputMode === "voice"), "include voice phrasings");
+  assert.ok(EGO_EVAL_CASES.some((c) => c.workoutActive), "include an active-workout case");
 });
 
 // ---- runner ----
