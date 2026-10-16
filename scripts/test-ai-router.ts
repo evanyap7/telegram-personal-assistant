@@ -23,7 +23,16 @@ import {
   type LedgerMeta,
   type LedgerStore,
   type UsageRow,
+  type LedgerState,
 } from "../lib/ai/ledger";
+import {
+  CLAUDE_MIN_OUTPUT_TOKENS,
+  NoModelAvailableError,
+  buildHandle,
+  createRouter,
+  mergeProviderOptions,
+  type RouterDeps,
+} from "../lib/ai/router";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -382,6 +391,213 @@ section("ledger: /credits text shows percent left, unset hints and Claude spend"
   assert.match(text, /\/credits set perplexity/);
   assert.match(text, /Claude spend so far: \$1\.50/);
   assert.match(text, /5%/);
+});
+
+function routerHarness(overrides: {
+  mode?: LedgerState["mode"];
+  geminiDepleted?: boolean;
+  geminiBalance?: { start: number; spent: number };
+  perplexityDepleted?: boolean;
+  failOn?: Record<string, unknown>;
+  available?: Partial<Record<"gemini" | "perplexity" | "anthropic", boolean>>;
+  getStateThrows?: boolean;
+} = {}) {
+  const generated: Array<Record<string, unknown>> = [];
+  const used: UsageRow[] = [];
+  const depletedMarks: string[] = [];
+  const state: LedgerState = {
+    mode: overrides.mode ?? "credits",
+    gemini: {
+      startBalanceUsd: overrides.geminiBalance?.start ?? 100,
+      spentUsd: overrides.geminiBalance?.spent ?? 10,
+      depleted: overrides.geminiDepleted ?? false,
+    },
+    perplexity: { startBalanceUsd: 10, spentUsd: 1, depleted: overrides.perplexityDepleted ?? false },
+  };
+  const deps: RouterDeps = {
+    ledger: {
+      getState: async () => {
+        if (overrides.getStateThrows) throw new Error("sheets unreachable");
+        return state;
+      },
+      markDepleted: async (p) => void depletedMarks.push(p),
+      recordUsage: async (r) => void used.push(r),
+    },
+    available: () => ({ gemini: true, perplexity: true, anthropic: true, ...(overrides.available ?? {}) }),
+    makeModel: (c) => ({ specificationVersion: "test", provider: c.provider, modelId: c.modelId }) as never,
+    generate: (async (params: Record<string, unknown>) => {
+      generated.push(params);
+      const modelId = (params.model as { modelId: string }).modelId;
+      const failure = overrides.failOn?.[modelId];
+      if (failure) throw failure;
+      return { text: `ok from ${modelId}`, usage: { inputTokens: 1000, outputTokens: 500 } };
+    }) as never,
+  };
+  return { router: createRouter(deps), generated, used, depletedMarks };
+}
+
+const modelOf = (p: Record<string, unknown>) => (p.model as { modelId: string }).modelId;
+
+section("router: credits mode uses the first Gemini model and keeps temperature", async () => {
+  const h = routerHarness();
+  const { result, handle } = await h.router.generateTextRouted("classifier", {
+    prompt: "hi",
+    temperature: 0,
+    maxOutputTokens: 800,
+  });
+  assert.equal(handle.modelId, "gemini-flash-lite-latest");
+  assert.equal((result as { text: string }).text, "ok from gemini-flash-lite-latest");
+  assert.equal(h.generated[0].temperature, 0);
+  assert.equal(h.generated[0].maxOutputTokens, 800);
+});
+
+section("router: claude mode uses Haiku for the classifier, strips temperature, floors tokens, sets low effort", async () => {
+  const h = routerHarness({ mode: "claude" });
+  const { handle } = await h.router.generateTextRouted("classifier", {
+    prompt: "hi",
+    temperature: 0,
+    maxOutputTokens: 20,
+  });
+  assert.equal(handle.modelId, "claude-haiku-5-5");
+  const params = h.generated[0];
+  assert.equal("temperature" in params, false, "Claude models reject non-default sampling");
+  assert.equal(params.maxOutputTokens, CLAUDE_MIN_OUTPUT_TOKENS, "always-on thinking needs headroom");
+  assert.deepEqual(
+    (params.providerOptions as { anthropic: { effort: string } }).anthropic.effort,
+    "low"
+  );
+});
+
+section("router: agent role starts at Sonnet in claude mode, without forced effort", async () => {
+  const h = routerHarness({ mode: "claude" });
+  const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal(handle.modelId, "claude-sonnet-5-5");
+  assert.equal(h.generated[0].providerOptions, undefined);
+});
+
+section("router: Gemini at a $0 balance sends text jobs straight to Claude while Perplexity search stays", async () => {
+  const h = routerHarness({ geminiBalance: { start: 0, spent: 0 } });
+  const agent = await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal(agent.handle.modelId, "claude-sonnet-5-5");
+  const classifier = await h.router.generateTextRouted("classifier", { prompt: "hi" });
+  assert.equal(classifier.handle.modelId, "claude-haiku-5-5");
+  const search = await h.router.generateTextRouted("search", { prompt: "hi" });
+  assert.equal(search.handle.modelId, "sonar", "Perplexity still has credit");
+  assert.ok(
+    h.generated.every((p) => !modelOf(p).startsWith("gemini")),
+    "no wasted call to the empty Gemini account"
+  );
+});
+
+section("router: Gemini nearly out (2% left) skips text jobs but still serves voice", async () => {
+  const h = routerHarness({ geminiBalance: { start: 100, spent: 98 } });
+  const text = await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal(text.handle.provider, "anthropic");
+  const voice = await h.router.generateTextRouted("audio", { prompt: "x" });
+  assert.equal(voice.handle.modelId, "gemini-3.6-flash");
+});
+
+section("router: voice is unavailable once Gemini is exhausted", async () => {
+  const h = routerHarness({ geminiBalance: { start: 0, spent: 0 } });
+  await assert.rejects(
+    () => h.router.generateTextRouted("audio", { prompt: "x" }),
+    (err: unknown) => err instanceof NoModelAvailableError
+  );
+});
+
+section("router: depletion on Gemini marks it once, skips its other models and falls to Claude", async () => {
+  const h = routerHarness({
+    failOn: { "gemini-flash-lite-latest": { statusCode: 429, message: "Your prepayment credits are depleted" } },
+  });
+  const { handle } = await h.router.generateTextRouted("classifier", { prompt: "hi" });
+  assert.equal(handle.modelId, "claude-haiku-5-5");
+  assert.deepEqual(h.depletedMarks, ["gemini"]);
+  assert.deepEqual(h.generated.map(modelOf), ["gemini-flash-lite-latest", "claude-haiku-5-5"], "gemini-3.6-flash is skipped");
+});
+
+section("router: a transient error tries the next Gemini model before Claude", async () => {
+  const h = routerHarness({ failOn: { "gemini-flash-lite-latest": { statusCode: 500 } } });
+  const { handle } = await h.router.generateTextRouted("classifier", { prompt: "hi" });
+  assert.equal(handle.modelId, "gemini-3.6-flash");
+  assert.deepEqual(h.depletedMarks, []);
+});
+
+section("router: Claude tiers escalate Haiku to Sonnet to Opus, then the last error is thrown", async () => {
+  const boom = Object.assign(new Error("bad"), { statusCode: 400 });
+  const h = routerHarness({
+    mode: "claude",
+    failOn: { "claude-haiku-5-5": boom, "claude-sonnet-5-5": boom },
+  });
+  const { handle } = await h.router.generateTextRouted("classifier", { prompt: "hi" });
+  assert.equal(handle.modelId, "claude-opus-5-5");
+
+  const all = routerHarness({
+    mode: "claude",
+    failOn: { "claude-haiku-5-5": boom, "claude-sonnet-5-5": boom, "claude-opus-5-5": boom },
+  });
+  await assert.rejects(() => all.router.generateTextRouted("classifier", { prompt: "hi" }), /bad/);
+});
+
+section("router: no retry once canRetry says a tool already ran", async () => {
+  const h = routerHarness({ failOn: { "gemini-3.6-flash": { statusCode: 500 } } });
+  await assert.rejects(
+    () => h.router.withModelFallback("agent", async (handle) => h.router.runText(handle, { prompt: "hi" }), { canRetry: () => false }),
+    (err: unknown) => (err as { statusCode?: number }).statusCode === 500
+  );
+  assert.equal(h.generated.length, 1, "no second model was tried");
+});
+
+section("router: audio never uses Claude, even in claude mode", async () => {
+  const ok = routerHarness({ mode: "claude" });
+  const { handle } = await ok.router.generateTextRouted("audio", { prompt: "x" });
+  assert.equal(handle.provider, "gemini");
+
+  const depleted = routerHarness({ geminiDepleted: true });
+  await assert.rejects(
+    () => depleted.router.generateTextRouted("audio", { prompt: "x" }),
+    (err: unknown) => err instanceof NoModelAvailableError
+  );
+});
+
+section("router: ledger failure falls back to default routing instead of throwing", async () => {
+  const h = routerHarness({ getStateThrows: true });
+  const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal(handle.modelId, "gemini-3.6-flash");
+});
+
+section("router: records usage with the computed cost", async () => {
+  const h = routerHarness({ mode: "claude" });
+  await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal(h.used.length, 1);
+  assert.equal(h.used[0].provider, "anthropic");
+  assert.equal(h.used[0].model, "claude-sonnet-5-5");
+  assert.equal(h.used[0].inputTokens, 1000);
+  assert.equal(h.used[0].outputTokens, 500);
+  assert.ok(Math.abs(h.used[0].costUsd - (1000 / 1e6) * 2 - (500 / 1e6) * 10) < 1e-12);
+  assert.equal(h.used[0].role, "agent");
+});
+
+section("router: a missing Claude key keeps Gemini even when it is nearly out", async () => {
+  const h = routerHarness({
+    mode: "claude",
+    geminiBalance: { start: 100, spent: 98 },
+    available: { anthropic: false },
+  });
+  const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal(handle.provider, "gemini");
+});
+
+section("handle and provider-option helpers", () => {
+  const claudeHandle = buildHandle({ provider: "anthropic", modelId: "claude-haiku-5-5" }, "parse", () => ({}) as never);
+  assert.deepEqual(claudeHandle.sampling(0), {});
+  const geminiHandle = buildHandle({ provider: "gemini", modelId: "gemini-3.6-flash" }, "agent", () => ({}) as never);
+  assert.deepEqual(geminiHandle.sampling(0), { temperature: 0 });
+  assert.equal(geminiHandle.providerOptions, undefined);
+  assert.deepEqual(
+    mergeProviderOptions({ anthropic: { a: 1 } }, { anthropic: { b: 2 }, google: { c: 3 } }),
+    { anthropic: { a: 1, b: 2 }, google: { c: 3 } }
+  );
+  assert.equal(mergeProviderOptions(undefined, undefined), undefined);
 });
 
 // ---- runner ----
