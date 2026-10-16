@@ -143,7 +143,7 @@ export async function parseImageAssistantIntent(input: {
 
   const result = await generateText({
     model: google("gemini-3.6-flash"),
-    system: `You are a strict image-to-JSON parser for a private Telegram personal assistant.
+    system: `You are a strict image-to-JSON parser for EGO, a private Telegram personal assistant.
 
 Read the user-provided image(s) and instruction. Return ONLY one valid JSON object.
 Do not use Markdown. Do not explain. Do not call tools. Do not execute actions.

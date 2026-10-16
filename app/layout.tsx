@@ -23,9 +23,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Telegram Personal Assistant — Status & Command Center",
+  title: "EGO — Everything Gets Optimized",
   description:
-    "Private, serverless personal assistant for natural-language finance tracking, Google Calendar agenda management, receipt OCR, and voice memos.",
+    "EGO (Everything Gets Optimized) is a private, serverless Telegram assistant: one orchestrator agent for natural-language finance tracking, Google Calendar, to-dos, workouts, receipt OCR and voice instructions.",
 };
 
 export default function RootLayout({

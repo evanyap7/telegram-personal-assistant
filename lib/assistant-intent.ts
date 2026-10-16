@@ -497,7 +497,7 @@ export function buildIntentSystemPrompt(
   currentTime: string,
   contextBlock: string
 ): string {
-  return `You are a strict JSON intent parser for a private Telegram personal assistant.
+  return `You are a strict JSON intent parser for EGO, a private Telegram personal assistant.
 
 Return ONLY one valid JSON object. Do not use Markdown code fences.
 Do not explain your output. Do not browse, search the web, call tools, or execute actions.

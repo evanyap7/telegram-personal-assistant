@@ -293,7 +293,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-2.5">
               <span className="font-display text-sm tracking-tight text-[#0a0a0a]">
-                PERSONAL ASSISTANT
+                EGO
               </span>
               <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#3ecf6e] border-2 border-[#0a0a0a] text-[10px] font-mono font-bold text-[#0a0a0a]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#0a0a0a] animate-pulse" />
@@ -365,7 +365,7 @@ export default function Home() {
           </h1>
 
           <p className="mt-6 text-base sm:text-lg text-[#0a0a0a]/70 max-w-2xl leading-relaxed font-medium">
-            A serverless assistant orchestrating Apple Pay NFC tap webhooks, DBS PayLah
+            EGO, short for Everything Gets Optimized, is a serverless assistant orchestrating Apple Pay NFC tap webhooks, DBS PayLah
             real-time push receipts, Opus voice buffers, and receipt vision OCR into
             Google Sheets &amp; Calendar in under 3 seconds.
           </p>
@@ -1042,7 +1042,7 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <span>Built with Next.js, Vercel AI SDK &amp; Gemini</span>
             <span>•</span>
-            <span>Private Serverless Assistant</span>
+            <span>EGO · Everything Gets Optimized</span>
           </div>
 
           <div className="flex items-center gap-4">

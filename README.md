@@ -1,4 +1,6 @@
-# 🤖 Telegram Personal Assistant
+# 🤖 EGO — Everything Gets Optimized
+
+**EGO** stands for *Everything Gets Optimized*. It is the name of this assistant and of the orchestrator agent at its center (see [The EGO orchestrator](#-the-ego-orchestrator)). The repository is still called `telegram-personal-assistant`.
 
 Hey! 👋 This is my personal Telegram assistant bot that essentially runs my daily life — handling my expenses, scheduling, nagging to-dos, email drafts, habit streaks, bill splitting, and memory recall without me ever having to open five different apps.
 
@@ -119,6 +121,15 @@ Automated scheduled summaries delivered to Telegram:
 | `/budget set <amount>`, `/budget cap <category> <amount>` | Set the overall budget or a category cap |
 
 ---
+
+## 🧠 The EGO orchestrator
+
+Every free-text message (typed, a photo caption, or a transcribed voice note) goes to one orchestrator agent. It decides what to do and calls tools: the **finance agent**, the **workout agent**, and one tool per handler (calendar, to-dos, email drafts, bill splitting, memory, recurring items, undo), plus web search and photo processing. A single message can use several tools ("log lunch and move my 3pm").
+
+- **Voice:** voice notes are transcribed (with gym, PayLah and contact-name hints), echoed back as "Heard: …", then handled like typed instructions. Every agent knows the text was spoken, expects mishearings, and confirms before an uncertain destructive change.
+- **Deterministic parts stay deterministic:** slash commands, button callbacks, cron jobs, photo intake and plain `weight x reps` set logging during a workout skip the model.
+- **Rollback:** set `EGO_ORCHESTRATOR=off` to use the previous regex and intent-classifier pipeline.
+- **Tests:** `npm run test:ego` (offline unit tests) and `npm run eval:ego` (routing accuracy and latency against the live model; `-- --dry-run` validates fixtures offline).
 
 ## 🤖 Agentic layer (tool-calling agents)
 

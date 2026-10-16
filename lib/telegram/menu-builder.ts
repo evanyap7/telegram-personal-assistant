@@ -20,7 +20,7 @@ export const BOT_COMMANDS: Array<{ command: string; description: string }> = [
   { command: "inbox", description: "Triage unread Gmail inbox" },
   { command: "sync", description: "Sync recent DBS & Grab transactions" },
   { command: "export", description: "Export monthly transactions CSV" },
-  { command: "help", description: "Show full assistant guide" },
+  { command: "help", description: "Show the EGO guide" },
 ];
 
 /**
@@ -43,7 +43,8 @@ export function getCompactDashboardMarkup(): InlineKeyboardMarkup {
 
 export function getCompactDashboardText(): string {
   return [
-    "🤖 *Personal Assistant Control Panel*",
+    "🤖 *EGO Control Panel*",
+    "_Everything Gets Optimized_",
     "",
     "Tap a category below, type `/` for quick commands, or speak naturally:",
     "",

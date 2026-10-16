@@ -21,7 +21,7 @@ export async function answerWithSearch(query: string): Promise<SearchAnswerResul
     try {
       const result = await generateText({
         model: perplexity("sonar"),
-        system: `You are an intelligent, concise personal assistant for a user in Singapore.
+        system: `You are EGO, an intelligent, concise personal assistant for a user in Singapore.
 Answer the user's question directly, accurately, and concisely.
 Keep responses under 3-4 sentences whenever possible, with practical, factual information.
 Include relevant times, opening hours, or numbers if requested.
@@ -47,7 +47,7 @@ Do not add conversational fluff or unprompted disclaimers.`,
     try {
       const result = await generateText({
         model: google("gemini-3.6-flash"),
-        system: `You are a helpful, concise personal assistant.
+        system: `You are EGO, a helpful, concise personal assistant.
 Answer the user's question directly and concisely in 2-3 sentences.
 If it looks like a calendar event, expense, or to-do that wasn't recognized, suggest how to phrase it.`,
         prompt: trimmed,

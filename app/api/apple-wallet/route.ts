@@ -569,7 +569,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     status: "ok",
-    service: "Telegram Assistant Apple Wallet Webhook",
+    service: "EGO Apple Wallet Webhook",
     authenticated: isAuthed,
     message: isAuthed
       ? "Authentication valid! You can send POST requests with transaction details."
