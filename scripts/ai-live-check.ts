@@ -30,7 +30,7 @@ async function run() {
       checkWarnings: async () => {},
       alertDepleted: async () => {},
     },
-    available: () => ({ gemini: false, perplexity: false, anthropic: true }),
+    available: () => ({ anthropic: true, perplexity: false, gemini: false }),
     makeModel: (c) => claudeModel(c.modelId),
     generate: generateText,
   });

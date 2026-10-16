@@ -1,7 +1,6 @@
 /**
- * Compares latency AND real per-call $ cost across the three models in the
- * assistant's fallback chain (gemini-flash-lite-latest, gemini-3.6-flash,
- * perplexity/sonar), using the EXACT production system prompt from
+ * Compares latency AND real per-call $ cost across the Claude tiers
+ * (Haiku, Sonnet, Opus) and Perplexity Sonar, using the EXACT production system prompt from
  * lib/assistant-intent.ts (buildIntentSystemPrompt) against the same set of
  * representative messages for each model.
  *
@@ -13,13 +12,13 @@
  * Usage:
  *   npx tsx scripts/bench/model-cost.ts
  *
- * Requires GOOGLE_GENERATIVE_AI_API_KEY and, to include Sonar in the
+ * Requires ANTHROPIC_API_KEY and, to include Sonar in the
  * comparison, PERPLEXITY_API_KEY. Missing the Perplexity key just skips
  * that column instead of failing the whole run.
  */
 
 import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import { anthropic } from "@ai-sdk/anthropic";
 import { perplexity } from "@ai-sdk/perplexity";
 import { buildIntentSystemPrompt } from "../../lib/assistant-intent";
 import { INTENT_TEST_MESSAGES } from "./fixtures";
@@ -34,7 +33,7 @@ import {
 } from "./util";
 
 loadEnvLocal();
-requireEnv("GOOGLE_GENERATIVE_AI_API_KEY");
+requireEnv("ANTHROPIC_API_KEY");
 
 const currentDate = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Singapore",
@@ -56,7 +55,7 @@ type ModelKey = keyof typeof PRICING_PER_MILLION_TOKENS_USD;
 
 function resolveModel(key: ModelKey) {
   if (key === "sonar") return perplexity("sonar");
-  return google(key);
+  return anthropic(key) as never;
 }
 
 async function benchModel(key: ModelKey) {
@@ -73,8 +72,8 @@ async function benchModel(key: ModelKey) {
         model,
         system: systemPrompt,
         prompt: message,
-        maxOutputTokens: 800,
-        temperature: 0,
+        maxOutputTokens: 4096,
+        ...(key === "sonar" ? { temperature: 0 } : {}),
       });
       const elapsed = performance.now() - start;
       latencies.push(elapsed);
@@ -104,7 +103,7 @@ async function benchModel(key: ModelKey) {
 }
 
 async function main() {
-  const keysToRun: ModelKey[] = ["gemini-flash-lite-latest", "gemini-3.6-flash"];
+  const keysToRun: ModelKey[] = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
   if (process.env.PERPLEXITY_API_KEY) {
     keysToRun.push("sonar");
   } else {
@@ -133,14 +132,14 @@ async function main() {
     );
   }
 
-  const baseline = results.find((r) => r.key === "gemini-flash-lite-latest");
+  const baseline = results.find((r) => r.key === "claude-haiku-5-5");
   if (baseline) {
-    console.log("\n--- Cost reduction vs each fallback tier ---");
+    console.log("\n--- Cost reduction vs each other model ---");
     for (const r of results) {
       if (r.key === baseline.key) continue;
       const reduction = (1 - baseline.avgCostUsd / r.avgCostUsd) * 100;
       console.log(
-        `flash-lite is ${reduction.toFixed(1)}% cheaper per call than ${r.key}`
+        `Haiku is ${reduction.toFixed(1)}% cheaper per call than ${r.key}`
       );
     }
   }

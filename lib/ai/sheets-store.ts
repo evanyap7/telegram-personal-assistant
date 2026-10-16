@@ -14,7 +14,7 @@ const CREDITS_VALUES = [
   ["", "", "", "", ""],
 ];
 
-/** The first version of this sheet had rows gemini / perplexity / meta; row 2 is the tell. */
+/** The first version of this sheet had a different row 2 (and a "meta" row); row 2 is the tell. */
 export function needsLayoutMigration(a2: string | undefined): boolean {
   return a2 !== "anthropic";
 }

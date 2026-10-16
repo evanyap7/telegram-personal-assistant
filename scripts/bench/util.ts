@@ -80,31 +80,17 @@ export function printStats(label: string, stats: LatencyStats): void {
 }
 
 /**
- * Published per-1M-token pricing (paid tier), checked against the vendors'
- * own pricing pages on 2026-09-12. Re-verify before quoting these on a CV —
- * these prices change.
- *   - Gemini: https://ai.google.dev/gemini-api/docs/pricing
- *   - Perplexity Sonar: https://docs.perplexity.ai/getting-started/pricing
- *
- * "gemini-flash-lite-latest" aliases to the newest Flash-Lite release
- * (Gemini 3.5 Flash-Lite as of this writing). "gemini-3.6-flash" is pinned
- * to that specific version in the code, priced the same as 3.7/3.8 Flash
- * through end of 2026 per Google's page.
+ * Published per-1M-token pricing, checked 2026-10-17 against the Claude API model
+ * table and (for Sonar) Perplexity's pricing page. Re-verify before quoting these
+ * publicly, these prices change.
  */
 export const PRICING_PER_MILLION_TOKENS_USD: Record<
   string,
   { input: number; output: number; note: string }
 > = {
-  "gemini-flash-lite-latest": {
-    input: 0.3,
-    output: 2.5,
-    note: "Gemini 3.5 Flash-Lite pricing (alias target as of 2026-09-12)",
-  },
-  "gemini-3.6-flash": {
-    input: 0.75,
-    output: 3.75,
-    note: "Through Dec 31, 2026; rises to $1.50 / $7.50 from 2027-01-01",
-  },
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, note: "Prompts up to 100K tokens" },
+  "claude-sonnet-5-5": { input: 2.0, output: 10.0, note: "" },
+  "claude-opus-5-5": { input: 4.0, output: 20.0, note: "" },
   sonar: {
     input: 1.0,
     output: 1.0,

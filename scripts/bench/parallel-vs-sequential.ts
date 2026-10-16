@@ -1,7 +1,7 @@
 /**
  * Measures the real wall-clock benefit of the Promise.allSettled() batch
  * pattern used in lib/paylah-sync.ts (syncPayLahTransactions), by running
- * the SAME real Gemini receipt-parsing calls (buildEmailParsingSystemPrompt,
+ * the SAME real Claude receipt-parsing calls (buildEmailParsingSystemPrompt,
  * the exact production prompt) once sequentially and once in parallel over
  * an identical batch of fixture emails.
  *
@@ -11,20 +11,20 @@
  * Usage:
  *   npx tsx scripts/bench/parallel-vs-sequential.ts
  *
- * Requires GOOGLE_GENERATIVE_AI_API_KEY.
+ * Requires ANTHROPIC_API_KEY.
  */
 
 import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import { anthropic } from "@ai-sdk/anthropic";
 import { buildEmailParsingSystemPrompt } from "../../lib/paylah-sync";
 import { RECEIPT_EMAIL_FIXTURES } from "./fixtures";
 import { requireEnv, loadEnvLocal } from "./util";
 
 loadEnvLocal();
-requireEnv("GOOGLE_GENERATIVE_AI_API_KEY");
+requireEnv("ANTHROPIC_API_KEY");
 
 const systemPrompt = buildEmailParsingSystemPrompt();
-const model = google("gemini-flash-lite-latest");
+const model = anthropic("claude-haiku-5-5") as never;
 
 async function classifyOne(fixture: { subject: string; body: string }) {
   const prompt = `Email Subject: "${fixture.subject}"\nEmail Body/Snippet:\n"""\n${fixture.body}\n"""`;
@@ -32,7 +32,7 @@ async function classifyOne(fixture: { subject: string; body: string }) {
     model,
     system: systemPrompt,
     prompt,
-    temperature: 0,
+    maxOutputTokens: 4096,
   });
   return result.text;
 }
@@ -53,7 +53,7 @@ async function runParallel() {
 
 async function main() {
   const n = RECEIPT_EMAIL_FIXTURES.length;
-  console.log(`Benchmarking ${n} real Gemini receipt-parsing calls: sequential vs Promise.allSettled...\n`);
+  console.log(`Benchmarking ${n} real Claude receipt-parsing calls: sequential vs Promise.allSettled...\n`);
 
   console.log("Running sequential batch (for-loop with await, one at a time)...");
   const sequentialMs = await runSequential();

@@ -56,7 +56,8 @@ export const RECEIPT_EMAIL_FIXTURES: Array<{ subject: string; body: string }> = 
 ];
 
 export const MODEL_IDS = [
-  "gemini-flash-lite-latest",
-  "gemini-3.6-flash",
+  "claude-haiku-5-5",
+  "claude-sonnet-5-5",
+  "claude-opus-5-5",
   "sonar",
 ] as const;

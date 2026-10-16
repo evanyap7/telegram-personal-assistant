@@ -55,7 +55,7 @@ export const TEST_CASES: IntentTestCase[] = [
 
 async function run() {
   loadEnvLocal();
-  const isDryRun = process.argv.includes("--dry-run") || !process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const isDryRun = process.argv.includes("--dry-run") || !process.env.ANTHROPIC_API_KEY;
 
   console.log("\n=======================================================");
   console.log("  Telegram Assistant Intent Test Runner");
@@ -74,7 +74,7 @@ async function run() {
       validCount++;
     }
     console.log(`✅ All ${validCount} test cases validated successfully in dry-run mode.`);
-    console.log("To run live intent classification, provide GOOGLE_GENERATIVE_AI_API_KEY in .env.local.\n");
+    console.log("To run live intent classification, provide ANTHROPIC_API_KEY in .env.local.\n");
     return;
   }
 

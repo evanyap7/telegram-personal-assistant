@@ -81,7 +81,7 @@ export default function Home() {
       terminal: [
         { role: "device", label: "NFC_SIGNAL", text: "Apple Pay NFC tap detected: S$14.50 at 'Toast Box'" },
         { role: "system", label: "WEBHOOK", text: "POST /api/apple-wallet [200 OK • 380ms latency]" },
-        { role: "ai", label: "AI_INFERENCE", text: "Gemini 3.6 Flash: Category 'Dining' • Item 'Kaya Toast Set'" },
+        { role: "ai", label: "AI_INFERENCE", text: "Claude Haiku: Category 'Dining' • Item 'Kaya Toast Set'" },
         { role: "bot", label: "TELEGRAM", text: "Dispatched interactive card with live action callbacks" },
       ],
       previewCard: {
@@ -136,14 +136,14 @@ export default function Home() {
     },
     voice: {
       title: "Multimodal Voice Memos",
-      badge: "Gemini 3.6 Flash Audio",
+      badge: "Speech-to-Text Audio",
       icon: <IconMicrophone className="w-4 h-4" />,
       description:
         "Speak naturally on Telegram while on the move. Spoken Opus voice memos are streamed in-memory with magic-byte validation and converted into structured actions.",
       terminal: [
         { role: "device", label: "AUDIO_STREAM", text: "Telegram Voice Memo (Opus/OGG 24KB stream)" },
         { role: "system", label: "IN_MEMORY", text: "Zero-disk RAM buffer conversion & MIME validation" },
-        { role: "ai", label: "GEMINI_AUDIO", text: "Transcribed: 'Spent 45 dollars on petrol at Shell'" },
+        { role: "ai", label: "VOICE_STT", text: "Transcribed: 'Spent 45 dollars on petrol at Shell'" },
         { role: "bot", label: "TELEGRAM", text: "Committed SGD 45.00 • Transport • Shell to Sheets" },
       ],
       previewCard: {
@@ -166,13 +166,13 @@ export default function Home() {
     },
     vision: {
       title: "Receipt Vision OCR",
-      badge: "Gemini Vision OCR",
+      badge: "Claude Vision OCR",
       icon: <IconCameraScan className="w-4 h-4" />,
       description:
         "Send photos of physical receipts, meal bills, or invoices. Extracts up to 30 line items with tax calculation and batch review before cloud commitment.",
       terminal: [
         { role: "device", label: "OPTICAL_INPUT", text: "User uploaded supermarket receipt photo" },
-        { role: "system", label: "MULTIMODAL", text: "Streamed buffer to Gemini 3.6 Flash pipeline" },
+        { role: "system", label: "MULTIMODAL", text: "Streamed buffer to Claude vision pipeline" },
         { role: "ai", label: "OCR_EXTRACTION", text: "Extracted 8 line items • Subtotal $42.10 • GST $3.79" },
         { role: "bot", label: "TELEGRAM", text: "Generated itemized batch transaction review card" },
       ],
@@ -776,7 +776,7 @@ export default function Home() {
                   Voice Notes &amp; Memos
                 </h3>
                 <p className="text-xs sm:text-sm text-[#0a0a0a]/70 leading-relaxed font-medium">
-                  In-memory audio pipeline validating magic-bytes and streaming Opus audio directly to Gemini 3.6 Flash.
+                  In-memory audio pipeline validating magic-bytes and streaming Opus audio directly to a speech-to-text model.
                 </p>
               </div>
 
@@ -934,7 +934,7 @@ export default function Home() {
                 {
                   step: "03",
                   title: "Intelligence Routing",
-                  desc: "Gemini 3.6 Flash multimodal audio/vision & deterministic regex fast-path.",
+                  desc: "Claude multimodal vision, speech-to-text audio & deterministic regex fast-path.",
                   badge: "AI SDK v4",
                   icon: <IconSparkles className="w-4 h-4" />,
                   accent: "bg-[#9b6bff]",
@@ -1040,7 +1040,7 @@ export default function Home() {
         {/* CRAFTED FOOTER */}
         <footer className="mt-20 pt-8 border-t-[3px] border-[#0a0a0a] text-xs text-[#0a0a0a]/70 flex flex-col sm:flex-row items-center justify-between gap-4 font-bold">
           <div className="flex items-center gap-2">
-            <span>Built with Next.js, Vercel AI SDK &amp; Gemini</span>
+            <span>Built with Next.js, Vercel AI SDK &amp; Claude</span>
             <span>•</span>
             <span>EGO · Everything Gets Optimized</span>
           </div>

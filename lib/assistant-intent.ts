@@ -356,14 +356,8 @@ export async function parseAssistantIntent(
   userMessage: string,
   context?: ConversationContext
 ): Promise<AssistantIntent> {
-  if (
-    !process.env.GOOGLE_GENERATIVE_AI_API_KEY &&
-    !process.env.PERPLEXITY_API_KEY &&
-    !process.env.ANTHROPIC_API_KEY
-  ) {
-    throw new Error(
-      "AI API keys are missing (GOOGLE_GENERATIVE_AI_API_KEY, PERPLEXITY_API_KEY or ANTHROPIC_API_KEY)."
-    );
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY is missing.");
   }
 
   const now = context?.messageTime ? new Date(context.messageTime) : new Date();

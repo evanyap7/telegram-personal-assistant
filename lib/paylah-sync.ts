@@ -585,7 +585,7 @@ export async function parseEmailTransaction(
     };
   }
 
-  // 2. Fallback to Gemini AI if regex did not match (Universal Receipt Parser)
+  // 2. Fall back to the AI parser if regex did not match (Universal Receipt Parser)
   try {
     const systemPrompt = buildEmailParsingSystemPrompt();
 

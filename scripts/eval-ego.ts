@@ -5,11 +5,10 @@
  * written to Sheets/Calendar/Telegram) and checks which tools the model chose.
  *
  * Usage:
- *   npm run eval:ego             # live model (needs GOOGLE_GENERATIVE_AI_API_KEY)
+ *   npm run eval:ego             # live model (needs ANTHROPIC_API_KEY)
  *   npm run eval:ego -- --dry-run   # offline: validates fixtures and tool names only
  */
 import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
 import { ToolLoopAgent, isStepCount } from "ai";
 import { buildEgoInstructions, describeWorkoutContext, toConversationMessages } from "../lib/agent/ego-prompt";
 import { buildEgoTools } from "../lib/agent/ego-tools";
@@ -18,19 +17,16 @@ import { loadEnvLocal } from "./bench/util";
 
 const PASS_THRESHOLD = 0.85;
 /**
- * Override to compare models: EGO_EVAL_MODEL=gemini-flash-lite-latest, or a Claude model
- * with the anthropic: prefix, e.g. EGO_EVAL_MODEL=anthropic:claude-sonnet-5-5.
- * Production routing is decided by lib/ai/router.
+ * Model to score, a Claude model id (optionally with an `anthropic:` prefix), e.g.
+ * EGO_EVAL_MODEL=claude-haiku-5-5. Production routing is decided by lib/ai/router.
  */
-const EVAL_MODEL = process.env.EGO_EVAL_MODEL ?? "gemini-3.6-flash";
-const EVAL_IS_CLAUDE = EVAL_MODEL.startsWith("anthropic:");
+const EVAL_MODEL = (process.env.EGO_EVAL_MODEL ?? "claude-sonnet-5-5").replace(/^anthropic:/, "");
 // The Claude provider bundles a newer copy of @ai-sdk/provider; same v4 spec, different nominal types.
-const evalModel = () =>
-  (EVAL_IS_CLAUDE ? anthropic(EVAL_MODEL.slice("anthropic:".length)) : google(EVAL_MODEL)) as never;
+const evalModel = () => anthropic(EVAL_MODEL) as never;
 
 async function run() {
   loadEnvLocal();
-  const dryRun = process.argv.includes("--dry-run") || !process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  const dryRun = process.argv.includes("--dry-run") || !process.env.ANTHROPIC_API_KEY;
 
   console.log("\n=======================================================");
   console.log(`  🧭 EGO Routing Eval ${dryRun ? "(dry run)" : `(live: ${EVAL_MODEL})`}`);
@@ -56,7 +52,7 @@ async function run() {
         }
       }
     }
-    console.log(`  ✅ ${EGO_EVAL_CASES.length} cases reference valid tools. Set GOOGLE_GENERATIVE_AI_API_KEY to run live.\n`);
+    console.log(`  ✅ ${EGO_EVAL_CASES.length} cases reference valid tools. Set ANTHROPIC_API_KEY to run live.\n`);
     return;
   }
 
@@ -76,7 +72,6 @@ async function run() {
       }),
       tools: stubTools,
       stopWhen: isStepCount(4),
-      ...(EVAL_IS_CLAUDE ? {} : { temperature: 0 }),
     });
 
     const started = Date.now();

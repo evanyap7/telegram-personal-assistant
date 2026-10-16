@@ -625,6 +625,30 @@ section("no file outside the router picks a Claude, Perplexity or Gemini model d
   assert.deepEqual(offenders, [], "route model calls through lib/ai/router");
 });
 
+/**
+ * Gemini is kept for exactly one job, voice-note transcription, which Claude cannot do.
+ * scripts/ai-live-check.ts only sets `gemini: false` because the provider type needs the key.
+ */
+const GEMINI_ALLOWED_IN = [
+  "lib/voice-transcribe.ts",
+  "lib/ai/mode.ts",
+  "lib/ai/pricing.ts",
+  "lib/ai/router.ts",
+  "scripts/ai-live-check.ts",
+];
+
+section("Gemini appears only in the voice and routing files", () => {
+  const root = process.cwd();
+  const self = path.join(root, "scripts/test-ai-router.ts");
+  const targets = ["app", "lib", "scripts"].flatMap((dir) => sourceFiles(path.join(root, dir)));
+  const offenders = targets
+    .filter((f) => f !== self)
+    .filter((f) => !GEMINI_ALLOWED_IN.includes(path.relative(root, f)))
+    .filter((f) => /gemini|@ai-sdk\/google|GOOGLE_GENERATIVE_AI/i.test(fs.readFileSync(f, "utf8")))
+    .map((f) => path.relative(root, f));
+  assert.deepEqual(offenders, [], "Gemini is only for voice transcription; everything else uses Claude");
+});
+
 // ---- runner ----
 async function main() {
   console.log("\n  🧠 AI Router Tests\n");

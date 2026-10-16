@@ -121,8 +121,8 @@ export async function parseImageAssistantIntent(input: {
   mediaType?: string;
   images?: AssistantImageInput[];
 }): Promise<ImageAssistantIntent> {
-  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-    throw new Error("GOOGLE_GENERATIVE_AI_API_KEY or ANTHROPIC_API_KEY is missing.");
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY is missing.");
   }
 
   const imageList: AssistantImageInput[] =

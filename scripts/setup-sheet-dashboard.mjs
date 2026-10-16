@@ -454,7 +454,7 @@ export async function setupDashboardSheet() {
     // Row 37: Footer
     [
       "",
-      "⚡ Powered by Evan's Telegram Assistant • Live Sync with Apple Pay, PayLah, & DBS • Auto-categorized via Gemini AI",
+      "⚡ Powered by Evan's Telegram Assistant • Live Sync with Apple Pay, PayLah, & DBS • Auto-categorized via Claude AI",
     ],
   ];
 

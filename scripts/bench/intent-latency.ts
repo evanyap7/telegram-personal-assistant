@@ -1,6 +1,6 @@
 /**
  * Benchmarks the REAL, deployed parseAssistantIntent() path end-to-end
- * (including its Flash-Lite -> 3.6-Flash -> Sonar fallback chain exactly as
+ * (including its Haiku -> Sonnet -> Opus escalation exactly as
  * shipped) against a set of representative Telegram messages.
  *
  * This is what a CV bullet like "<750ms classification latency" or
@@ -15,8 +15,8 @@
  * way Next.js's bundler does; plain `node --experimental-strip-types`
  * cannot resolve them and will fail with ERR_MODULE_NOT_FOUND.)
  *
- * Requires GOOGLE_GENERATIVE_AI_API_KEY (matches the app's normal .env.local).
- * Each run makes one real Gemini call per test message - this costs a small
+ * Requires ANTHROPIC_API_KEY (matches the app's normal .env.local).
+ * Each run makes one real Claude call per test message - this costs a small
  * amount of real API credit (a fraction of a cent total for the default
  * fixture list).
  */
@@ -26,7 +26,7 @@ import { INTENT_TEST_MESSAGES } from "./fixtures";
 import { requireEnv, summarize, printStats, loadEnvLocal } from "./util";
 
 loadEnvLocal();
-requireEnv("GOOGLE_GENERATIVE_AI_API_KEY");
+requireEnv("ANTHROPIC_API_KEY");
 
 const REPEATS = Number(process.env.BENCH_REPEATS || 3);
 
