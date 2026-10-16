@@ -23,6 +23,13 @@ import {
 import type { AssistantIntent } from "../lib/assistant-intent";
 import { buildFinanceInstructions } from "../lib/agent/finance-agent";
 import { buildWorkoutInstructions } from "../lib/agent/workout-agent";
+import {
+  buildEgoInstructions,
+  describeWorkoutContext,
+  dropCurrentTurn,
+  toConversationMessages,
+} from "../lib/agent/ego-prompt";
+import { SECURITY_SYSTEM_GUARDRAIL } from "../lib/security";
 
 const sections: Array<{ name: string; run: () => void | Promise<void> }> = [];
 function section(name: string, run: () => void | Promise<void>) {
@@ -381,6 +388,81 @@ section("workout agent instructions: voice note only for voice", () => {
   assert.ok(!text.includes(SPOKEN_INPUT_NOTE));
   assert.match(text, /inside EGO/);
   assert.match(text, /NOT_WORKOUT/);
+});
+
+const promptBase = {
+  now: new Date("2026-10-16T04:00:00Z"),
+  inputMode: "text" as const,
+  context: {},
+  workoutLine: describeWorkoutContext(null),
+  hasPendingImage: false,
+  repliedToPhoto: false,
+};
+
+section("ego prompt: identity, routing rules, reply protocol and guardrail", () => {
+  const p = buildEgoInstructions(promptBase);
+  assert.match(p, /EGO/);
+  assert.match(p, /Everything Gets Optimized/);
+  for (const name of ["askFinanceAgent", "askWorkoutAgent", "webSearch", "calendar_add", "todo_add"]) {
+    assert.ok(p.includes(name), `prompt should mention ${name}`);
+  }
+  assert.ok(p.includes(NO_REPLY));
+  assert.ok(p.includes(SECURITY_SYSTEM_GUARDRAIL));
+  assert.match(p, /2026-10-16/);
+  assert.match(p, /\+08:00/);
+});
+
+section("ego prompt: voice note only for voice, and it asks to confirm uncertain destructive changes", () => {
+  const voice = buildEgoInstructions({ ...promptBase, inputMode: "voice" });
+  const text = buildEgoInstructions(promptBase);
+  assert.ok(voice.includes(SPOKEN_INPUT_NOTE));
+  assert.ok(!text.includes(SPOKEN_INPUT_NOTE));
+  assert.match(voice, /confirm/i);
+});
+
+section("ego prompt: 'today' is the Singapore date even when UTC is still the previous day", () => {
+  // 17:00 UTC on the 16th is 01:00 SGT on the 17th.
+  const p = buildEgoInstructions({ ...promptBase, now: new Date("2026-10-16T17:00:00Z") });
+  assert.match(p, /Current date in Singapore: 2026-10-17/);
+  assert.ok(!/Current date in Singapore: 2026-10-16/.test(p));
+});
+
+section("ego prompt: includes pending-calendar context, excludes chat history, adds image and workout lines", () => {
+  const p = buildEgoInstructions({
+    ...promptBase,
+    context: {
+      recentChatHistory: [{ role: "user", text: "SECRET-HISTORY-LINE" }],
+      activePendingCalendar: { calendarName: "personal", title: "Dentist", allDay: true, date: "2026-10-20" },
+    },
+    workoutLine: describeWorkoutContext({ day: 4, logged: [{}, {}] }),
+    hasPendingImage: true,
+    repliedToPhoto: false,
+  });
+  assert.match(p, /Active pending calendar confirmation/);
+  assert.match(p, /Dentist/);
+  assert.ok(!p.includes("SECRET-HISTORY-LINE"), "history goes in messages, not the prompt");
+  assert.match(p, /program day 4, 2 sets logged/);
+  assert.match(p, /processPendingImage/);
+});
+
+section("workout context line", () => {
+  assert.match(describeWorkoutContext(null), /no active workout/i);
+  assert.match(describeWorkoutContext({ day: 2, logged: [{}] }), /1 set logged/);
+  assert.match(describeWorkoutContext({ day: 2, logged: [] }), /0 sets logged/);
+});
+
+section("conversation messages drop the duplicated current turn and end with the user text", () => {
+  const history = [
+    { role: "assistant" as const, text: "Hi", timestamp: "t1" },
+    { role: "user" as const, text: "spent $5", timestamp: "t2" },
+  ];
+  assert.deepEqual(dropCurrentTurn(history, "spent $5"), [history[0]]);
+  assert.deepEqual(dropCurrentTurn(history, "something else"), history);
+  assert.deepEqual(dropCurrentTurn([], "x"), []);
+  assert.deepEqual(toConversationMessages(history, "spent $5"), [
+    { role: "assistant", content: "Hi" },
+    { role: "user", content: "spent $5" },
+  ]);
 });
 
 // ---- runner ----
