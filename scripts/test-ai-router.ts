@@ -5,7 +5,6 @@ import {
   claudeChain,
   classifyError,
   decideMode,
-  isExhausted,
   isNearlyOut,
   providerFlags,
   remainingFraction,
@@ -87,12 +86,6 @@ section("mode needs BOTH providers nearly out", () => {
 });
 
 section("exhausted vs nearly out, and per-provider skip flags (Gemini at $0, Perplexity healthy)", () => {
-  assert.equal(isExhausted(status(100, 96)), false);
-  assert.equal(isExhausted(status(100, 100)), true);
-  assert.equal(isExhausted(status(0, 0)), true);
-  assert.equal(isExhausted(status(null, 0)), false);
-  assert.equal(isExhausted(status(null, 0, true)), true);
-
   const geminiOut = status(0, 0);
   const perplexityOk = status(8.94, 0);
   assert.deepEqual(providerFlags(geminiOut, perplexityOk, "classifier", true), {
@@ -109,7 +102,16 @@ section("exhausted vs nearly out, and per-provider skip flags (Gemini at $0, Per
     { gemini: false, perplexity: false },
     "voice keeps using Gemini until it is truly exhausted"
   );
-  assert.deepEqual(providerFlags(geminiOut, perplexityOk, "audio", true), { gemini: true, perplexity: false });
+  assert.deepEqual(
+    providerFlags(geminiOut, perplexityOk, "audio", true),
+    { gemini: false, perplexity: false },
+    "an estimate of zero never blocks voice; only a real depletion error does"
+  );
+  assert.deepEqual(
+    providerFlags(status(null, 0, true), perplexityOk, "audio", true),
+    { gemini: true, perplexity: false },
+    "a real depletion error blocks voice"
+  );
   assert.deepEqual(
     providerFlags(status(100, 98), status(10, 9.8), "search", false),
     { gemini: false, perplexity: false },
@@ -187,6 +189,25 @@ section("candidates: claude mode skips Gemini/Perplexity except for audio", () =
   assert.deepEqual(agent, ["claude-sonnet-5-5", "claude-opus-5-5"]);
   const audio = candidatesFor("audio", "claude", NONE_DEPLETED, ALL).map((c) => c.modelId);
   assert.deepEqual(audio, ["gemini-3.6-flash"]);
+});
+
+section("candidates: a provider skipped only on an estimate stays as a last resort after Claude", () => {
+  const skipGemini = { gemini: true, perplexity: false };
+  const noRealErrors = { gemini: false, perplexity: false };
+  assert.deepEqual(
+    candidatesFor("agent", "credits", skipGemini, ALL, noRealErrors).map((c) => c.modelId),
+    ["claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.6-flash"]
+  );
+  assert.deepEqual(
+    candidatesFor("agent", "claude", skipGemini, ALL, noRealErrors).map((c) => c.modelId),
+    ["claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.6-flash"],
+    "claude mode keeps the same safety net"
+  );
+  assert.deepEqual(
+    candidatesFor("agent", "credits", skipGemini, ALL, { gemini: true, perplexity: false }).map((c) => c.modelId),
+    ["claude-sonnet-5-5", "claude-opus-5-5"],
+    "a real depletion error removes the provider entirely"
+  );
 });
 
 section("candidates: a skipped provider is dropped; missing keys are filtered", () => {
@@ -501,12 +522,22 @@ section("router: Gemini nearly out (2% left) skips text jobs but still serves vo
   assert.equal(voice.handle.modelId, "gemini-3.6-flash");
 });
 
-section("router: voice is unavailable once Gemini is exhausted", async () => {
+section("router: voice still tries Gemini when only the estimate says zero", async () => {
   const h = routerHarness({ geminiBalance: { start: 0, spent: 0 } });
-  await assert.rejects(
-    () => h.router.generateTextRouted("audio", { prompt: "x" }),
-    (err: unknown) => err instanceof NoModelAvailableError
-  );
+  const voice = await h.router.generateTextRouted("audio", { prompt: "x" });
+  assert.equal(voice.handle.modelId, "gemini-3.6-flash");
+});
+
+section("router: if Claude is unusable (bad key) a Gemini that is only estimated empty still answers", async () => {
+  const badKey = Object.assign(new Error("invalid x-api-key"), { statusCode: 401 });
+  const h = routerHarness({
+    geminiBalance: { start: 0, spent: 0 },
+    failOn: { "claude-sonnet-5-5": badKey, "claude-opus-5-5": badKey },
+  });
+  const { handle } = await h.router.generateTextRouted("agent", { prompt: "hi" });
+  assert.equal(handle.modelId, "gemini-3.6-flash");
+  assert.deepEqual(h.generated.map(modelOf), ["claude-sonnet-5-5", "claude-opus-5-5", "gemini-3.6-flash"]);
+  assert.deepEqual(h.depletedMarks, [], "a bad Claude key is not a depletion");
 });
 
 section("router: depletion on Gemini marks it once, skips its other models and falls to Claude", async () => {

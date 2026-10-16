@@ -122,6 +122,17 @@ Automated scheduled summaries delivered to Telegram:
 
 ---
 
+## 🔁 Claude fallback and credit tracking
+
+EGO normally runs on Gemini (and Perplexity for search). It tracks how much of each balance is left and moves work to Claude when a provider is almost out.
+
+- **Tell it your balances:** `/credits set gemini 25.00` and `/credits set perplexity 10.00` (the current dashboard balance in USD). `/credits` shows the estimate, the current mode and what Claude has cost.
+- **When it switches:** a provider at 5% or less of its balance (or one that reports its credits depleted) has its work moved to Claude. When both are at 5% or less, everything moves and EGO tells you in Telegram. Claude Haiku handles simple jobs, Sonnet runs the orchestrator, agents and image reading, and Opus is the last resort. It switches back when you re-set a balance after a top-up.
+- **Voice notes always use Gemini** (Claude cannot take audio); when Gemini is out, EGO asks you to type instead.
+- **In Claude mode, web search answers come from Claude's own knowledge** and say so.
+- **Setup:** set `ANTHROPIC_API_KEY` in `.env.local` and in Vercel. The first `/credits` (or the first model call) creates the `AICredits` and `AIUsage` sheets.
+- **Tests:** `npm run test:ai-router` (offline), `npm run check:ai-live` (a few cents), and `EGO_EVAL_MODEL=anthropic:claude-sonnet-5-5 npm run eval:ego`.
+
 ## 🧠 The EGO orchestrator
 
 Every free-text message (typed, a photo caption, or a transcribed voice note) goes to one orchestrator agent. It decides what to do and calls tools: the **finance agent**, the **workout agent**, and one tool per handler (calendar, to-dos, email drafts, bill splitting, memory, recurring items, undo), plus web search and photo processing. A single message can use several tools ("log lunch and move my 3pm").

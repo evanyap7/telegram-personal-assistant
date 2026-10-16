@@ -38,6 +38,10 @@ import { isEgoEnabled } from "@/lib/agent/ego-flag";
 import type { InputMode } from "@/lib/agent/input-mode";
 import { handleEgoText } from "@/lib/telegram/ego-pipeline";
 
+// Worst case is the orchestrator's 10 model steps plus a delegate agent's 8: about 60-90 s.
+// 120 s leaves headroom and stops a runaway agent loop well before the platform default.
+export const maxDuration = 120;
+
 const FINANCE_HINT =
   /\$|\b(transaction|expense|income|spent|spend|paid|budget|category|amount|paylah|wrong|mistake|typo|record(ed)?|cost)\b/i;
 

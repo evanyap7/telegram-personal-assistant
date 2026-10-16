@@ -8,6 +8,7 @@
  *   npm run eval:ego             # live model (needs GOOGLE_GENERATIVE_AI_API_KEY)
  *   npm run eval:ego -- --dry-run   # offline: validates fixtures and tool names only
  */
+import { anthropic } from "@ai-sdk/anthropic";
 import { google } from "@ai-sdk/google";
 import { ToolLoopAgent, isStepCount } from "ai";
 import { buildEgoInstructions, describeWorkoutContext, toConversationMessages } from "../lib/agent/ego-prompt";
@@ -16,8 +17,16 @@ import { EGO_EVAL_CASES } from "./ego-eval-cases";
 import { loadEnvLocal } from "./bench/util";
 
 const PASS_THRESHOLD = 0.85;
-/** Override to compare models, e.g. EGO_EVAL_MODEL=gemini-flash-lite-latest. Production uses gemini-3.6-flash. */
+/**
+ * Override to compare models: EGO_EVAL_MODEL=gemini-flash-lite-latest, or a Claude model
+ * with the anthropic: prefix, e.g. EGO_EVAL_MODEL=anthropic:claude-sonnet-5-5.
+ * Production routing is decided by lib/ai/router.
+ */
 const EVAL_MODEL = process.env.EGO_EVAL_MODEL ?? "gemini-3.6-flash";
+const EVAL_IS_CLAUDE = EVAL_MODEL.startsWith("anthropic:");
+// The Claude provider bundles a newer copy of @ai-sdk/provider; same v4 spec, different nominal types.
+const evalModel = () =>
+  (EVAL_IS_CLAUDE ? anthropic(EVAL_MODEL.slice("anthropic:".length)) : google(EVAL_MODEL)) as never;
 
 async function run() {
   loadEnvLocal();
@@ -56,7 +65,7 @@ async function run() {
   for (const c of EGO_EVAL_CASES) {
     used.length = 0;
     const agent = new ToolLoopAgent({
-      model: google(EVAL_MODEL),
+      model: evalModel(),
       instructions: buildEgoInstructions({
         now: new Date(),
         inputMode: c.inputMode ?? "text",
@@ -67,7 +76,7 @@ async function run() {
       }),
       tools: stubTools,
       stopWhen: isStepCount(4),
-      temperature: 0,
+      ...(EVAL_IS_CLAUDE ? {} : { temperature: 0 }),
     });
 
     const started = Date.now();

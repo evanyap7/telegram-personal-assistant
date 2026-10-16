@@ -163,7 +163,8 @@ export function createRouter(deps: RouterDeps) {
       role,
       state.mode,
       providerFlags(state.gemini, state.perplexity, role, available.anthropic),
-      available
+      available,
+      { gemini: state.gemini.depleted, perplexity: state.perplexity.depleted }
     );
     if (candidates.length === 0) throw new NoModelAvailableError(role);
 

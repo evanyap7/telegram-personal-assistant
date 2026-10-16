@@ -36,23 +36,16 @@ export function isNearlyOut(s: ProviderStatus, threshold: number = SWITCH_THRESH
   return fraction !== null && fraction <= threshold + 1e-9;
 }
 
-/** Truly out: a depletion error was seen, or the known balance is spent. */
-export function isExhausted(s: ProviderStatus): boolean {
-  if (s.depleted) return true;
-  const left = remainingUsd(s);
-  return left !== null && left <= 0;
-}
-
 /** Global Claude mode: both providers nearly out. */
 export function decideMode(gemini: ProviderStatus, perplexity: ProviderStatus): Mode {
   return isNearlyOut(gemini) && isNearlyOut(perplexity) ? "claude" : "credits";
 }
 
 /**
- * Which providers a role should skip right now. Text jobs skip a provider as soon as it is
- * nearly out, so its work moves to Claude before it starts failing; voice keeps using Gemini
- * until it is truly exhausted (Claude cannot take audio). Without a Claude key there is
- * nowhere to move work, so only real exhaustion skips a provider.
+ * Which providers a role should skip right now. Text jobs skip a provider as soon as its
+ * estimate says it is nearly out, so its work moves to Claude before it starts failing.
+ * Balances are only estimates, so wherever Claude cannot take over (voice, or no Claude key)
+ * a provider is skipped only after it has really refused a call (a depletion error).
  */
 export function providerFlags(
   gemini: ProviderStatus,
@@ -60,7 +53,7 @@ export function providerFlags(
   role: Role,
   claudeAvailable: boolean
 ): { gemini: boolean; perplexity: boolean } {
-  const skip = role === "audio" || !claudeAvailable ? isExhausted : isNearlyOut;
+  const skip = role === "audio" || !claudeAvailable ? (s: ProviderStatus) => s.depleted : isNearlyOut;
   return { gemini: skip(gemini), perplexity: skip(perplexity) };
 }
 
@@ -149,18 +142,23 @@ export function claudeChain(role: Role): Candidate[] {
 /**
  * Ordered models to try for a role. In claude mode Claude goes first; otherwise
  * Gemini/Perplexity go first with Claude as the tail. Audio never uses Claude.
- * `skipped` marks providers to leave out (see providerFlags).
+ * `skipped` marks providers to leave out (see providerFlags). A provider skipped only on an
+ * estimate (`depleted` says it has not really refused a call) is kept as a last resort behind
+ * Claude, so a broken Claude key can never leave a working provider unused.
  */
 export function candidatesFor(
   role: Role,
   mode: Mode,
   skipped: { gemini: boolean; perplexity: boolean },
-  available: Record<Provider, boolean>
+  available: Record<Provider, boolean>,
+  depleted: { gemini: boolean; perplexity: boolean } = skipped
 ): Candidate[] {
   const claudeCandidates = available.anthropic ? claudeChain(role) : [];
-  if (mode === "claude" && claudeCandidates.length > 0) return claudeCandidates;
-  const primaries = PRIMARY[role].filter(
-    (c) => available[c.provider] && !(c.provider !== "anthropic" && skipped[c.provider])
+  const isSkipped = (c: Candidate) => c.provider !== "anthropic" && skipped[c.provider];
+  const primaries = PRIMARY[role].filter((c) => available[c.provider] && !isSkipped(c));
+  const lastResort = PRIMARY[role].filter(
+    (c) => available[c.provider] && isSkipped(c) && c.provider !== "anthropic" && !depleted[c.provider]
   );
-  return [...primaries, ...claudeCandidates];
+  if (mode === "claude" && claudeCandidates.length > 0) return [...claudeCandidates, ...lastResort];
+  return [...primaries, ...claudeCandidates, ...lastResort];
 }
