@@ -4,9 +4,12 @@
  * Runs representative natural language test messages through parseAssistantIntent()
  * and verifies expected action classification, measuring accuracy and latency.
  *
+ * Fixture validation only by default. Live runs send the full classifier prompt (~10k tokens)
+ * per case to Claude, so they need an explicit --live (npm run eval:intents).
+ *
  * Usage:
  *   node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-intents.ts
- *   node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-intents.ts --dry-run
+ *   node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-intents.ts --live
  */
 
 import { parseAssistantIntent } from "../lib/assistant-intent";
@@ -55,7 +58,7 @@ export const TEST_CASES: IntentTestCase[] = [
 
 async function run() {
   loadEnvLocal();
-  const isDryRun = process.argv.includes("--dry-run") || !process.env.ANTHROPIC_API_KEY;
+  const isDryRun = !process.argv.includes("--live") || !process.env.ANTHROPIC_API_KEY;
 
   console.log("\n=======================================================");
   console.log("  Telegram Assistant Intent Test Runner");
@@ -74,7 +77,7 @@ async function run() {
       validCount++;
     }
     console.log(`✅ All ${validCount} test cases validated successfully in dry-run mode.`);
-    console.log("To run live intent classification, provide ANTHROPIC_API_KEY in .env.local.\n");
+    console.log("To run live intent classification (spends tokens), use npm run eval:intents with ANTHROPIC_API_KEY set.\n");
     return;
   }
 

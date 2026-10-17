@@ -146,7 +146,8 @@ npm run test:ego               # orchestrator unit tests
 npm run eval:ego               # routing accuracy vs live model (-- --dry-run for offline)
 npm run test:ai-router         # model router (offline)
 npm run check:ai-live          # live provider check (a few cents)
-npm run test:intents -- --dry-run
+npm run test:intents           # fixture check, no API calls
+npm run eval:intents           # live intent classification (~10k tokens per case)
 npm run test:split
 npm run test:calendar
 npm run test:memory
