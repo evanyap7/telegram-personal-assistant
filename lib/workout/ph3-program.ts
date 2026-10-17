@@ -1,5 +1,6 @@
 import { getSheetsClient } from "../google";
 import { deleteMemory, getMemoryByKey, saveMemory } from "../memory";
+import { trimExercises } from "./ph3-adjustments";
 
 export interface PH3ExerciseSet {
   setNumber: number;
@@ -165,13 +166,14 @@ export async function getDayPlan(day: number, forceRefresh = false): Promise<PH3
     }
   }
 
+  const trimmed = trimExercises(exercises);
   const plan: PH3DayPlan = {
     day,
     week: info.week,
     blockTab: info.tab,
     dayTitle,
-    exercises,
-    isRestDay: exercises.length === 0 || /rest/i.test(dayTitle),
+    exercises: trimmed,
+    isRestDay: trimmed.length === 0 || /rest/i.test(dayTitle),
   };
 
   planCache.set(day, { plan, cachedAt: Date.now() });

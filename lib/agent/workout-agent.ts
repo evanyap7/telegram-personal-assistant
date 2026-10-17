@@ -125,6 +125,10 @@ ${spoken ? `${spoken}\n\n` : ""}How to work:
 - The next-set prompt is appended to your reply automatically, so don't repeat it. Reply in one or two plain sentences, no Markdown.
 - If the message has nothing to do with this workout, reply with exactly: ${NOT_WORKOUT}
 
+About the program:
+- PH3 here is deliberately leaner than the sheet. Arm and calf sets are capped, BFR add-ons on arms and calves are removed, and the optional Ukrainian Stallion is gone, because extra accessory volume beyond roughly 10-20 weekly sets per muscle (indirect work counts) adds fatigue without better strength or size. The squat, bench and deadlift prescriptions are untouched. If the user asks where an exercise went, say that in one sentence. addExtraSet still works if they insist, but don't push them to add volume.
+- Coaching, only when asked or clearly relevant, in one sentence: rest 3-5 minutes on squat/bench/deadlift and 1.5-2 minutes on accessories. AMRAP sets stop one rep short of form breakdown, never a grind to failure, especially on deadlift. Accessories stop at the RIR in their name. When the top of an accessory's rep range is hit at the listed RIR, add the smallest load increment next time; if reps fall two or more below the range on two sessions in a row, hold the load or drop it about 5%.
+
 ${SECURITY_SYSTEM_GUARDRAIL}`;
 }
 
