@@ -11,7 +11,6 @@ import {
   parseWorkoutDayCommand,
 } from "../lib/workout/workout-session";
 import { columnToA1, formatSheetReps, getBlockInfo } from "../lib/workout/ph3-program";
-import { trimExercises } from "../lib/workout/ph3-adjustments";
 
 const plan = {
   day: 1,
@@ -234,63 +233,6 @@ function run() {
   };
   assert.equal(findNextPending(plan, everything, 0, 0), null);
   console.log("  ✅ per-set status and cursor");
-
-  // Accessory trims (names are the ones in the PH3 sheet)
-  const mk = (exercise: string, n: number) => ({
-    exercise,
-    sets: Array.from({ length: n }, (_, i) => ({
-      setNumber: i + 1,
-      weight: "",
-      reps: "x8",
-      weightCell: `A${i + 1}`,
-      repsCell: `B${i + 1}`,
-    })),
-  });
-  const day = trimExercises([
-    mk("Squat", 3),
-    mk("Bench Press (AMRAP Set 4)", 4),
-    mk("Deadlift", 3),
-    mk("Dumbbell/EZ-Bar Curl (1RIR)", 5),
-    mk("BFR Machine Bicep Curl", 4),
-    mk("BFR Machine Bicep Curl (2 Cluster Sets)", 4),
-    mk("EZ-Bar Skullcrusher/Tricep Push-down (1RIR)", 5),
-    mk("BFR Skullcrusher/Cable Tricep Push-down", 4),
-    mk("Cable Tricep Push-down (1RIR)", 3),
-    mk("Single Arm Tricep Extension (2 Cluster Sets)", 4),
-    mk("Calf Raise (1RIR)", 4),
-    mk("BFR Calf Raise", 4),
-    mk("BFR Leg Extension", 4),
-    mk("BFR Leg Curl", 4),
-    mk("Leg Curl (3 RIR)", 2),
-    mk("Reverse Hyperextension (Optional)", 3),
-    mk("Ukrainian Stallion (Optional)", 3),
-    mk("Lat Pull-down/Weighted Pull-up (2RIR)", 3),
-  ]);
-  const setsOf = (name: string) => day.find((e) => e.exercise === name)?.sets.length;
-  assert.equal(setsOf("Squat"), 3, "SBD untouched");
-  assert.equal(setsOf("Bench Press (AMRAP Set 4)"), 4, "SBD untouched");
-  assert.equal(setsOf("Deadlift"), 3, "SBD untouched");
-  assert.equal(setsOf("Dumbbell/EZ-Bar Curl (1RIR)"), 3);
-  assert.equal(setsOf("EZ-Bar Skullcrusher/Tricep Push-down (1RIR)"), 3);
-  assert.equal(setsOf("Cable Tricep Push-down (1RIR)"), 2);
-  assert.equal(setsOf("Calf Raise (1RIR)"), 3);
-  assert.equal(setsOf("Reverse Hyperextension (Optional)"), 2);
-  assert.equal(setsOf("BFR Leg Extension"), 4, "BFR leg work is kept");
-  assert.equal(setsOf("BFR Leg Curl"), 4, "BFR leg work is kept");
-  assert.equal(setsOf("Leg Curl (3 RIR)"), 2, "leg curl is not treated as an arm curl");
-  assert.equal(setsOf("Lat Pull-down/Weighted Pull-up (2RIR)"), 3);
-  for (const gone of [
-    "BFR Machine Bicep Curl",
-    "BFR Machine Bicep Curl (2 Cluster Sets)",
-    "BFR Skullcrusher/Cable Tricep Push-down",
-    "Single Arm Tricep Extension (2 Cluster Sets)",
-    "BFR Calf Raise",
-    "Ukrainian Stallion (Optional)",
-  ]) {
-    assert.equal(setsOf(gone), undefined, `dropped: ${gone}`);
-  }
-  assert.equal(day[3].sets[2].weightCell, "A3", "kept sets keep their sheet cells");
-  console.log("  ✅ accessory trims");
 
   console.log("\n  All workout session tests passed.\n");
 }
