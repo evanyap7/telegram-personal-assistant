@@ -9,6 +9,7 @@ import {
   overwriteSetCell,
   savePH3SessionRaw,
   setUserPH3Day,
+  programDayFromWeekDay,
   writeSetToSheet,
   type PH3DayPlan,
   type PH3ExerciseSet,
@@ -207,6 +208,31 @@ export function parseWorkoutDayCommand(text: string): WorkoutDayCommand | null {
   if (skipMatch) {
     const fromDay = skipMatch[1] ? parseInt(skipMatch[1], 10) : undefined;
     return { kind: "next", startImmediately: false, fromDay };
+  }
+
+  // 8. Looser phrasing, anywhere in a sentence: "lets start over from week 1 day 1",
+  //    "restart the program", "start week 3 day 2", "week 2 day 4".
+  const weekDay = t.match(/\bweek\s*(\d{1,2})\s*[,:-]?\s*(?:day|d)\s*(\d)\b/);
+  const dayOnly = t.match(/\b(?:workout\s+)?day\s*(\d{1,2})\b/);
+  const restart =
+    /\b(start(?:ing)?\s+(?:over|again|afresh)|restart|re-?start|begin again|reset)\b/.test(t) ||
+    /\bfrom\s+(?:the\s+)?(?:beginning|scratch|top|start)\b/.test(t);
+  const programWord = /\b(program|programme|plan|routine|whole thing|beginning|scratch|from the top|week\s*1|day\s*1)\b/.test(t);
+  const verb = /\b(start|restart|re-?start|begin|go|jump|switch|reset|do|lets|let's|move|set|from|back)\b/.test(t);
+  // "tomorrow", "later"... mean move the position now but don't start a session.
+  const later = /\b(tomorrow|tmr|tmrw|later|tonight|next time|this (?:morning|afternoon|evening)|in the (?:morning|afternoon|evening)|not now)\b/.test(t);
+
+  if (weekDay) {
+    const day = programDayFromWeekDay(parseInt(weekDay[1], 10), parseInt(weekDay[2], 10));
+    if (day === null) return null;
+    const bare = /^week\s*\d{1,2}\s*[,:-]?\s*(?:day|d)\s*\d$/.test(t);
+    if (!verb && !bare) return null;
+    return { kind: "set", day, startImmediately: verb && !bare && !later };
+  }
+  if (restart && programWord) {
+    const day = dayOnly ? parseInt(dayOnly[1], 10) : 1;
+    if (day < 1 || day > 90) return null;
+    return { kind: "set", day, startImmediately: !later };
   }
 
   return null;

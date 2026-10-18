@@ -7,7 +7,13 @@ import { toConversationMessages } from "@/lib/agent/conversation-messages";
 import { getRecentChatHistory } from "@/lib/chat-history";
 import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
 import { resolveAgentReply } from "@/lib/agent/agent-reply";
-import { clearPH3Session, getDayPlan, type PH3DayPlan } from "@/lib/workout/ph3-program";
+import {
+  clearPH3Session,
+  getDayPlan,
+  programDayFromWeekDay,
+  setUserPH3Day,
+  type PH3DayPlan,
+} from "@/lib/workout/ph3-program";
 import {
   buildSetPrompt,
   describeTarget,
@@ -27,6 +33,19 @@ import {
 } from "@/lib/workout/workout-session";
 
 const NOT_WORKOUT = "NOT_WORKOUT";
+
+const dayTargetSchema = z.object({
+  day: z.number().int().min(1).max(90).optional().describe("Program day 1-90"),
+  week: z.number().int().min(1).max(13).optional().describe("Program week 1-13, used with dayOfWeek"),
+  dayOfWeek: z.number().int().min(1).max(7).optional().describe("Day within the week, 1-7"),
+});
+
+/** A program day from either a plain day number or a week + day-of-week pair; null if neither is valid. */
+function resolveDayTarget(t: { day?: number; week?: number; dayOfWeek?: number }): number | null {
+  if (t.day !== undefined) return t.day;
+  if (t.week !== undefined && t.dayOfWeek !== undefined) return programDayFromWeekDay(t.week, t.dayOfWeek);
+  return null;
+}
 
 function formatEntry(weightKg: number, reps: number): string {
   return `${weightKg > 0 ? `${weightKg}kg` : "BW"} × ${reps}`;
@@ -121,13 +140,16 @@ ${spoken ? `${spoken}\n\n` : ""}How to work:
 - "Skip" means they won't do it. "Delete" or "remove" on a set that is already logged means erase the entry: if they also say they'll redo it, use redo: true, otherwise it is skipped. "Delete" on a set not yet done means skip it.
 - Exercises can be referred to by number ("exercise 2") or name ("bench"). Sets are referred to by setNumber.
 - "That" or "the last one" means the most recently logged set, or the cursor set if nothing is logged yet.
+- Program days run 1-90: day = (week - 1) x 7 + day of the week, so "week 3 day 2" is day 16, and week 13 is days 85-90. For a week and day, pass week and dayOfWeek to switchDay or setProgramPosition instead of doing the sum yourself.
+- Moving around the program: "start over", "restart the program" or "from the beginning" mean day 1. If they want to train now, use switchDay; if they say they will train later or tomorrow, or just want to change where they are, use setProgramPosition, which doesn't start a session. "Start over" about a single set or exercise only redoes that set (deleteLoggedSet with redo true).
+- Be forgiving with wording, typos and mixed requests ("skip curls and do calves", "I only have time for the main lifts", "redo my last set at 100"). Do everything they asked with the tools, in one go, rather than asking them to rephrase. Only ask a question when a choice would change what gets logged.
 - If a request is ambiguous (e.g. two exercises both match), ask one short question instead of guessing.
 - Only report what the tools returned. If a tool returns an error, say so plainly.
 - The next-set prompt is appended to your reply automatically, so don't repeat it. Reply in one or two plain sentences, no Markdown.
 - If the message has nothing to do with this workout, reply with exactly: ${NOT_WORKOUT}
 
 About the program:
-- This PH3 sheet has been deliberately trimmed from Layne Norton's original. Arm and calf sets are capped, BFR add-ons on arms and calves are removed, and the optional Ukrainian Stallion is gone, because extra accessory volume beyond roughly 10-20 weekly sets per muscle (indirect work counts) adds fatigue without better strength or size. The squat, bench and deadlift prescriptions are untouched. If the user asks where an exercise went, say that in one sentence. addExtraSet still works if they insist, but don't push them to add volume.
+- This PH3 sheet is customised from Layne Norton's original. Arms are trained every session at small doses (about 11-12 direct sets a week each for biceps and triceps, placed after the main lifts at 2 reps in reserve), BFR add-ons on arms and calves are removed, and the optional Ukrainian Stallion is gone, because extra accessory volume beyond roughly 10-20 weekly sets per muscle (indirect work counts) adds fatigue without better results. Frequency itself doesn't change growth when weekly sets are equal; it just keeps each session's arm fatigue low. The squat, bench and deadlift prescriptions are untouched, and the week-4 rep test has no arm work. If the user asks where an exercise went, say that in one sentence. addExtraSet still works if they insist, but don't push them to add volume.
 - Coaching, only when asked or clearly relevant, in one sentence: rest 3-5 minutes on squat/bench/deadlift and 1.5-2 minutes on accessories. AMRAP sets stop one rep short of form breakdown, never a grind to failure, especially on deadlift. Accessories stop at the RIR in their name. When the top of an accessory's rep range is hit at the listed RIR, add the smallest load increment next time; if reps fall two or more below the range on two sessions in a row, hold the load or drop it about 5%.
 
 ${SECURITY_SYSTEM_GUARDRAIL}`;
@@ -388,9 +410,11 @@ export async function runWorkoutAgent(params: {
 
     switchDay: tool({
       description:
-        "Abandon the current day (saving what was logged) and start a different program day (1-90). Sends the new day's start message itself.",
-      inputSchema: z.object({ day: z.number().int().min(1).max(90) }),
-      execute: async ({ day }) => {
+        "Abandon the current day (saving what was logged) and start a different program day. Give either day (1-90) or week (1-13) with dayOfWeek (1-7). Sends the new day's start message itself.",
+      inputSchema: dayTargetSchema,
+      execute: async (target) => {
+        const day = resolveDayTarget(target);
+        if (day === null) return { ok: false, error: "That isn't a program day. Give day 1-90, or week 1-13 with day 1-7." };
         await flushFallbackSets(state);
         await clearPH3Session();
         const saved =
@@ -406,6 +430,32 @@ export async function runWorkoutAgent(params: {
         handedOff = true;
         mutated = true;
         return { ok: true, switchedTo: day };
+      },
+    }),
+
+    setProgramPosition: tool({
+      description:
+        "End the session (saving what was logged) and move the program position to another day WITHOUT starting it, e.g. \"I'll do week 1 day 1 tomorrow\" or \"put me back on day 12\". Sends its own confirmation.",
+      inputSchema: dayTargetSchema,
+      execute: async (target) => {
+        const day = resolveDayTarget(target);
+        if (day === null) return { ok: false, error: "That isn't a program day. Give day 1-90, or week 1-13 with day 1-7." };
+        await flushFallbackSets(state);
+        await clearPH3Session();
+        const progress = await setUserPH3Day(day);
+        const saved =
+          state.logged.length > 0
+            ? `Saved ${state.logged.length} set${state.logged.length === 1 ? "" : "s"} from Day ${state.day}. `
+            : "";
+        await sendTelegramMessage(
+          chatId,
+          `${saved}You're now on Week ${progress.currentWeek}, Day ${progress.currentDay}. Say "workout" when you're ready.`,
+          undefined,
+          null
+        );
+        handedOff = true;
+        mutated = true;
+        return { ok: true, positionedAt: day };
       },
     }),
 

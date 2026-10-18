@@ -10,7 +10,7 @@ import {
   parseSetInput,
   parseWorkoutDayCommand,
 } from "../lib/workout/workout-session";
-import { columnToA1, formatSheetReps, getBlockInfo } from "../lib/workout/ph3-program";
+import { columnToA1, formatSheetReps, getBlockInfo, programDayFromWeekDay } from "../lib/workout/ph3-program";
 
 const plan = {
   day: 1,
@@ -233,6 +233,30 @@ function run() {
   };
   assert.equal(findNextPending(plan, everything, 0, 0), null);
   console.log("  ✅ per-set status and cursor");
+
+  // Week/day and restart phrasing
+  assert.equal(programDayFromWeekDay(1, 1), 1);
+  assert.equal(programDayFromWeekDay(3, 2), 16);
+  assert.equal(programDayFromWeekDay(13, 6), 90);
+  assert.equal(programDayFromWeekDay(13, 7), null);
+  assert.equal(programDayFromWeekDay(14, 1), null);
+  assert.equal(programDayFromWeekDay(2, 8), null);
+  // The message that wrongly started Day 3: reposition only, because it says "tomorrow".
+  assert.deepEqual(parseWorkoutDayCommand("im going to work out tomorrow lets start over from week 1 day 1"), {
+    kind: "set",
+    day: 1,
+    startImmediately: false,
+  });
+  assert.deepEqual(parseWorkoutDayCommand("lets start over from week 1 day 1"), { kind: "set", day: 1, startImmediately: true });
+  assert.deepEqual(parseWorkoutDayCommand("restart the program"), { kind: "set", day: 1, startImmediately: true });
+  assert.deepEqual(parseWorkoutDayCommand("start from the beginning tomorrow"), { kind: "set", day: 1, startImmediately: false });
+  assert.deepEqual(parseWorkoutDayCommand("start week 3 day 2"), { kind: "set", day: 16, startImmediately: true });
+  assert.deepEqual(parseWorkoutDayCommand("go to week 2, day 4"), { kind: "set", day: 11, startImmediately: true });
+  assert.deepEqual(parseWorkoutDayCommand("week 2 day 4"), { kind: "set", day: 11, startImmediately: false });
+  for (const t of ["start over", "redo that set", "reset the set", "week 14 day 1", "I did week 3 day 2 last time", "100 x 5"]) {
+    assert.equal(parseWorkoutDayCommand(t), null, `not a day command: ${t}`);
+  }
+  console.log("  ✅ week/day and restart commands");
 
   console.log("\n  All workout session tests passed.\n");
 }

@@ -104,6 +104,17 @@ export function getBlockInfo(day: number): {
 }
 
 /**
+ * Program day (1-90) for "week 3, day 2". Weeks 1-12 have 7 days; the final week has days 85-90.
+ * Returns null when the pair is not a real program day.
+ */
+export function programDayFromWeekDay(week: number, dayOfWeek: number): number | null {
+  if (!Number.isInteger(week) || !Number.isInteger(dayOfWeek)) return null;
+  if (week < 1 || week > 13 || dayOfWeek < 1 || dayOfWeek > 7) return null;
+  const day = (week - 1) * 7 + dayOfWeek;
+  return day >= 1 && day <= 90 ? day : null;
+}
+
+/**
  * Parses and retrieves the workout plan for a specific day from the Google Sheet.
  */
 export async function getDayPlan(day: number, forceRefresh = false): Promise<PH3DayPlan> {
