@@ -3,6 +3,7 @@ import { ToolLoopAgent, tool, isStepCount } from "ai";
 import { z } from "zod";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
+import { toConversationMessages } from "@/lib/agent/conversation-messages";
 import { getRecentChatHistory } from "@/lib/chat-history";
 import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
 import { resolveAgentReply } from "@/lib/agent/agent-reply";
@@ -435,12 +436,9 @@ export async function runWorkoutAgent(params: {
 
   const instructions = buildWorkoutInstructions(plan, state, inputMode);
 
-  let history: Array<{ role: "user" | "assistant"; content: string }> = [];
+  let messages = toConversationMessages([], text);
   try {
-    const turns = await getRecentChatHistory(chatId, 6);
-    history = turns.map((t) => ({ role: t.role, content: t.text }));
-    const last = history[history.length - 1];
-    if (last?.role === "user" && last.content === text) history.pop();
+    messages = toConversationMessages(await getRecentChatHistory(chatId, 6), text);
   } catch {
     // History is a nicety; the session state is what matters.
   }
@@ -457,7 +455,7 @@ export async function runWorkoutAgent(params: {
         ...handle.sampling(0),
       });
       const generated = await agent.generate({
-        messages: [...history, { role: "user" as const, content: text }],
+        messages,
       });
       await recordModelUsage(handle, generated.totalUsage);
       return generated;

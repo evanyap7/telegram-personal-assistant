@@ -19,6 +19,7 @@ import { sendTelegramMessage } from "@/lib/telegram";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import type { FormattedChatTurn } from "@/lib/chat-history";
 import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
+import { toConversationMessages } from "@/lib/agent/conversation-messages";
 import { resolveAgentReply } from "@/lib/agent/agent-reply";
 import { addTransactionWithConversion, buildBudgetAlertLines } from "@/lib/agent/finance-add";
 
@@ -283,16 +284,7 @@ export async function runFinanceAgent(params: {
     inputMode: params.inputMode,
   });
 
-  // The incoming message is logged to chat history before this runs, so it
-  // may already be the last turn; drop it to avoid sending it twice.
-  const history = [...params.history];
-  const last = history[history.length - 1];
-  if (last?.role === "user" && last.text === params.text) history.pop();
-
-  const messages = [
-    ...history.map((turn) => ({ role: turn.role, content: turn.text })),
-    { role: "user" as const, content: params.text },
-  ];
+  const messages = toConversationMessages(params.history, params.text);
 
   const { result } = await withModelFallback(
     "agent",

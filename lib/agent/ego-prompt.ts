@@ -2,7 +2,6 @@ import {
   buildConversationContextBlock,
   type ConversationContext,
 } from "@/lib/assistant-intent";
-import type { FormattedChatTurn } from "@/lib/chat-history";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
 import { NO_REPLY } from "@/lib/agent/ego-reply";
@@ -17,21 +16,7 @@ export function describeWorkoutContext(
   } logged so far). Messages about this workout (logging, fixing, skipping, ending, switching day) go to askWorkoutAgent with kind "session_message".`;
 }
 
-/** The incoming message is logged to chat history before routing, so it is often the last turn. */
-export function dropCurrentTurn(history: FormattedChatTurn[], text: string): FormattedChatTurn[] {
-  const last = history[history.length - 1];
-  return last?.role === "user" && last.text === text ? history.slice(0, -1) : history;
-}
-
-export function toConversationMessages(
-  history: FormattedChatTurn[],
-  text: string
-): Array<{ role: "user" | "assistant"; content: string }> {
-  return [
-    ...dropCurrentTurn(history, text).map((turn) => ({ role: turn.role, content: turn.text })),
-    { role: "user" as const, content: text },
-  ];
-}
+export { dropCurrentTurn, toConversationMessages } from "@/lib/agent/conversation-messages";
 
 export interface EgoPromptInput {
   now: Date;

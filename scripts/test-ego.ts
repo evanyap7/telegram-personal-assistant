@@ -465,7 +465,7 @@ section("workout context line", () => {
   assert.match(describeWorkoutContext({ day: 2, logged: [] }), /0 sets logged/);
 });
 
-section("conversation messages drop the duplicated current turn and end with the user text", () => {
+section("conversation messages drop the duplicated current turn", () => {
   const history = [
     { role: "assistant" as const, text: "Hi", timestamp: "t1" },
     { role: "user" as const, text: "spent $5", timestamp: "t2" },
@@ -473,10 +473,32 @@ section("conversation messages drop the duplicated current turn and end with the
   assert.deepEqual(dropCurrentTurn(history, "spent $5"), [history[0]]);
   assert.deepEqual(dropCurrentTurn(history, "something else"), history);
   assert.deepEqual(dropCurrentTurn([], "x"), []);
-  assert.deepEqual(toConversationMessages(history, "spent $5"), [
-    { role: "assistant", content: "Hi" },
-    { role: "user", content: "spent $5" },
+});
+
+section("conversation messages: no history is just the user text", () => {
+  assert.deepEqual(toConversationMessages([], "dinner on friday"), [
+    { role: "user", content: "dinner on friday" },
   ]);
+});
+
+section("conversation messages: earlier turns are context in ONE user message, never separate turns", () => {
+  // Assistant replies are not logged, so history is a run of user turns. Sent as separate
+  // user messages, the provider merges them and the model answers every one again.
+  const history = [
+    { role: "user" as const, text: "weather today", timestamp: "t1" },
+    { role: "user" as const, text: "end workout", timestamp: "t2" },
+    { role: "user" as const, text: "dinner on friday", timestamp: "t3" },
+  ];
+  const messages = toConversationMessages(history, "dinner on friday");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].role, "user");
+  const body = messages[0].content;
+  assert.match(body, /weather today/);
+  assert.match(body, /end workout/);
+  assert.match(body, /do not (act on|answer)/i);
+  // The current message is last, and is not repeated inside the context.
+  assert.ok(body.trimEnd().endsWith("dinner on friday"));
+  assert.equal(body.split("dinner on friday").length - 1, 1);
 });
 
 section("EGO_ORCHESTRATOR flag: on by default, off only when set to off", () => {
