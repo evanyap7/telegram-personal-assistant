@@ -14,6 +14,7 @@ import {
   type PH3DayPlan,
   type PH3ExerciseSet,
 } from "./ph3-program";
+import { coachLine } from "./coach";
 import { logWorkoutSession } from "./workout-service";
 import type { WorkoutSet } from "./workout-types";
 
@@ -635,8 +636,23 @@ async function handleLoggedSet(
   entry: { weightKg: number; reps: number }
 ): Promise<void> {
   const plan = await getDayPlan(state.day);
+  const exercise = plan.exercises[state.exIdx];
+  const targetReps = exercise?.sets[state.setIdx]?.reps ?? "";
+  const isLastSet = state.setIdx === (exercise?.sets.length ?? 0) - 1;
   const logged = await recordSet(state, plan, state.exIdx, state.setIdx, entry);
-  await advanceOrFinish(chatId, state, plan, `✅ ${logged.exercise}: ${formatLogged(logged)}`);
+  const coach = coachLine({
+    exercise: logged.exercise,
+    targetReps,
+    weightKg: entry.weightKg,
+    reps: entry.reps,
+    isLastSet,
+  });
+  await advanceOrFinish(
+    chatId,
+    state,
+    plan,
+    `✅ ${logged.exercise}: ${formatLogged(logged)}${coach ? `\n💬 ${coach}` : ""}`
+  );
 }
 
 /**

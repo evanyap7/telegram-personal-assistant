@@ -11,6 +11,7 @@ import {
   parseWorkoutDayCommand,
 } from "../lib/workout/workout-session";
 import { columnToA1, formatSheetReps, getBlockInfo, programDayFromWeekDay } from "../lib/workout/ph3-program";
+import { coachLine, exerciseKind, parseRepTarget } from "../lib/workout/coach";
 
 const plan = {
   day: 1,
@@ -257,6 +258,31 @@ function run() {
     assert.equal(parseWorkoutDayCommand(t), null, `not a day command: ${t}`);
   }
   console.log("  ✅ week/day and restart commands");
+
+  // Coaching lines
+  assert.deepEqual(parseRepTarget("x9"), { min: 9, max: 9, amrap: false });
+  assert.deepEqual(parseRepTarget("x6-8"), { min: 6, max: 8, amrap: false });
+  assert.deepEqual(parseRepTarget("AMRAP"), { min: 0, max: 0, amrap: true });
+  assert.equal(parseRepTarget(""), null);
+  assert.equal(parseRepTarget("Set 1"), null);
+  assert.equal(exerciseKind("Squat (AMRAP Set 4)"), "main");
+  assert.equal(exerciseKind("Bench Press (1s pause)"), "main");
+  assert.equal(exerciseKind("Preacher Curl"), "isolation");
+  assert.equal(exerciseKind("Leg Curl (3 RIR)"), "isolation");
+  assert.equal(exerciseKind("Lat Pull-down"), "compound");
+  const line = (exercise: string, targetReps: string, weightKg: number, reps: number, isLastSet = false) =>
+    coachLine({ exercise, targetReps, weightKg, reps, isLastSet });
+  assert.match(line("Squat", "x7", 107.5, 7), /^On target\. Rest 3-5 min\.$/);
+  assert.match(line("Squat", "x7", 107.5, 9), /2 over target.*too light.*yellow box/);
+  assert.match(line("Squat", "x7", 107.5, 8), /^On target/, "one over is still on target");
+  assert.match(line("Squat", "x7", 107.5, 3), /4 short.*No grinding/);
+  assert.match(line("Squat", "AMRAP", 132.5, 11), /estimated 1RM of 181\.1kg/);
+  assert.match(line("Cable Curl (2RIR)", "x10-15", 20, 15), /Top of the range/);
+  assert.match(line("Cable Curl (2RIR)", "x10-15", 20, 7), /3 short of the range.*drops about 5%/);
+  assert.match(line("Lat Pull-down", "x8", 82, 8, false), /Rest about 2 min/);
+  assert.equal(line("Lat Pull-down", "x8", 82, 8, true), "On target.", "no rest note after the last set");
+  assert.equal(line("Squat", "", 100, 5, true), "", "nothing to say without a target");
+  console.log("  ✅ coaching lines");
 
   console.log("\n  All workout session tests passed.\n");
 }
