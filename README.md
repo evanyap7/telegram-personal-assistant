@@ -75,7 +75,7 @@ Built as a serverless bot with **Next.js**, **TypeScript**, **Anthropic Claude**
 ## 🧠 How it works
 
 ### The EGO orchestrator
-Every free-text message (typed, photo caption or transcribed voice note) goes to one orchestrator agent that calls tools: a **finance agent**, a **workout agent**, one tool per handler (calendar, to-dos, email, splitting, memory, recurring items, undo), web search and photo processing. One message can use several tools (*"log lunch and move my 3pm"*).
+Every free-text message (typed, photo caption or transcribed voice note) goes to one orchestrator agent that calls tools: a **finance agent**, a **workout agent**, one tool per handler (calendar, to-dos, email & triage, payment sync, habits, bill splitting, memory, recurring items, briefings, credits, undo), web search and photo processing. One message can use several tools (*"log lunch and move my 3pm"*).
 
 - **Voice**: transcribed with gym, PayLah and contact-name hints, echoed back as "Heard: ...", and handled with mishearings in mind. Uncertain destructive changes get confirmed first.
 - **Deterministic paths skip the model**: slash commands, buttons, cron jobs, photo intake and plain `weight x reps` logging.
