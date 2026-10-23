@@ -91,13 +91,40 @@ export async function ensureChatHistorySheetExists(): Promise<void> {
   }
 }
 
+// In-memory sliding window cache across warm invocations
+const MAX_CACHED_TURNS = 30;
+const memoryChatCache = new Map<number, FormattedChatTurn[]>();
+
+export function clearChatHistoryMemoryCache(userId?: number): void {
+  if (userId !== undefined) {
+    memoryChatCache.delete(userId);
+  } else {
+    memoryChatCache.clear();
+  }
+}
+
 export async function logChatMessage(entry: ChatHistoryEntry): Promise<void> {
+  const timestamp = entry.timestamp || formatSingaporeTimestamp(new Date());
+
+  // Update warm memory cache immediately
+  const existing = memoryChatCache.get(entry.userId) || [];
+  existing.push({
+    timestamp,
+    role: entry.role,
+    text: entry.text,
+    photoFileId: entry.photoFileId,
+    actionType: entry.actionType,
+  });
+  if (existing.length > MAX_CACHED_TURNS) {
+    existing.splice(0, existing.length - MAX_CACHED_TURNS);
+  }
+  memoryChatCache.set(entry.userId, existing);
+
   try {
     await ensureChatHistorySheetExists();
 
     const sheets = getSheetsClient();
     const spreadsheetId = getSpreadsheetId();
-    const timestamp = entry.timestamp || formatSingaporeTimestamp(new Date());
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
@@ -126,6 +153,12 @@ export async function getRecentChatHistory(
   userId: number,
   limit = 10
 ): Promise<FormattedChatTurn[]> {
+  // Check warm cache first
+  const cached = memoryChatCache.get(userId);
+  if (cached && cached.length >= Math.min(limit, 4)) {
+    return cached.slice(-limit);
+  }
+
   try {
     await ensureChatHistorySheetExists();
 
@@ -156,6 +189,9 @@ export async function getRecentChatHistory(
         });
       }
     }
+
+    // Populate warm memory cache
+    memoryChatCache.set(userId, userTurns.slice(-MAX_CACHED_TURNS));
 
     return userTurns.slice(-limit);
   } catch (error) {
