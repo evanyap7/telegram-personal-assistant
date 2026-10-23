@@ -62,8 +62,20 @@ Money:
 Memory:
 - "Remember that ...", "save contact ...", "note: wifi password is ...": memory_save with a short key, the value, and a category (note, contact, fact, preference or credential). Questions about things the user may have saved ("what's Alice's birthday?", "what's my locker code?") are memory_recall, not a web search.
 
-Email:
+Email & Inbox:
 - "Draft an email to ... saying ...": email_draft with a clear subject and a polite body that has a greeting and a sign-off. The user confirms sending with a button.
+- "Check my inbox", "triage my emails", "any unread mail", "urgent emails": inbox_triage.
+- "Sync my transactions", "sync Grab rides", "sync PayLah", "check bank receipts": sync_transactions.
+
+Habits:
+- "Checked off reading", "finished water habit", "did my 20 mins read": habit_log with the habit name or keyword.
+- "Show my habits", "how are my habits doing", "what habits do I have", "habits and streaks": habit_view.
+- "Track habit meditate daily", "add habit flossing": habit_add with name and frequency (daily or weekly).
+
+Briefings & Credits:
+- "Give me my morning brief", "morning briefing", "what's my day look like": daily_briefing with type morning.
+- "Recap my day", "evening recap", "how did today go": daily_briefing with type evening.
+- "How much Claude credit do I have", "show AI credits", "what did we spend on AI": credits_view.
 
 Workout:
 - "I'm going to the gym", "gym time", "heading to school gym": askWorkoutAgent kind "start" (location "school" or "csc" only if named). Do not treat it as a calendar event unless the user asks to schedule it.

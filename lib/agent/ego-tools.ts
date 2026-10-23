@@ -80,6 +80,18 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     "Create a recurring subscription (with amount) or recurring task that repeats daily, weekly, monthly or yearly.",
   recurring_view: "Show the user's recurring subscriptions and tasks.",
   undo: "Undo the user's most recent undoable action (a logged expense, edit, delete and similar).",
+  habit_log:
+    "Check off a habit for today by its name or keyword (e.g. read, water, workout, meditate).",
+  habit_view: "Show all tracked habits, today's completion status, and current/best streaks.",
+  habit_add: "Create a new habit to track with daily or weekly frequency.",
+  inbox_triage:
+    "Scan unread emails in Gmail, filter noise and receipts, and summarize actionable threads.",
+  sync_transactions:
+    "Scan Gmail for payment confirmations from DBS PayLah!, PayNow and Grab, and sync them to Google Sheets.",
+  credits_view:
+    "Show remaining Anthropic Claude and Perplexity balances, credit warnings, and fallback status.",
+  daily_briefing:
+    "Show the daily morning brief (agenda, tasks, budget pacing, inbox) or evening recap on demand.",
 };
 
 const flatEventFields = {

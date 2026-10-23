@@ -57,6 +57,15 @@ import { startPH3Workout } from "../workout/workout-session";
 import { executeUndo, executeLatestUndo } from "../undo";
 import { logHabitDone } from "../habits";
 import {
+  handleHabitLogAction,
+  handleHabitViewAction,
+  handleHabitAddAction,
+} from "./habit-handler";
+import { triageUnreadInbox } from "../inbox-triage";
+import { syncPayLahTransactions } from "../paylah-sync";
+import { aiLedger } from "../ai/router";
+import { sendMorningBrief, sendEveningRecap } from "../proactive";
+import {
   answerTelegramCallback,
   removeTelegramInlineKeyboard,
   sendTelegramMessage,
@@ -526,6 +535,66 @@ defaultRegistry
     const res = await executeLatestUndo(ctx.userId);
     await sendTelegramMessage(ctx.chatId, res.message);
     return { completionStatus: "undo_conversational" };
+  })
+  .registerIntent("habit_log", async (ctx, intent) => {
+    return handleHabitLogAction({
+      chatId: ctx.chatId,
+      name: intent.name,
+    });
+  })
+  .registerIntent("habit_view", async (ctx) => {
+    return handleHabitViewAction({
+      chatId: ctx.chatId,
+    });
+  })
+  .registerIntent("habit_add", async (ctx, intent) => {
+    return handleHabitAddAction({
+      chatId: ctx.chatId,
+      name: intent.name,
+      frequency: intent.frequency,
+    });
+  })
+  .registerIntent("inbox_triage", async (ctx, intent) => {
+    try {
+      const triage = await triageUnreadInbox(intent.limit ?? 5);
+      await sendTelegramMessage(ctx.chatId, triage.formattedSummary);
+      return { completionStatus: "inbox_triage" };
+    } catch {
+      await sendTelegramMessage(
+        ctx.chatId,
+        "⚠️ Could not check Gmail inbox. Ensure Gmail credentials are authorized."
+      );
+      return { completionStatus: "inbox_triage_failed" };
+    }
+  })
+  .registerIntent("sync_transactions", async (ctx) => {
+    await sendTelegramMessage(ctx.chatId, "🔄 Syncing transactions from Gmail...");
+    try {
+      const res = await syncPayLahTransactions();
+      await sendTelegramMessage(ctx.chatId, `✅ Synced ${res.logged} new transaction(s).`);
+      return { completionStatus: "sync_transactions_success" };
+    } catch {
+      await sendTelegramMessage(ctx.chatId, "⚠️ Failed to sync transactions from Gmail.");
+      return { completionStatus: "sync_transactions_failed" };
+    }
+  })
+  .registerIntent("credits_view", async (ctx) => {
+    const summary = await aiLedger.describe();
+    await sendTelegramMessage(ctx.chatId, summary, undefined, null);
+    return { completionStatus: "credits_view" };
+  })
+  .registerIntent("daily_briefing", async (ctx, intent) => {
+    try {
+      if (intent.type === "evening") {
+        await sendEveningRecap(ctx.chatId);
+      } else {
+        await sendMorningBrief(ctx.chatId);
+      }
+      return { completionStatus: "daily_briefing" };
+    } catch {
+      await sendTelegramMessage(ctx.chatId, "⚠️ Could not generate briefing at this time.");
+      return { completionStatus: "daily_briefing_failed" };
+    }
   })
   .registerCallback("gym_loc", async (ctx) => {
     const location = (ctx.parts[1] || "school") as "school" | "csc";

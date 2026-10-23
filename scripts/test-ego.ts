@@ -212,6 +212,46 @@ section("registry tool validates, applies defaults, dispatches and marks notifie
   assert.deepEqual(calls.toolCalls, ["todo_add"]);
 });
 
+section("new convergence tools validate and dispatch properly", async () => {
+  const { deps, calls } = makeDeps();
+  const tools = buildEgoTools(deps);
+
+  // 1. habit_log
+  const r1 = await runTool(tools, "habit_log", { name: "reading" });
+  assert.equal(r1.ok, true);
+  assert.equal(calls.dispatched.pop()?.action, "habit_log");
+
+  // 2. habit_view
+  const r2 = await runTool(tools, "habit_view", {});
+  assert.equal(r2.ok, true);
+  assert.equal(calls.dispatched.pop()?.action, "habit_view");
+
+  // 3. habit_add
+  const r3 = await runTool(tools, "habit_add", { name: "meditation", frequency: "daily" });
+  assert.equal(r3.ok, true);
+  assert.equal(calls.dispatched.pop()?.action, "habit_add");
+
+  // 4. inbox_triage
+  const r4 = await runTool(tools, "inbox_triage", { limit: 5 });
+  assert.equal(r4.ok, true);
+  assert.equal(calls.dispatched.pop()?.action, "inbox_triage");
+
+  // 5. sync_transactions
+  const r5 = await runTool(tools, "sync_transactions", {});
+  assert.equal(r5.ok, true);
+  assert.equal(calls.dispatched.pop()?.action, "sync_transactions");
+
+  // 6. credits_view
+  const r6 = await runTool(tools, "credits_view", {});
+  assert.equal(r6.ok, true);
+  assert.equal(calls.dispatched.pop()?.action, "credits_view");
+
+  // 7. daily_briefing
+  const r7 = await runTool(tools, "daily_briefing", { type: "morning" });
+  assert.equal(r7.ok, true);
+  assert.equal(calls.dispatched.pop()?.action, "daily_briefing");
+});
+
 section("tool failure honesty: handler throw or not-handled returns ok:false and does not notify", async () => {
   const throwing = makeDeps({
     dispatchIntent: async () => {

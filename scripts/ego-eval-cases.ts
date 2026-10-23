@@ -70,4 +70,34 @@ export const EGO_EVAL_CASES: EgoEvalCase[] = [
     workoutActive: true,
     description: "Active workout: skip",
   },
+  {
+    message: "checked off my reading habit",
+    expectTools: ["habit_log"],
+    description: "Log habit done",
+  },
+  {
+    message: "show my habits and streaks",
+    expectTools: ["habit_view"],
+    description: "View habits",
+  },
+  {
+    message: "check my unread emails",
+    expectTools: ["inbox_triage"],
+    description: "Inbox triage",
+  },
+  {
+    message: "sync my recent Grab transactions",
+    expectTools: ["sync_transactions"],
+    description: "Sync transactions",
+  },
+  {
+    message: "how much Claude credit do I have left?",
+    expectTools: ["credits_view"],
+    description: "Credits view",
+  },
+  {
+    message: "give me my morning brief",
+    expectTools: ["daily_briefing"],
+    description: "Morning brief on demand",
+  },
 ];
