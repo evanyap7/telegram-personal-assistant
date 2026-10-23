@@ -30,6 +30,8 @@ export interface MonthlyBudgetStatus {
   categoryCapAlerts?: string[];
   formattedNotice: string;
   formattedMarkdownNotice: string;
+  dailyVelocity?: number;
+  projectedMonthEnd?: number;
 }
 
 function getSpreadsheetId(): string {
@@ -386,6 +388,18 @@ export async function getMonthlyBudgetStatus(
   let formattedNotice = "";
   let formattedMarkdownNotice = "";
 
+  const refDate = date != null ? new Date(date) : new Date();
+  const validRef = Number.isNaN(refDate.getTime()) ? new Date() : refDate;
+  const nowDay = validRef.getDate();
+  const totalDaysInMonth = new Date(
+    validRef.getFullYear(),
+    validRef.getMonth() + 1,
+    0
+  ).getDate();
+  const safeDay = Math.max(1, nowDay);
+  const dailyVelocity = totalExpenses / safeDay;
+  const projectedMonthEnd = dailyVelocity * totalDaysInMonth;
+
   if (hasBudget) {
     if (isOverBudget) {
       const overBy = Math.abs(remaining).toFixed(2);
@@ -412,6 +426,8 @@ export async function getMonthlyBudgetStatus(
     categoryCapAlerts,
     formattedNotice,
     formattedMarkdownNotice,
+    dailyVelocity,
+    projectedMonthEnd,
   };
 }
 
@@ -468,6 +484,17 @@ export async function formatBudgetSummary(monthArg?: string): Promise<string> {
     `📈 *Utilization:* [${bar}] ${status.percentUsed.toFixed(1)}%`,
     statusIcon,
   ];
+
+  if (status.dailyVelocity !== undefined && status.projectedMonthEnd !== undefined) {
+    lines.push(
+      `⚡ *Burn Rate:* ~$${status.dailyVelocity.toFixed(2)}/day (Projected: ~$${status.projectedMonthEnd.toFixed(2)} ${status.currency})`
+    );
+    if (status.projectedMonthEnd > status.budget && !status.isOverBudget) {
+      lines.push(
+        `⚠️ *Pacing Alert:* At this pace, you may exceed budget by ~$${(status.projectedMonthEnd - status.budget).toFixed(2)}.`
+      );
+    }
+  }
 
   if (status.categoryCaps && status.categoryCaps.length > 0) {
     lines.push("", "🏷️ *Category Caps:*");
