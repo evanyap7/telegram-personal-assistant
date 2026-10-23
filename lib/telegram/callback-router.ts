@@ -51,7 +51,13 @@ import {
   handleWorkoutViewAction,
 } from "../workout/workout-handler";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
-import { startPH3Workout } from "../workout/workout-session";
+import {
+  startPH3Workout,
+  loadSession,
+  skipSet,
+  skipExercise,
+  endSession,
+} from "../workout/workout-session";
 import { buildUndoInlineKeyboard, registerUndoAction } from "../undo";
 import { dispatchCommand } from "./command-router";
 
@@ -544,6 +550,49 @@ export async function dispatchCallback(input: CallbackDispatchInput): Promise<vo
     await answerTelegramCallback(input.callbackId, "Cancelled.");
     await removeTelegramInlineKeyboard(input.chatId, input.messageId);
     return;
+  }
+
+  // Workout live session actions
+  if (action === "workout") {
+    const subAction = parts[1];
+
+    if (subAction === "rest") {
+      const seconds = parseInt(parts[2] || "120", 10);
+      const mins = Math.round(seconds / 60);
+      await answerTelegramCallback(
+        input.callbackId,
+        `⏱ ${mins}m rest timer started! Catch your breath.`
+      );
+      return;
+    }
+
+    const session = await loadSession().catch(() => null);
+    if (!session) {
+      await answerTelegramCallback(input.callbackId, "No active workout session.");
+      await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+      return;
+    }
+
+    if (subAction === "skip_set") {
+      await answerTelegramCallback(input.callbackId, "Skipping set...");
+      await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+      await skipSet(input.chatId, session);
+      return;
+    }
+
+    if (subAction === "skip_exercise") {
+      await answerTelegramCallback(input.callbackId, "Skipping exercise...");
+      await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+      await skipExercise(input.chatId, session);
+      return;
+    }
+
+    if (subAction === "end") {
+      await answerTelegramCallback(input.callbackId, "Ending workout...");
+      await removeTelegramInlineKeyboard(input.chatId, input.messageId);
+      await endSession(input.chatId, session);
+      return;
+    }
   }
 
   // 11. Legacy action callbacks (auto-handled)

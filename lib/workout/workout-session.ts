@@ -444,7 +444,7 @@ export async function startPH3Workout(params: {
     buildSetPrompt(plan, 0, 0)
   );
 
-  await sendTelegramMessage(chatId, lines.join("\n"));
+  await sendTelegramMessage(chatId, lines.join("\n"), buildWorkoutActiveInlineKeyboard());
 }
 
 export async function endSession(chatId: number, state: WorkoutSessionState): Promise<void> {
@@ -512,17 +512,35 @@ async function advanceOrFinish(
     lines.push("", `Next exercise — *${nextEx.exercise}*, ${nextEx.sets.length} sets.`);
   }
   lines.push("", buildSetPrompt(plan, state.exIdx, state.setIdx));
-  await sendTelegramMessage(chatId, lines.join("\n"));
+  await sendTelegramMessage(chatId, lines.join("\n"), buildWorkoutActiveInlineKeyboard());
 }
 
-async function skipExercise(chatId: number, state: WorkoutSessionState): Promise<void> {
+export function buildWorkoutActiveInlineKeyboard(): {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+} {
+  return {
+    inline_keyboard: [
+      [
+        { text: "⏭ Skip Set", callback_data: "workout:skip_set" },
+        { text: "⏩ Next Ex", callback_data: "workout:skip_exercise" },
+      ],
+      [
+        { text: "⏱ 2m Rest", callback_data: "workout:rest:120" },
+        { text: "⏱ 3m Rest", callback_data: "workout:rest:180" },
+        { text: "🏁 End", callback_data: "workout:end" },
+      ],
+    ],
+  };
+}
+
+export async function skipExercise(chatId: number, state: WorkoutSessionState): Promise<void> {
   const plan = await getDayPlan(state.day);
   const currentEx = plan.exercises[state.exIdx];
   for (const set of currentEx.sets) markSkipped(state, currentEx.exercise, set.setNumber);
   await advanceOrFinish(chatId, state, plan, `Skipped ${currentEx.exercise}.`);
 }
 
-async function skipSet(chatId: number, state: WorkoutSessionState): Promise<void> {
+export async function skipSet(chatId: number, state: WorkoutSessionState): Promise<void> {
   const plan = await getDayPlan(state.day);
   const ex = plan.exercises[state.exIdx];
   const set = ex.sets[state.setIdx];
