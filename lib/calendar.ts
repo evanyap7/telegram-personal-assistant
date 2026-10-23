@@ -715,6 +715,41 @@ export async function getUpcomingSchedule(
   return merged.slice(0, maxResults);
 }
 
+/**
+ * Checks for timed events that overlap with a proposed [start, end] window across all calendars.
+ */
+export async function findConflictingEvents(params: {
+  start: string;
+  end: string;
+  ignoreEventId?: string;
+}): Promise<ScheduleEventItem[]> {
+  const { start, end, ignoreEventId } = params;
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs) {
+    return [];
+  }
+
+  // Fetch events spanning this window across personal & work calendars
+  const events = await getUpcomingSchedule({
+    calendarName: "all",
+    timeMin: new Date(startMs - 60_000).toISOString(),
+    timeMax: new Date(endMs + 60_000).toISOString(),
+    maxResults: 15,
+  });
+
+  return events.filter((ev) => {
+    if (ignoreEventId && ev.eventId === ignoreEventId) return false;
+    if (ev.isAllDay) return false; // All-day events do not block specific timed slots
+    const evStartMs = new Date(ev.start).getTime();
+    const evEndMs = new Date(ev.end).getTime();
+    if (Number.isNaN(evStartMs) || Number.isNaN(evEndMs)) return false;
+    // Overlap condition: start < evEnd && end > evStart
+    return startMs < evEndMs && endMs > evStartMs;
+  });
+}
+
 export type ReminderCheckResult = {
   eventsChecked: number;
   remindersSent: number;

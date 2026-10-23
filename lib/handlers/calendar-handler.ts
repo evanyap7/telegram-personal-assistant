@@ -6,6 +6,7 @@ import {
   applyCalendarReschedule,
   findFreeCalendarSlots,
   formatFreeSlotsMessage,
+  findConflictingEvents,
 } from "@/lib/calendar";
 import {
   formatScheduleAgendaView,
@@ -216,6 +217,28 @@ export async function handleCalendarAddAction(params: {
   ];
   if (created.htmlLink) {
     lines.push(`Link: ${created.htmlLink}`);
+  }
+
+  // Check for timed event conflicts
+  if (!intent.allDay && intent.start && intent.end) {
+    try {
+      const conflicts = await findConflictingEvents({
+        start: intent.start,
+        end: intent.end,
+        ignoreEventId: created.id || undefined,
+      });
+      if (conflicts.length > 0) {
+        const conflictTitles = conflicts
+          .map(
+            (c) =>
+              `"${c.title}" (${c.calendarName === "work" ? "💼 Work" : "🏠 Personal"})`
+          )
+          .join(", ");
+        lines.push("", `⚠️ *Schedule conflict alert*: Overlaps with ${conflictTitles}`);
+      }
+    } catch {
+      // Non-fatal conflict check
+    }
   }
 
   await sendTelegramMessage(
