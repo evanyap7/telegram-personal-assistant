@@ -51,6 +51,7 @@ import {
   handleWorkoutViewAction,
 } from "../workout/workout-handler";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
+import { startRestTimer } from "../workout/rest-timer";
 import {
   startPH3Workout,
   loadSession,
@@ -558,10 +559,20 @@ export async function dispatchCallback(input: CallbackDispatchInput): Promise<vo
 
     if (subAction === "rest") {
       const seconds = parseInt(parts[2] || "120", 10);
+      const session = await loadSession().catch(() => null);
+      if (!session) {
+        await answerTelegramCallback(input.callbackId, "No active workout session.");
+        return;
+      }
+      await startRestTimer(input.chatId, seconds, session);
       const mins = Math.round(seconds / 60);
       await answerTelegramCallback(
         input.callbackId,
-        `⏱ ${mins}m rest timer started! Catch your breath.`
+        `⏱ ${mins}m rest timer started! I'll message you when it's time.`
+      );
+      await sendTelegramMessage(
+        input.chatId,
+        `⏱ Resting ${mins} min. I'll ping you here when it's time for your next set.`
       );
       return;
     }

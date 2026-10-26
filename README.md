@@ -127,6 +127,7 @@ Use Vercel Cron or [cron-job.org](https://cron-job.org) with the header `Authori
 | `/api/cron/briefing?type=morning` | `0 0 * * *` | Morning brief |
 | `/api/cron/briefing?type=evening` | `0 14 * * *` | Evening recap |
 | `/api/cron/calendar-reminders` | `*/10 * * * *` | To-do nags, event pings, leave-now alerts |
+| `/api/cron/rest-timer` | `* * * * *` | Pings you when a workout rest timer ends (needs per-minute polling, e.g. cron-job.org) |
 | `/api/cron/recurring` | `0 1 * * *` | Recurring subscriptions and tasks |
 | `/api/cron/cleanup` | `0 16 * * *` | Prune expired actions, chat history, update IDs |
 
