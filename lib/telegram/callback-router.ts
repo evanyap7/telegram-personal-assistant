@@ -51,7 +51,7 @@ import {
   handleWorkoutViewAction,
 } from "../workout/workout-handler";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
-import { startRestTimer } from "../workout/rest-timer";
+import { startRestTimer } from "../workout/rest-timer-store";
 import {
   startPH3Workout,
   loadSession,

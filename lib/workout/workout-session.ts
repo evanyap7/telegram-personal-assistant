@@ -14,7 +14,8 @@ import {
   type PH3DayPlan,
   type PH3ExerciseSet,
 } from "./ph3-program";
-import { coachLine } from "./coach";
+import { coachLine, restSeconds } from "./coach";
+import { startRestTimer } from "./rest-timer-store";
 import { logWorkoutSession } from "./workout-service";
 import type { WorkoutSet } from "./workout-types";
 
@@ -487,12 +488,22 @@ export function markSkipped(
   state.skipped = [...(state.skipped ?? []), { exercise, setNumber }];
 }
 
-/** Moves the cursor to the next pending set, or finishes the session when none remain. */
+function formatRest(seconds: number): string {
+  if (seconds < 90) return `${seconds}s`;
+  const mins = seconds / 60;
+  return `${Number.isInteger(mins) ? mins : mins.toFixed(1)} min`;
+}
+
+/**
+ * Moves the cursor to the next pending set, or finishes the session when none remain. When
+ * `autoRestSeconds` is given and a set follows, the rest timer starts with the next prompt.
+ */
 async function advanceOrFinish(
   chatId: number,
   state: WorkoutSessionState,
   plan: PH3DayPlan,
-  preface: string
+  preface: string,
+  autoRestSeconds?: number
 ): Promise<void> {
   const prevExIdx = state.exIdx;
   const next = findNextPending(plan, state, state.exIdx, state.setIdx);
@@ -507,6 +518,17 @@ async function advanceOrFinish(
   await saveSession(state);
 
   const lines = [preface];
+  if (autoRestSeconds) {
+    // A failed timer write must not lose the set that was just logged.
+    const started = await startRestTimer(chatId, autoRestSeconds, state).then(
+      () => true,
+      (error) => {
+        console.error("Auto rest timer failed to start:", error);
+        return false;
+      }
+    );
+    if (started) lines.push(`⏱ Rest ${formatRest(autoRestSeconds)} — I'll ping you when it's time.`);
+  }
   if (next.exIdx !== prevExIdx) {
     const nextEx = plan.exercises[next.exIdx];
     lines.push("", `Next exercise — *${nextEx.exercise}*, ${nextEx.sets.length} sets.`);
@@ -669,7 +691,8 @@ async function handleLoggedSet(
     chatId,
     state,
     plan,
-    `✅ ${logged.exercise}: ${formatLogged(logged)}${coach ? `\n💬 ${coach}` : ""}`
+    `✅ ${logged.exercise}: ${formatLogged(logged)}${coach ? `\n💬 ${coach}` : ""}`,
+    restSeconds(logged.exercise)
   );
 }
 
