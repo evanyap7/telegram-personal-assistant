@@ -61,6 +61,7 @@ import { startPH3Workout } from "../workout/workout-session";
 import { setupWorkoutDashboardSheet } from "../workout/workout-dashboard";
 import { executeLatestUndo } from "../undo";
 import { handleCreditsCommand, parseCreditsCommand } from "../ai/commands";
+import { handleRestCommand, parseRestCommand } from "../workout/rest-command";
 
 export interface CommandContext {
   chatId: number;
@@ -93,6 +94,12 @@ export async function dispatchCommand(
   if (parseCreditsCommand(text)) {
     await handleCreditsCommand({ chatId, text });
     return { handled: true, completionStatus: "credits" };
+  }
+
+  // Workout rest timer settings
+  if (parseRestCommand(text)) {
+    await handleRestCommand({ chatId, text });
+    return { handled: true, completionStatus: "rest_settings" };
   }
 
   // Set Commands

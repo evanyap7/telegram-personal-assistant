@@ -14,8 +14,9 @@ import {
   type PH3DayPlan,
   type PH3ExerciseSet,
 } from "./ph3-program";
-import { coachLine, restSeconds } from "./coach";
-import { startRestTimer } from "./rest-timer-store";
+import { coachLine } from "./coach";
+import { formatRestDuration } from "./rest-command";
+import { getAutoRestSeconds, startRestTimer } from "./rest-timer-store";
 import { logWorkoutSession } from "./workout-service";
 import type { WorkoutSet } from "./workout-types";
 
@@ -488,12 +489,6 @@ export function markSkipped(
   state.skipped = [...(state.skipped ?? []), { exercise, setNumber }];
 }
 
-function formatRest(seconds: number): string {
-  if (seconds < 90) return `${seconds}s`;
-  const mins = seconds / 60;
-  return `${Number.isInteger(mins) ? mins : mins.toFixed(1)} min`;
-}
-
 /**
  * Moves the cursor to the next pending set, or finishes the session when none remain. When
  * `autoRestSeconds` is given and a set follows, the rest timer starts with the next prompt.
@@ -527,7 +522,7 @@ async function advanceOrFinish(
         return false;
       }
     );
-    if (started) lines.push(`⏱ Rest ${formatRest(autoRestSeconds)} — I'll ping you when it's time.`);
+    if (started) lines.push(`⏱ Rest ${formatRestDuration(autoRestSeconds)} — I'll ping you when it's time.`);
   }
   if (next.exIdx !== prevExIdx) {
     const nextEx = plan.exercises[next.exIdx];
@@ -692,7 +687,7 @@ async function handleLoggedSet(
     state,
     plan,
     `✅ ${logged.exercise}: ${formatLogged(logged)}${coach ? `\n💬 ${coach}` : ""}`,
-    restSeconds(logged.exercise)
+    (await getAutoRestSeconds(logged.exercise).catch(() => null)) ?? undefined
   );
 }
 

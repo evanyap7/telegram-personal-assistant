@@ -12,6 +12,7 @@ import {
 } from "../lib/workout/workout-session";
 import { columnToA1, formatSheetReps, getBlockInfo, programDayFromWeekDay } from "../lib/workout/ph3-program";
 import { coachLine, exerciseKind, parseRepTarget } from "../lib/workout/coach";
+import { formatRestDuration, parseRestCommand, parseRestDuration } from "../lib/workout/rest-command";
 
 const plan = {
   day: 1,
@@ -283,6 +284,28 @@ function run() {
   assert.equal(line("Lat Pull-down", "x8", 82, 8, true), "On target.", "no rest note after the last set");
   assert.equal(line("Squat", "", 100, 5, true), "", "nothing to say without a target");
   console.log("  ✅ coaching lines");
+
+  assert.equal(parseRestDuration("4m"), 240);
+  assert.equal(parseRestDuration("90s"), 90);
+  assert.equal(parseRestDuration("1.5m"), 90);
+  assert.equal(parseRestDuration("3"), 180, "bare small numbers are minutes");
+  assert.equal(parseRestDuration("90"), 90, "bare large numbers are seconds");
+  assert.equal(parseRestDuration("5s"), null, "below the minimum");
+  assert.equal(parseRestDuration("20m"), null, "above the maximum");
+  assert.equal(parseRestDuration("soon"), null);
+  assert.equal(parseRestCommand("/workout"), null);
+  assert.deepEqual(parseRestCommand("/rest"), { kind: "show" });
+  assert.deepEqual(parseRestCommand("/rest OFF"), { kind: "off" });
+  assert.deepEqual(parseRestCommand("/rest reset"), { kind: "reset" });
+  assert.deepEqual(parseRestCommand("/rest main 4m"), { kind: "set", exercise: "main", seconds: 240 });
+  assert.deepEqual(parseRestCommand("/rest accessories 60 s"), { kind: "set", exercise: "isolation", seconds: 60 });
+  assert.equal(parseRestCommand("/rest main")?.kind, "usage_error");
+  assert.equal(parseRestCommand("/rest biceps 2m")?.kind, "usage_error");
+  assert.equal(parseRestCommand("/rest main 1s")?.kind, "usage_error");
+  assert.equal(formatRestDuration(75), "75s");
+  assert.equal(formatRestDuration(180), "3 min");
+  assert.equal(formatRestDuration(150), "2.5 min");
+  console.log("  ✅ rest timer settings");
 
   console.log("\n  All workout session tests passed.\n");
 }

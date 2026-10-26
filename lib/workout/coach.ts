@@ -15,16 +15,12 @@ const REST: Record<ExerciseKind, string> = {
   isolation: "60-90 s",
 };
 
-/** Auto-started rest per exercise kind, inside the ranges the coach line quotes above. */
-const REST_SECONDS: Record<ExerciseKind, number> = {
+/** Default auto-started rest per exercise kind, inside the ranges the coach line quotes above. */
+export const DEFAULT_REST_SECONDS: Record<ExerciseKind, number> = {
   main: 180,
   compound: 120,
   isolation: 75,
 };
-
-export function restSeconds(exerciseName: string): number {
-  return REST_SECONDS[exerciseKind(exerciseName)];
-}
 
 export interface RepTarget {
   min: number;

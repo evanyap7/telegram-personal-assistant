@@ -63,7 +63,7 @@ Call each endpoint with `Authorization: Bearer <CRON_SECRET>` from Vercel Cron o
 
 ## 🎮 Commands
 
-`/menu` · `/split` · `/owed` · `/budget` · `/finance` · `/export` · `/sync` · `/freeslots` · `/agenda` · `/todo` · `/remind` · `/inbox` · `/remember` · `/recall` · `/habits` · `/workout` · `/workoutday` · `/credits`
+`/menu` · `/split` · `/owed` · `/budget` · `/finance` · `/export` · `/sync` · `/freeslots` · `/agenda` · `/todo` · `/remind` · `/inbox` · `/remember` · `/recall` · `/habits` · `/workout` · `/workoutday` · `/rest` · `/credits`
 
 Everything also works as plain language. Commands are just shortcuts.
 

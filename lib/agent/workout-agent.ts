@@ -2,6 +2,8 @@ import { recordModelUsage, withModelFallback } from "@/lib/ai/router";
 import { ToolLoopAgent, tool, isStepCount } from "ai";
 import { z } from "zod";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { formatRestDuration } from "@/lib/workout/rest-command";
+import { getAutoRestSeconds, startRestTimer } from "@/lib/workout/rest-timer-store";
 import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import { toConversationMessages } from "@/lib/agent/conversation-messages";
 import { getRecentChatHistory } from "@/lib/chat-history";
@@ -150,8 +152,8 @@ ${spoken ? `${spoken}\n\n` : ""}How to work:
 - If the message has nothing to do with this workout, reply with exactly: ${NOT_WORKOUT}
 
 About the program:
-- This PH3 sheet is customised from Layne Norton's original. Arms are trained every session at small doses (about 11-12 direct sets a week each for biceps and triceps, placed after the main lifts at 2 reps in reserve), BFR add-ons on arms and calves are removed, and the optional Ukrainian Stallion is gone, because extra accessory volume beyond roughly 10-20 weekly sets per muscle (indirect work counts) adds fatigue without better results. Frequency itself doesn't change growth when weekly sets are equal; it just keeps each session's arm fatigue low. The squat, bench and deadlift prescriptions are untouched, and the week-4 rep test has no arm work. If the user asks where an exercise went, say that in one sentence. addExtraSet still works if they insist, but don't push them to add volume.
-- Coaching, only when asked or clearly relevant, in one sentence: rest 3-5 minutes on squat/bench/deadlift and 1.5-2 minutes on accessories. AMRAP sets stop one rep short of form breakdown, never a grind to failure, especially on deadlift. Accessories stop at the RIR in their name. When the top of an accessory's rep range is hit at the listed RIR, add the smallest load increment next time; if reps fall two or more below the range on two sessions in a row, hold the load or drop it about 5%.
+- This PH3 sheet is customised from Layne Norton's original. Arms are a priority: they are trained in most sessions, about 14-16 direct sets a week each for biceps and triceps, placed after the main lifts at 1-2 reps in reserve. All blood-flow-restriction (BFR) work has been removed and replaced with conventional sets, and Day 6 was trimmed to the squat plus leg extension, seated leg curl, calves and a focused arm block, because extra accessory volume beyond roughly 10-20 weekly sets per muscle (indirect work counts) adds fatigue without better results on a powerlifting programme. Frequency itself doesn't change growth when weekly sets are equal; it just keeps each session's arm fatigue low. The squat, bench and deadlift prescriptions are untouched, and the week-4 rep test has no arm work. If the user asks where an exercise went, say that in one sentence. addExtraSet still works if they insist, but don't push them to add volume.
+- Coaching, only when asked or clearly relevant, in one sentence: rest 3-5 minutes on squat/bench/deadlift and 1-2 minutes on accessories. A rest timer starts automatically when a set is logged and pings the user when it ends; /rest changes the durations or switches it off. AMRAP sets stop one rep short of form breakdown, never a grind to failure, especially on deadlift. Accessories stop at the RIR in their name. When the top of an accessory's rep range is hit at the listed RIR, add the smallest load increment next time; if reps fall two or more below the range on two sessions in a row, hold the load or drop it about 5%.
 
 ${SECURITY_SYSTEM_GUARDRAIL}`;
 }
@@ -169,6 +171,8 @@ export async function runWorkoutAgent(params: {
   const plan = await getDayPlan(state.day);
 
   let mutated = false;
+  /** Exercise of the set most recently logged through logSet; its rest timer starts with the reply. */
+  let restAfter: string | null = null;
   /** A tool already sent its own message (summary, new-day prompt); don't add a second reply. */
   let handedOff = false;
   let allDone = false;
@@ -230,6 +234,7 @@ export async function runWorkoutAgent(params: {
         );
         if ("error" in set) return { ok: false, error: set.error };
         const logged = await recordSet(state, plan, ex.exIdx, set.setIdx, { weightKg, reps });
+        restAfter = logged.exercise;
         return {
           ok: true,
           logged: `${logged.exercise} set ${logged.setNumber}: ${formatEntry(weightKg, reps)}`,
@@ -525,6 +530,19 @@ export async function runWorkoutAgent(params: {
   }
 
   const prompt = buildSetPrompt(plan, state.exIdx, state.setIdx).replace(/[*_`]/g, "");
-  await sendTelegramMessage(chatId, `${reply}\n\n${prompt}`, undefined, null);
+  let restNote = "";
+  if (restAfter) {
+    // A failed timer write must not swallow the reply to a set that was already logged.
+    try {
+      const seconds = await getAutoRestSeconds(restAfter);
+      if (seconds) {
+        await startRestTimer(chatId, seconds, state);
+        restNote = `⏱ Rest ${formatRestDuration(seconds)}. I'll ping you when it's time.\n\n`;
+      }
+    } catch (error) {
+      console.error("Auto rest timer failed to start:", error);
+    }
+  }
+  await sendTelegramMessage(chatId, `${reply}\n\n${restNote}${prompt}`, undefined, null);
   return { handled: true };
 }
