@@ -3,7 +3,7 @@ import { fireDueRestTimer } from "@/lib/workout/rest-timer";
 import { isAuthorizedCronRequest } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   if (!isAuthorizedCronRequest(req)) {

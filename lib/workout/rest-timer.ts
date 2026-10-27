@@ -8,7 +8,7 @@ import { buildSetPrompt, buildWorkoutActiveInlineKeyboard, loadSession } from ".
  * per-minute polling. Kept well under cron-job.org's 30 s request timeout, which has to cover the
  * wait plus the Sheets and Telegram calls.
  */
-export const REST_TIMER_LOOKAHEAD_MS = 20_000;
+export const REST_TIMER_LOOKAHEAD_MS = 15_000;
 
 export type RestTimerResult = "none" | "pending" | "sent" | "skipped";
 
@@ -24,6 +24,10 @@ export async function fireDueRestTimer(): Promise<RestTimerResult> {
   const wait = timer.dueAt - Date.now();
   if (wait > REST_TIMER_LOOKAHEAD_MS) return "pending";
 
+  // The slow Sheets plan fetch runs during the wait instead of after it, so the time left once
+  // the timer is due only has to cover loadSession and the Telegram send.
+  const planPromise = getDayPlan(timer.day);
+  planPromise.catch(() => {});
   await clearRestTimer();
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
 
@@ -35,7 +39,7 @@ export async function fireDueRestTimer(): Promise<RestTimerResult> {
     session.setIdx !== timer.setIdx;
   if (moved) return "skipped";
 
-  const plan = await getDayPlan(session.day);
+  const plan = await planPromise;
   await sendTelegramMessage(
     timer.chatId,
     ["⏱ *Rest is over — you're up.*", "", buildSetPrompt(plan, session.exIdx, session.setIdx)].join("\n"),
