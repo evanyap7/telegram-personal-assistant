@@ -11,11 +11,21 @@ import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
 import { resolveAgentReply } from "@/lib/agent/agent-reply";
 import {
   clearPH3Session,
-  getDayPlan,
   programDayFromWeekDay,
   setUserPH3Day,
+  writeExerciseName,
   type PH3DayPlan,
 } from "@/lib/workout/ph3-program";
+import {
+  describeEdit,
+  removeSwap,
+  sameName,
+  upsertSwap,
+  weekdayOf,
+  type EditScope,
+  type PlanEdit,
+} from "@/lib/workout/plan-edits";
+import { loadPlanEdits, savePlanEdits } from "@/lib/workout/plan-edits-store";
 import {
   buildSetPrompt,
   describeTarget,
@@ -24,6 +34,7 @@ import {
   findNextPending,
   finishSession,
   flushFallbackSets,
+  getSessionPlan,
   getSetStatus,
   loadSession,
   markSkipped,
@@ -131,7 +142,7 @@ export function buildWorkoutInstructions(
   inputMode?: InputMode
 ): string {
   const spoken = spokenInputNote(inputMode);
-  return `You are the workout agent inside EGO, a personal Telegram assistant. The user is in the middle of a guided lifting session following a fixed program (PH3). You keep the session log correct by calling tools, and you understand natural language about it: logging, fixing, deleting, skipping, reordering.
+  return `You are the workout agent inside EGO, a personal Telegram assistant. The user is in the middle of a guided lifting session following a fixed program (PH3). You keep the session log correct by calling tools, and you understand natural language about it: logging, fixing, deleting, skipping, reordering, and changing the exercises themselves.
 
 Session state when the message arrived:
 ${JSON.stringify(snapshot(plan, state))}
@@ -146,6 +157,9 @@ ${spoken ? `${spoken}\n\n` : ""}How to work:
 - Moving around the program: "start over", "restart the program" or "from the beginning" mean day 1. If they want to train now, use switchDay; if they say they will train later or tomorrow, or just want to change where they are, use setProgramPosition, which doesn't start a session. "Start over" about a single set or exercise only redoes that set (deleteLoggedSet with redo true).
 - You are also the user's powerlifting coach. Be direct and demanding about effort, standards and honest logging, with no cheerleading fluff and no lecturing. If they log a weak or short set, say so plainly and tell them what to fix on the next one. If they beat the target by 2 or more reps, tell them it was too light and to update their max. Never push them through pain, dizziness or a rep with broken form, and never tell them to add load or volume beyond what the sheet prescribes. If they report pain or an injury, tell them to stop that movement and see a professional.
 - Be forgiving with wording, typos and mixed requests ("skip curls and do calves", "I only have time for the main lifts", "redo my last set at 100"). Do everything they asked with the tools, in one go, rather than asking them to rephrase. Only ask a question when a choice would change what gets logged.
+- Changing the plan: you can swap an exercise for another (swapExercise), undo a swap (revertSwap), add or remove exercises, change sets, reps or target weight (setTargets), and list what has been changed (listPlanEdits). "Change the exercise to preacher curls" means swapExercise on the current exercise. Scope: change only today unless they say otherwise ("from now on", "every week", "permanently" -> from_now_on; "on this day each week" -> this_weekday). Never claim a change is saved for later unless the tool result shows that scope.
+- A swapped-in exercise has no history here, so ask what weight they'll use (or offer the old exercise's logged weight as a reference). If the swap result says sheetNameUpdated is false, tell them the sheet name could not be updated but the session was.
+- If they can't do an exercise ("machine's taken", "no equipment", "shoulder hurts"), suggest two or three like-for-like alternatives for the same muscle and wait for their pick before changing anything. Pain or injury still means stop that movement and see a professional.
 - If a request is ambiguous (e.g. two exercises both match), ask one short question instead of guessing.
 - Only report what the tools returned. If a tool returns an error, say so plainly.
 - The next-set prompt is appended to your reply automatically, so don't repeat it. Reply in one or two plain sentences, no Markdown.
@@ -168,7 +182,7 @@ export async function runWorkoutAgent(params: {
   const { chatId, text, inputMode } = params;
   const state = await loadSession();
   if (!state) return { handled: false };
-  const plan = await getDayPlan(state.day);
+  let plan = await getSessionPlan(state);
 
   let mutated = false;
   /** Exercise of the set most recently logged through logSet; its rest timer starts with the reply. */
@@ -205,6 +219,72 @@ export async function runWorkoutAgent(params: {
     .string()
     .optional()
     .describe("Exercise number (1-based) or name; defaults to the current exercise");
+
+  const scopeArg = z
+    .enum(["today", "from_now_on", "this_weekday"])
+    .default("today")
+    .describe(
+      "today = this session only (default); from_now_on = every future day with this exercise; this_weekday = only this weekday slot in future weeks"
+    );
+
+  /** Rebuilds the plan after an edit and keeps the cursor on the same exercise and set. */
+  const reloadPlan = async (renamedTo?: string) => {
+    const prev = plan.exercises[state.exIdx];
+    const prevSetNumber = prev?.sets[state.setIdx]?.setNumber;
+    const prevName = renamedTo ?? prev?.exercise;
+    plan = await getSessionPlan(state);
+    const idx = prevName ? plan.exercises.findIndex((e) => sameName(e.exercise, prevName)) : -1;
+    if (idx === -1) {
+      state.exIdx = Math.min(state.exIdx, Math.max(plan.exercises.length - 1, 0));
+      state.setIdx = 0;
+      return;
+    }
+    const setIdx = plan.exercises[idx].sets.findIndex((s) => s.setNumber === prevSetNumber);
+    state.exIdx = idx;
+    state.setIdx = setIdx === -1 ? 0 : setIdx;
+  };
+
+  /**
+   * Records an edit on the session (so it holds even if another instance has a stale plan
+   * cache) and, for a wider scope, in the persistent list read by every future session.
+   */
+  const recordEdit = async (edit: PlanEdit, scope: EditScope) => {
+    state.edits = [...(state.edits ?? []), edit];
+    if (scope === "today") return;
+    const stored: PlanEdit = {
+      ...edit,
+      at: new Date().toISOString(),
+      ...(scope === "this_weekday" || edit.kind === "add" ? { weekday: weekdayOf(state.day) } : {}),
+    };
+    await savePlanEdits([...(await loadPlanEdits()), stored]);
+  };
+
+  /** The name an exercise had in the program sheet, following this session's swaps back. */
+  const baseName = (current: string): string => {
+    let name = current;
+    const edits = state.edits ?? [];
+    for (let i = edits.length - 1; i >= 0; i--) {
+      const e = edits[i];
+      if (e.kind === "swap" && sameName(e.to, name)) name = e.from;
+    }
+    return name;
+  };
+
+  const renameLogged = (from: string, to: string) => {
+    for (const l of state.logged) if (sameName(l.exercise, from)) l.exercise = to;
+    for (const k of state.skipped ?? []) if (sameName(k.exercise, from)) k.exercise = to;
+  };
+
+  const writeName = async (nameCell: string | undefined, name: string): Promise<boolean> => {
+    if (!nameCell) return false;
+    try {
+      await writeExerciseName(plan, nameCell, name);
+      return true;
+    } catch (error) {
+      console.error("Writing the exercise name to the sheet failed:", error);
+      return false;
+    }
+  };
 
   const tools = {
     getSession: tool({
@@ -411,6 +491,197 @@ export async function runWorkoutAgent(params: {
           added: `${target.exercise} extra set: ${formatEntry(weightKg, reps)}`,
           state: await commit(),
         };
+      },
+    }),
+
+    swapExercise: tool({
+      description:
+        "Replace an exercise with a different one (e.g. incline curls -> preacher curls). Keeps the prescribed sets and reps unless you pass new ones. Sets already logged under the old name are renamed. The new name is also written into today's sheet row. Scope defaults to today.",
+      inputSchema: z.object({
+        exercise: exerciseArg,
+        newName: z.string().min(2).max(80).describe("Proper-cased name, e.g. \"Preacher Curl\""),
+        scope: scopeArg,
+        sets: z.number().int().min(1).max(10).optional(),
+        reps: z.string().max(20).optional().describe("Rep range, e.g. \"8-12\""),
+        weightKg: z.number().min(0).max(1000).optional().describe("Starting weight for the new exercise"),
+      }),
+      execute: async ({ exercise, newName, scope, sets, reps, weightKg }) => {
+        const ex = resolveExercise(plan, exercise, state.exIdx);
+        if ("error" in ex) return { ok: false, error: ex.error };
+        const old = plan.exercises[ex.exIdx];
+        const name = newName.trim();
+        if (sameName(old.exercise, name)) return { ok: false, error: `That already is ${old.exercise}.` };
+        if (plan.exercises.some((e) => sameName(e.exercise, name))) {
+          return { ok: false, error: `${name} is already in today's workout.` };
+        }
+        const previous = {
+          exercise: old.exercise,
+          prescribed: old.sets.map((s) => describeTarget(s)),
+          loggedToday: state.logged
+            .filter((l) => sameName(l.exercise, old.exercise))
+            .map((l) => formatEntry(l.weightKg, l.reps)),
+        };
+
+        const swap: PlanEdit = { kind: "swap", from: old.exercise, to: name };
+        state.edits = [...(state.edits ?? []), swap];
+        if (scope !== "today") {
+          const stored = await loadPlanEdits();
+          const chained = stored.some((e) => e.kind === "swap" && sameName(e.to, old.exercise));
+          await savePlanEdits(
+            upsertSwap(stored, chained ? old.exercise : baseName(old.exercise), name, scope === "this_weekday" ? weekdayOf(state.day) : undefined)
+          );
+        }
+        if (sets !== undefined || reps !== undefined || weightKg !== undefined) {
+          await recordEdit(
+            {
+              kind: "targets",
+              exercise: name,
+              ...(sets !== undefined ? { sets } : {}),
+              ...(reps !== undefined ? { reps } : {}),
+              ...(weightKg !== undefined ? { weight: String(weightKg) } : {}),
+            },
+            scope
+          );
+        }
+        renameLogged(old.exercise, name);
+        const sheetUpdated = await writeName(old.nameCell, name);
+        await reloadPlan(name);
+        return {
+          ok: true,
+          swapped: `${previous.exercise} -> ${name}`,
+          scope,
+          sheetNameUpdated: sheetUpdated,
+          replaced: previous,
+          note:
+            weightKg === undefined
+              ? "The new exercise has no weight history. Ask what weight they will use, or offer the old exercise's logged weight as a reference."
+              : undefined,
+          state: await commit(),
+        };
+      },
+    }),
+
+    revertSwap: tool({
+      description:
+        "Undo a swap and put the original program exercise back (today and, if it was saved, for future sessions).",
+      inputSchema: z.object({ exercise: exerciseArg }),
+      execute: async ({ exercise }) => {
+        const ex = resolveExercise(plan, exercise, state.exIdx);
+        if ("error" in ex) return { ok: false, error: ex.error };
+        const current = plan.exercises[ex.exIdx];
+        const stored = await loadPlanEdits();
+        const removed = removeSwap(stored, current.exercise);
+        const original = removed.original ?? (sameName(baseName(current.exercise), current.exercise) ? null : baseName(current.exercise));
+        if (!original) return { ok: false, error: `${current.exercise} isn't a swap.` };
+        if (removed.original) await savePlanEdits(removed.edits);
+        state.edits = [...(state.edits ?? []), { kind: "swap", from: current.exercise, to: original }];
+        renameLogged(current.exercise, original);
+        const sheetUpdated = await writeName(current.nameCell, original);
+        await reloadPlan(original);
+        return {
+          ok: true,
+          reverted: `${current.exercise} -> ${original}`,
+          sheetNameUpdated: sheetUpdated,
+          state: await commit(),
+        };
+      },
+    }),
+
+    listPlanEdits: tool({
+      description: "List the plan changes in force: saved ones (swaps, additions, removals, retargets) and ones made in this session.",
+      inputSchema: z.object({}),
+      execute: async () => ({
+        saved: (await loadPlanEdits()).map((e) => ({ change: describeEdit(e), since: e.at })),
+        thisSession: (state.edits ?? []).map((e) => describeEdit(e)),
+      }),
+    }),
+
+    addExercise: tool({
+      description:
+        "Add an exercise that isn't in the program, with a set count and rep range. Its sets are saved to the Workouts tab (there is no sheet row). Saved scopes limit it to this weekday. Scope defaults to today.",
+      inputSchema: z.object({
+        name: z.string().min(2).max(80),
+        sets: z.number().int().min(1).max(10),
+        reps: z.string().max(20).describe("Rep range, e.g. \"8-12\""),
+        weightKg: z.number().min(0).max(1000).optional(),
+        position: z.number().int().min(1).optional().describe("1-based place in the workout; defaults to the end"),
+        scope: scopeArg,
+      }),
+      execute: async ({ name, sets, reps, weightKg, position, scope }) => {
+        const trimmed = name.trim();
+        if (plan.exercises.some((e) => sameName(e.exercise, trimmed))) {
+          return { ok: false, error: `${trimmed} is already in today's workout.` };
+        }
+        await recordEdit(
+          {
+            kind: "add",
+            exercise: trimmed,
+            sets,
+            reps,
+            ...(weightKg !== undefined ? { weight: String(weightKg) } : {}),
+            ...(position !== undefined ? { position } : {}),
+          },
+          scope
+        );
+        await reloadPlan();
+        return { ok: true, added: `${trimmed}: ${sets} sets of ${reps}`, scope, state: await commit() };
+      },
+    }),
+
+    removeExercise: tool({
+      description:
+        "Take an exercise out of the workout (unlike skipSets, which only skips today). Refuses if it already has logged sets. Scope defaults to today.",
+      inputSchema: z.object({ exercise: exerciseArg, scope: scopeArg }),
+      execute: async ({ exercise, scope }) => {
+        const ex = resolveExercise(plan, exercise, state.exIdx);
+        if ("error" in ex) return { ok: false, error: ex.error };
+        const target = plan.exercises[ex.exIdx];
+        if (plan.exercises.length === 1) return { ok: false, error: "That is the only exercise left today." };
+        if (state.logged.some((l) => sameName(l.exercise, target.exercise))) {
+          return { ok: false, error: `${target.exercise} has logged sets. Delete them first, or skip the rest instead.` };
+        }
+        await recordEdit({ kind: "remove", exercise: target.exercise }, scope);
+        await reloadPlan();
+        return { ok: true, removed: target.exercise, scope, state: await commit() };
+      },
+    }),
+
+    setTargets: tool({
+      description:
+        "Change the prescription for an exercise: number of sets, rep range and/or target weight (e.g. \"make curls 4 sets\", \"start preacher at 20kg\"). Scope defaults to today.",
+      inputSchema: z.object({
+        exercise: exerciseArg,
+        sets: z.number().int().min(1).max(10).optional(),
+        reps: z.string().max(20).optional().describe("Rep range, e.g. \"8-12\""),
+        weightKg: z.number().min(0).max(1000).optional(),
+        scope: scopeArg,
+      }),
+      execute: async ({ exercise, sets, reps, weightKg, scope }) => {
+        if (sets === undefined && reps === undefined && weightKg === undefined) {
+          return { ok: false, error: "Give sets, reps or weightKg to change." };
+        }
+        const ex = resolveExercise(plan, exercise, state.exIdx);
+        if ("error" in ex) return { ok: false, error: ex.error };
+        const target = plan.exercises[ex.exIdx];
+        const highestLogged = Math.max(
+          0,
+          ...state.logged.filter((l) => sameName(l.exercise, target.exercise)).map((l) => l.setNumber)
+        );
+        if (sets !== undefined && sets < highestLogged) {
+          return { ok: false, error: `Set ${highestLogged} of ${target.exercise} is already logged, so it can't go below ${highestLogged} sets.` };
+        }
+        await recordEdit(
+          {
+            kind: "targets",
+            exercise: target.exercise,
+            ...(sets !== undefined ? { sets } : {}),
+            ...(reps !== undefined ? { reps } : {}),
+            ...(weightKg !== undefined ? { weight: String(weightKg) } : {}),
+          },
+          scope
+        );
+        await reloadPlan();
+        return { ok: true, changed: target.exercise, scope, state: await commit() };
       },
     }),
 

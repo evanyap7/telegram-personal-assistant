@@ -12,6 +12,7 @@ import {
 } from "../lib/workout/workout-session";
 import { columnToA1, formatSheetReps, getBlockInfo, programDayFromWeekDay } from "../lib/workout/ph3-program";
 import { coachLine, exerciseKind, parseRepTarget } from "../lib/workout/coach";
+import { applyEdits, hasSheetCells, removeSwap, upsertSwap, weekdayOf, type PlanEdit } from "../lib/workout/plan-edits";
 import { formatRestDuration, parseRestCommand, parseRestDuration } from "../lib/workout/rest-command";
 
 const plan = {
@@ -306,6 +307,36 @@ function run() {
   assert.equal(formatRestDuration(180), "3 min");
   assert.equal(formatRestDuration(150), "2.5 min");
   console.log("  ✅ rest timer settings");
+
+  // Plan edits
+  const withNames = { ...plan, day: 4 };
+  const swapped = applyEdits(withNames, [{ kind: "swap", from: "row", to: "Preacher Curl" }]);
+  assert.deepEqual(swapped.exercises.map((e) => e.exercise), ["Bench", "Preacher Curl"], "swap renames, case-insensitive");
+  assert.equal(swapped.exercises[1].sets[0].weightCell, "C1", "swap keeps the sheet cells");
+  assert.deepEqual(applyEdits(swapped, [{ kind: "swap", from: "row", to: "Preacher Curl" }]).exercises.map((e) => e.exercise), ["Bench", "Preacher Curl"], "swaps are idempotent");
+  assert.deepEqual(applyEdits(withNames, [{ kind: "swap", from: "Row", to: "Bench" }]).exercises.map((e) => e.exercise), ["Bench", "Row"], "swap onto an existing name is ignored");
+  assert.equal(applyEdits(withNames, [{ kind: "swap", from: "Row", to: "X", weekday: 2 }]).exercises[1].exercise, "Row", "other weekday is untouched");
+  assert.equal(applyEdits(withNames, [{ kind: "swap", from: "Row", to: "X", weekday: weekdayOf(4) }]).exercises[1].exercise, "X", "matching weekday applies");
+  assert.deepEqual(applyEdits(withNames, [{ kind: "remove", exercise: "bench" }]).exercises.map((e) => e.exercise), ["Row"]);
+  const added = applyEdits(withNames, [{ kind: "add", exercise: "Face Pull", sets: 3, reps: "12-15", position: 2 }]);
+  assert.deepEqual(added.exercises.map((e) => e.exercise), ["Bench", "Face Pull", "Row"]);
+  assert.equal(added.exercises[1].sets.length, 3);
+  assert.ok(!hasSheetCells(added.exercises[1].sets[0]), "added sets have no sheet cells");
+  assert.equal(applyEdits(added, [{ kind: "add", exercise: "face pull", sets: 3, reps: "12-15" }]).exercises.length, 3, "adds are idempotent");
+  const grown = applyEdits(withNames, [{ kind: "targets", exercise: "Row", sets: 4, reps: "8-12", weight: "20" }]).exercises[1];
+  assert.equal(grown.sets.length, 4);
+  assert.equal(grown.sets[0].weightCell, "C1", "existing sets keep their cells");
+  assert.ok(!hasSheetCells(grown.sets[3]), "extra sets have no cells");
+  assert.deepEqual(grown.sets.map((x) => x.reps), ["8-12", "8-12", "8-12", "8-12"]);
+  assert.equal(applyEdits(withNames, [{ kind: "targets", exercise: "Bench", sets: 1 }]).exercises[0].sets.length, 1, "fewer sets trims");
+  const chained = upsertSwap(upsertSwap([], "Row", "Curl"), "Curl", "Hammer Curl");
+  assert.deepEqual(chained.map((e) => e.kind === "swap" && [e.from, e.to]), [["Row", "Hammer Curl"]], "chained swaps keep the original");
+  assert.deepEqual(upsertSwap(chained, "Hammer Curl", "row"), [], "swapping back drops the entry");
+  assert.equal(removeSwap(chained, "hammer curl").original, "Row");
+  assert.equal(removeSwap(chained, "Bench").original, null);
+  const persisted: PlanEdit[] = JSON.parse(JSON.stringify(chained));
+  assert.equal(applyEdits(withNames, persisted).exercises[1].exercise, "Hammer Curl", "edits survive a JSON round trip");
+  console.log("  ✅ plan edits");
 
   console.log("\n  All workout session tests passed.\n");
 }
