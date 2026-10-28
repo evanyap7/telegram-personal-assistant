@@ -216,22 +216,7 @@ section("new convergence tools validate and dispatch properly", async () => {
   const { deps, calls } = makeDeps();
   const tools = buildEgoTools(deps);
 
-  // 1. habit_log
-  const r1 = await runTool(tools, "habit_log", { name: "reading" });
-  assert.equal(r1.ok, true);
-  assert.equal(calls.dispatched.pop()?.action, "habit_log");
-
-  // 2. habit_view
-  const r2 = await runTool(tools, "habit_view", {});
-  assert.equal(r2.ok, true);
-  assert.equal(calls.dispatched.pop()?.action, "habit_view");
-
-  // 3. habit_add
-  const r3 = await runTool(tools, "habit_add", { name: "meditation", frequency: "daily" });
-  assert.equal(r3.ok, true);
-  assert.equal(calls.dispatched.pop()?.action, "habit_add");
-
-  // 4. inbox_triage
+  // 1. inbox_triage
   const r4 = await runTool(tools, "inbox_triage", { limit: 5 });
   assert.equal(r4.ok, true);
   assert.equal(calls.dispatched.pop()?.action, "inbox_triage");

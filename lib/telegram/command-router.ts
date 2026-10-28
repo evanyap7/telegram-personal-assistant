@@ -42,12 +42,6 @@ import {
 import {
   handleRecurringCommand,
 } from "../handlers/recurring-handler";
-import {
-  createHabit,
-  formatHabitsSummary,
-  listHabits,
-  logHabitDone,
-} from "../habits";
 import { checkAndSendLeaveNowAlerts } from "../travel";
 import { triageUnreadInbox } from "../inbox-triage";
 import {
@@ -426,32 +420,6 @@ export async function dispatchCommand(
   if (text === "/recall" || text.startsWith("/recall ")) {
     await handleRecallCommand({ chatId, text });
     return { handled: true, completionStatus: "recall_command" };
-  }
-
-  // Habits
-  if (text === "/habits" || lowerText === "habits" || text.startsWith("/habit ")) {
-    if (text.startsWith("/habit add ")) {
-      const habitName = text.replace("/habit add ", "").trim();
-      if (!habitName) {
-        await sendTelegramMessage(chatId, "Usage: `/habit add <habit name>`");
-      } else {
-        const habit = await createHabit(habitName);
-        await sendTelegramMessage(chatId, `✨ Created habit: *${habit.name}*! Streak tracking started.`);
-      }
-    } else if (text.startsWith("/habit done ")) {
-      const habitName = text.replace("/habit done ", "").trim();
-      const res = await logHabitDone(habitName);
-      await sendTelegramMessage(chatId, res.message);
-    } else {
-      const habits = await listHabits();
-      const summary = formatHabitsSummary(habits);
-      await sendTelegramMessage(
-        chatId,
-        summary.text,
-        summary.buttons.length ? { inline_keyboard: summary.buttons } : undefined
-      );
-    }
-    return { handled: true, completionStatus: "habits_command" };
   }
 
   // Export monthly transactions as CSV

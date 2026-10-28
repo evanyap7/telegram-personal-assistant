@@ -13,7 +13,6 @@ export const BOT_COMMANDS: Array<{ command: string; description: string }> = [
   { command: "finance_summary", description: "Monthly spending breakdown" },
   { command: "finance_list", description: "Recent active transactions" },
   { command: "reminders", description: "Check upcoming reminders" },
-  { command: "habits", description: "Daily habit streaks" },
   { command: "recurring", description: "Subscriptions & recurring tasks" },
   { command: "split", description: "Split bill (e.g. /split 80 Alex Ben)" },
   { command: "owed", description: "IOU balances" },
@@ -37,7 +36,7 @@ export function getCompactDashboardMarkup(): InlineKeyboardMarkup {
       ],
       [
         { text: "🏋️ Workouts", callback_data: "menu:workout" },
-        { text: "📋 Tasks & Habits", callback_data: "menu:tasks" },
+        { text: "📋 Tasks", callback_data: "menu:tasks" },
       ],
     ],
   };
@@ -53,7 +52,7 @@ export function getCompactDashboardText(): string {
     "• 📅 *Calendar*: Daily agenda, 7-day schedule & free slots",
     "• 💰 *Finances*: Monthly spending, budget caps & sync",
     "• 🏋️ *Workouts*: School/CSC progressive overload tracking",
-    "• 📋 *Tasks*: Single & batch to-dos, reminders & habits",
+    "• 📋 *Tasks*: Single & batch to-dos, reminders & subscriptions",
     "• 🧠 *Credits*: /credits shows AI balances and the Claude fallback",
   ].join("\n");
 }
@@ -116,17 +115,14 @@ export function getSubmenuMarkup(category: "calendar" | "finance" | "workout" | 
 
     case "tasks":
       return {
-        text: "📋 *Tasks & Habits Hub*\n\nManage to-dos, recurring items, and streaks:",
+        text: "📋 *Tasks Hub*\n\nManage to-dos and recurring items:",
         markup: {
           inline_keyboard: [
             [
               { text: "Active Tasks", callback_data: "menu:todos" },
               { text: "Today's Tasks", callback_data: "menu:todos_today" },
             ],
-            [
-              { text: "🔥 Habit Streaks", callback_data: "menu:habits" },
-              { text: "🔁 Subscriptions", callback_data: "menu:recurring" },
-            ],
+            [{ text: "🔁 Subscriptions", callback_data: "menu:recurring" }],
             [{ text: "« Back to Dashboard", callback_data: "menu:home" }],
           ],
         },

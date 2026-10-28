@@ -76,7 +76,7 @@ export async function dispatchCallback(input: CallbackDispatchInput): Promise<vo
   const parts = input.callbackData.split(":");
   const action = parts[0];
 
-  // 1. Check registry callbacks (undo, gym_loc, habits, recurring, iou, draft, etc.)
+  // 1. Check registry callbacks (undo, gym_loc, recurring, iou, draft, etc.)
   const handledByRegistry = await defaultRegistry.dispatchCallback({
     callbackId: input.callbackId,
     callbackData: input.callbackData,
@@ -154,7 +154,6 @@ export async function dispatchCallback(input: CallbackDispatchInput): Promise<vo
       sync: "/sync",
       todos: "/todo",
       todos_today: "/todotoday",
-      habits: "/habits",
       recurring: "/recurring",
       owed: "/owed",
       export: "/export",

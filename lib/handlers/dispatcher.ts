@@ -55,12 +55,6 @@ import {
 } from "../workout/workout-handler";
 import { startPH3Workout } from "../workout/workout-session";
 import { executeUndo, executeLatestUndo } from "../undo";
-import { logHabitDone } from "../habits";
-import {
-  handleHabitLogAction,
-  handleHabitViewAction,
-  handleHabitAddAction,
-} from "./habit-handler";
 import { triageUnreadInbox } from "../inbox-triage";
 import { syncPayLahTransactions } from "../paylah-sync";
 import { aiLedger } from "../ai/router";
@@ -536,24 +530,6 @@ defaultRegistry
     await sendTelegramMessage(ctx.chatId, res.message);
     return { completionStatus: "undo_conversational" };
   })
-  .registerIntent("habit_log", async (ctx, intent) => {
-    return handleHabitLogAction({
-      chatId: ctx.chatId,
-      name: intent.name,
-    });
-  })
-  .registerIntent("habit_view", async (ctx) => {
-    return handleHabitViewAction({
-      chatId: ctx.chatId,
-    });
-  })
-  .registerIntent("habit_add", async (ctx, intent) => {
-    return handleHabitAddAction({
-      chatId: ctx.chatId,
-      name: intent.name,
-      frequency: intent.frequency,
-    });
-  })
   .registerIntent("inbox_triage", async (ctx, intent) => {
     try {
       const triage = await triageUnreadInbox(intent.limit ?? 5);
@@ -664,22 +640,6 @@ defaultRegistry
       await removeTelegramInlineKeyboard(ctx.chatId, ctx.messageId);
     }
     await sendTelegramMessage(ctx.chatId, result.message);
-    return true;
-  })
-  .registerCallback("habit_done", async (ctx) => {
-    const parts = ctx.callbackData.split(":");
-    const habitId = parts[1];
-    if (!habitId) {
-      await answerTelegramCallback(ctx.callbackId, "Invalid habit ID.");
-      return true;
-    }
-    const res = await logHabitDone(habitId);
-    await answerTelegramCallback(
-      ctx.callbackId,
-      res.alreadyDoneToday ? "Already checked today!" : "Habit checked!"
-    );
-    await removeTelegramInlineKeyboard(ctx.chatId, ctx.messageId);
-    await sendTelegramMessage(ctx.chatId, res.message);
     return true;
   });
 

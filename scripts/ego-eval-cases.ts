@@ -71,16 +71,6 @@ export const EGO_EVAL_CASES: EgoEvalCase[] = [
     description: "Active workout: skip",
   },
   {
-    message: "checked off my reading habit",
-    expectTools: ["habit_log"],
-    description: "Log habit done",
-  },
-  {
-    message: "show my habits and streaks",
-    expectTools: ["habit_view"],
-    description: "View habits",
-  },
-  {
     message: "check my unread emails",
     expectTools: ["inbox_triage"],
     description: "Inbox triage",

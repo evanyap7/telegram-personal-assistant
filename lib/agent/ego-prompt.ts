@@ -67,11 +67,6 @@ Email & Inbox:
 - "Check my inbox", "triage my emails", "any unread mail", "urgent emails": inbox_triage.
 - "Sync my transactions", "sync Grab rides", "sync PayLah", "check bank receipts": sync_transactions.
 
-Habits:
-- "Checked off reading", "finished water habit", "did my 20 mins read": habit_log with the habit name or keyword.
-- "Show my habits", "how are my habits doing", "what habits do I have", "habits and streaks": habit_view.
-- "Track habit meditate daily", "add habit flossing": habit_add with name and frequency (daily or weekly).
-
 Briefings & Credits:
 - "Give me my morning brief", "morning briefing", "what's my day look like": daily_briefing with type morning.
 - "Recap my day", "evening recap", "how did today go": daily_briefing with type evening.

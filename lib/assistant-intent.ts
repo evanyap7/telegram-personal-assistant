@@ -230,18 +230,6 @@ export const intentSchema = z.union([
     action: z.literal("undo"),
   }),
   z.object({
-    action: z.literal("habit_log"),
-    name: z.string().min(1).max(100),
-  }),
-  z.object({
-    action: z.literal("habit_view"),
-  }),
-  z.object({
-    action: z.literal("habit_add"),
-    name: z.string().min(1).max(100),
-    frequency: z.enum(["daily", "weekly"]).default("daily"),
-  }),
-  z.object({
     action: z.literal("inbox_triage"),
     limit: z.number().int().min(1).max(20).optional().default(5),
   }),
