@@ -1,5 +1,7 @@
 import { getSheetsClient } from "../google";
 import { deleteMemory, getMemoryByKey, saveMemory } from "../memory";
+import { applyEdits } from "./plan-edits";
+import { loadPlanEdits } from "./plan-edits-store";
 
 export interface PH3ExerciseSet {
   setNumber: number;
@@ -14,6 +16,8 @@ export interface PH3ExerciseSet {
 export interface PH3Exercise {
   exercise: string;
   sets: PH3ExerciseSet[];
+  /** A1 cell (no tab name) holding the exercise name; absent for exercises added by a plan edit. */
+  nameCell?: string;
 }
 
 export interface PH3DayPlan {
@@ -120,7 +124,7 @@ export function programDayFromWeekDay(week: number, dayOfWeek: number): number |
 export async function getDayPlan(day: number, forceRefresh = false): Promise<PH3DayPlan> {
   const cached = planCache.get(day);
   if (!forceRefresh && cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
-    return cached.plan;
+    return applyEdits(cached.plan, await loadPlanEdits());
   }
 
   const info = getBlockInfo(day);
@@ -171,7 +175,7 @@ export async function getDayPlan(day: number, forceRefresh = false): Promise<PH3
         }
       }
       if (sets.length > 0) {
-        exercises.push({ exercise: cellVal, sets });
+        exercises.push({ exercise: cellVal, sets, nameCell: `${columnToA1(info.colOffset)}${sheetRow}` });
       }
     }
   }
@@ -185,8 +189,20 @@ export async function getDayPlan(day: number, forceRefresh = false): Promise<PH3
     isRestDay: exercises.length === 0 || /rest/i.test(dayTitle),
   };
 
+  // The cache holds the plan as the sheet has it; edits are layered on per call.
   planCache.set(day, { plan, cachedAt: Date.now() });
-  return plan;
+  return applyEdits(plan, await loadPlanEdits());
+}
+
+/** Writes an exercise name into its sheet cell, so the sheet shows what was actually done. */
+export async function writeExerciseName(plan: PH3DayPlan, nameCell: string, name: string): Promise<void> {
+  await getSheetsClient().spreadsheets.values.update({
+    spreadsheetId: getSpreadsheetId(),
+    range: cellRange(plan, nameCell),
+    valueInputOption: "RAW",
+    requestBody: { values: [[name]] },
+  });
+  planCache.delete(plan.day);
 }
 
 const MEMORY_PROGRESS_KEY = "ph3_workout_progress";

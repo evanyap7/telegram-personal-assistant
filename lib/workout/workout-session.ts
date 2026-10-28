@@ -14,6 +14,7 @@ import {
   type PH3DayPlan,
   type PH3ExerciseSet,
 } from "./ph3-program";
+import { applyEdits, hasSheetCells, type PlanEdit } from "./plan-edits";
 import { coachLine } from "./coach";
 import { formatRestDuration } from "./rest-command";
 import { getAutoRestSeconds, startRestTimer } from "./rest-timer-store";
@@ -49,7 +50,14 @@ export interface WorkoutSessionState {
   logged: LoggedSet[];
   /** Absent on sessions saved before skips were tracked per set. */
   skipped?: SkippedSet[];
+  /** Plan edits made during this session (swaps, adds, removes, retargets); layered over the day's plan. */
+  edits?: PlanEdit[];
   startedAt: string;
+}
+
+/** The day's plan with this session's edits applied (persistent edits are already in getDayPlan). */
+export async function getSessionPlan(state: Pick<WorkoutSessionState, "day" | "edits">): Promise<PH3DayPlan> {
+  return applyEdits(await getDayPlan(state.day), state.edits ?? []);
 }
 
 export type SetStatus = "logged" | "skipped" | "pending";
@@ -384,7 +392,7 @@ export async function startPH3Workout(params: {
   const existing = await loadSession();
   if (existing && !forceNew) {
     if (requestedDay === undefined || requestedDay === existing.day) {
-      const plan = await getDayPlan(existing.day);
+      const plan = await getSessionPlan(existing);
       await sendTelegramMessage(
         chatId,
         [
@@ -551,14 +559,14 @@ export function buildWorkoutActiveInlineKeyboard(): {
 }
 
 export async function skipExercise(chatId: number, state: WorkoutSessionState): Promise<void> {
-  const plan = await getDayPlan(state.day);
+  const plan = await getSessionPlan(state);
   const currentEx = plan.exercises[state.exIdx];
   for (const set of currentEx.sets) markSkipped(state, currentEx.exercise, set.setNumber);
   await advanceOrFinish(chatId, state, plan, `Skipped ${currentEx.exercise}.`);
 }
 
 export async function skipSet(chatId: number, state: WorkoutSessionState): Promise<void> {
-  const plan = await getDayPlan(state.day);
+  const plan = await getSessionPlan(state);
   const ex = plan.exercises[state.exIdx];
   const set = ex.sets[state.setIdx];
   markSkipped(state, ex.exercise, set.setNumber);
@@ -587,9 +595,12 @@ export async function recordSet(
   let inSheet = false;
   let repsInSheet = false;
   try {
-    const written = await writeSetToSheet({ plan, set, ...entry });
-    inSheet = written.weight;
-    repsInSheet = written.reps;
+    // Sets from a plan edit have no sheet cells; they go to the Workouts tab.
+    if (hasSheetCells(set)) {
+      const written = await writeSetToSheet({ plan, set, ...entry });
+      inSheet = written.weight;
+      repsInSheet = written.reps;
+    }
   } catch (error) {
     console.error("PH3 sheet write failed; falling back to Workouts tab:", error);
   }
@@ -670,7 +681,7 @@ async function handleLoggedSet(
   state: WorkoutSessionState,
   entry: { weightKg: number; reps: number }
 ): Promise<void> {
-  const plan = await getDayPlan(state.day);
+  const plan = await getSessionPlan(state);
   const exercise = plan.exercises[state.exIdx];
   const targetReps = exercise?.sets[state.setIdx]?.reps ?? "";
   const isLastSet = state.setIdx === (exercise?.sets.length ?? 0) - 1;
@@ -816,7 +827,7 @@ export async function handleWorkoutSessionMessage(params: {
       console.error("Workout agent failed; falling back to the set prompt:", error);
     }
 
-    const plan = await getDayPlan(state.day);
+    const plan = await getSessionPlan(state);
     await sendTelegramMessage(
       chatId,
       [

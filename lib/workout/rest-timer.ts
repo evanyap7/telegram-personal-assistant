@@ -1,5 +1,6 @@
 import { sendTelegramMessage } from "../telegram";
 import { getDayPlan } from "./ph3-program";
+import { applyEdits } from "./plan-edits";
 import { clearRestTimer, loadRestTimer } from "./rest-timer-store";
 import { buildSetPrompt, buildWorkoutActiveInlineKeyboard, loadSession } from "./workout-session";
 
@@ -39,7 +40,7 @@ export async function fireDueRestTimer(): Promise<RestTimerResult> {
     session.setIdx !== timer.setIdx;
   if (moved) return "skipped";
 
-  const plan = await planPromise;
+  const plan = applyEdits(await planPromise, session.edits ?? []);
   await sendTelegramMessage(
     timer.chatId,
     ["⏱ *Rest is over — you're up.*", "", buildSetPrompt(plan, session.exIdx, session.setIdx)].join("\n"),
