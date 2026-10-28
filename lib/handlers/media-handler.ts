@@ -7,6 +7,11 @@ import {
   markUpdateCompleted,
 } from "../finance";
 import { createCalendarEvent } from "../calendar";
+import {
+  applyEventTag,
+  createEventsSequentially,
+  isRateLimitError,
+} from "../calendar-batch";
 import { formatCalendarDate, formatSingaporeDateTime } from "./calendar-handler";
 import {
   addRecurringSchedule,
@@ -245,14 +250,32 @@ export async function processAssistantImages(input: {
 
   // Autonomous Calendar from Image
   if (imageIntent.action === "calendar_from_image") {
-    const createdEvents = await Promise.all(
-      imageIntent.events.map((ev) =>
-        createCalendarEvent({
-          calendarName: imageIntent.calendarName,
-          ...ev,
-        })
-      )
+    const taggedEvents = imageIntent.events.map((ev) => ({
+      ...ev,
+      title: applyEventTag(ev.title, imageIntent.tag),
+    }));
+
+    // Sequential with retry: a 19-event schedule fired in parallel trips Google's rate limit.
+    const batch = await createEventsSequentially(taggedEvents, (ev) =>
+      createCalendarEvent({
+        calendarName: imageIntent.calendarName,
+        ...ev,
+      })
     );
+    const createdEvents = batch.created;
+    const failureReason =
+      batch.failure && isRateLimitError(batch.failure.error)
+        ? "Google Calendar rate limit"
+        : "a Google Calendar error";
+
+    if (createdEvents.length === 0) {
+      await sendTelegramMessage(
+        chatId,
+        `⚠️ I couldn't add any events because of ${failureReason}. Please try again in a minute.`
+      );
+      await markUpdateCompleted(updateId, "image_calendar_failed");
+      return true;
+    }
 
     const eventIds = createdEvents.map((e) => e.id).filter(Boolean);
 
@@ -266,7 +289,7 @@ export async function processAssistantImages(input: {
     });
 
     const badge = imageIntent.calendarName === "work" ? "💼 Work" : "🏠 Personal";
-    const eventPreviews = imageIntent.events.map((ev, idx) => {
+    const eventPreviews = taggedEvents.slice(0, createdEvents.length).map((ev, idx) => {
       const timing = ev.allDay
         ? `${formatCalendarDate(ev.date || "")} (All day)`
         : `${formatSingaporeDateTime(ev.start || "")} – ${formatSingaporeDateTime(ev.end || "")}`;
@@ -274,17 +297,26 @@ export async function processAssistantImages(input: {
       return `${idx + 1}. ${ev.title}\n   📅 ${timing}${loc}`;
     });
 
-    await sendTelegramMessage(
-      chatId,
-      [
-        `📅 *Created ${createdEvents.length} events in ${badge} Calendar:*`,
+    const lines = [
+      `📅 *Created ${createdEvents.length} events in ${badge} Calendar:*`,
+      "",
+      eventPreviews.join("\n\n"),
+    ];
+    if (batch.failure) {
+      const notAdded = [batch.failure.item, ...batch.skipped].map((ev) => `• ${ev.title}`);
+      lines.push(
         "",
-        eventPreviews.join("\n\n"),
-      ].join("\n"),
-      buildUndoInlineKeyboard(undoToken)
-    );
+        `⚠️ Stopped after ${createdEvents.length} of ${taggedEvents.length} because of ${failureReason}. Not added:`,
+        notAdded.join("\n")
+      );
+    }
 
-    await markUpdateCompleted(updateId, "image_calendar_logged");
+    await sendTelegramMessage(chatId, lines.join("\n"), buildUndoInlineKeyboard(undoToken));
+
+    await markUpdateCompleted(
+      updateId,
+      batch.failure ? "image_calendar_partial" : "image_calendar_logged"
+    );
     return true;
   }
 

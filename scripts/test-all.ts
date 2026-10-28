@@ -25,6 +25,7 @@ interface SuiteResult {
 const SUITES = [
   { name: "Bill Splitting & IOU Ledger", command: "npm run test:split" },
   { name: "Calendar Free Slots & Travel Buffers", command: "npm run test:calendar" },
+  { name: "Calendar Batch Creation (rate-limit retry, tags)", command: "npm run test:calendar-batch" },
   { name: "Personal Memory & Contact Resolution", command: "npm run test:memory" },
   { name: "Currency Conversion & CSV Export", command: "npm run test:currency-export" },
   { name: "Cron Endpoint Request Authorization", command: "npm run test:cron-auth" },

@@ -54,6 +54,7 @@ const imageIntentSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("calendar_from_image"),
     calendarName: z.enum(["personal", "work"]),
+    tag: z.string().max(60).optional(),
     events: z.array(calendarEventSchema).min(1).max(30),
   }),
   z.object({
@@ -160,6 +161,7 @@ Calendar output:
 {
   "action": "calendar_from_image",
   "calendarName": "personal" or "work",
+  "tag": "label to prefix on every event title (optional)",
   "events": [
     {
       "allDay": true,
@@ -239,6 +241,7 @@ Rules:
 - Follow only the user's text instruction.
 - If the instruction asks to add dates/events to a calendar, return calendar_from_image.
 - Use personal unless the instruction explicitly says work.
+- If the instruction asks to tag, label or name the events as something (e.g. "tag it as HACK 2026"), put exactly that label in "tag" and leave it out of each event title; the app prefixes it onto every title. Omit "tag" otherwise.
 - If an event has a date but no time, set allDay to true.
 - For timed events:
   - End time MUST ALWAYS be strictly after start time. NEVER output an event where start and end times are identical.
