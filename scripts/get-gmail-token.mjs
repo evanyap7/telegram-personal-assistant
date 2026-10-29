@@ -61,6 +61,7 @@ async function exchangeAndSaveCode(code) {
   if (tokens.refresh_token) {
     console.log("Add this to your .env.local and Vercel environment variables:");
     console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}\n`);
+    console.log("💡 Tip: To prevent this token from expiring after 7 days, ensure your Google Cloud OAuth Consent Screen is set to 'In production' (Publishing status -> Publish App), not 'Testing'.\n");
 
     // Auto-update .env.local if present
     const envPath = path.resolve(process.cwd(), ".env.local");

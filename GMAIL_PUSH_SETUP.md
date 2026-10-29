@@ -57,6 +57,9 @@ You will see:
 Incoming DBS PayLah receipts will now trigger your webhook automatically in real time!
 ```
 
+> [!TIP]
+> **Avoid 7-Day Token Expiration**: In Google Cloud Console under **APIs & Services > OAuth consent screen**, make sure **Publishing status** is set to **"In production"** (click **Publish App**). Projects left in "Testing" mode have their refresh tokens expired by Google every 7 days, which triggers the `"⚠️ Gmail Sync Auth Error: Google authorization has expired or was revoked"` alert. (Since this is a personal app, you do NOT need to submit it for Google verification).
+
 ---
 
 ## Option 2: 1-Click Google Apps Script (No Cloud Console Needed)
