@@ -29,7 +29,9 @@
     "eval:ego": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/eval-ego.ts",
     "test:ai-router": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-ai-router.ts",
     "check:ai-live": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/ai-live-check.ts",
-    "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts"
+    "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts",
+    "check": "tsc --noEmit && eslint && npm test",
+    "prepare": "husky"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.81",
@@ -49,6 +51,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
+    "husky": "^9.1.7",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
