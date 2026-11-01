@@ -203,6 +203,14 @@ export function parseWorkoutDayCommand(text: string): WorkoutDayCommand | null {
     return { kind: "set", day: parseInt(setMatch[1], 10), startImmediately: false };
   }
 
+  // 5b. Statements of position: "today is day 12", "it's day 12", "i'm on workout day 12"
+  const statedDayMatch = t.match(
+    /^(?:today\s+is|today'?s|it'?s|its|i'?m\s+on|im\s+on|i\s+am\s+on|we'?re\s+on|we\s+are\s+on)\s+(?:workout\s+)?day\s*(\d{1,2})$/
+  );
+  if (statedDayMatch) {
+    return { kind: "set", day: parseInt(statedDayMatch[1], 10), startImmediately: false };
+  }
+
   // 6. Next workout day commands: "/nextworkoutday", "next workout day", "next day", "skip to next day"
   if (
     /^(?:\/nextworkoutday|(?:let'?s\s+)?(?:skip\s+to\s+|go\s+to\s+)?next\s+(?:workout\s+day|day|workout))(?:\s+please)?$/.test(

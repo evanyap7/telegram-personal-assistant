@@ -9,6 +9,7 @@ import type { TelegramUpdate } from "@/lib/telegram-types";
 import {
   handleStrictSetShortcut,
   handleWorkoutSessionMessage,
+  parseWorkoutDayCommand,
 } from "@/lib/workout/workout-session";
 
 type TelegramMessage = NonNullable<TelegramUpdate["message"]>;
@@ -27,8 +28,13 @@ export async function handleEgoText(params: {
   const { message, chatId, updateId, text, inputMode } = params;
   const userId = message.from.id;
 
-  // Workout slash commands (/gym, /endworkout, /workoutday ...) are deterministic.
-  if (text.startsWith("/") && (await handleWorkoutSessionMessage({ chatId, text }))) {
+  // Workout slash commands (/gym, /endworkout, /workoutday ...) and plain-text day commands
+  // ("next day", "set workout day 12") are deterministic. Left to the model, a day command with
+  // no active session was routed to "start", which reloaded the saved day instead of moving it.
+  if (
+    (text.startsWith("/") || parseWorkoutDayCommand(text) !== null) &&
+    (await handleWorkoutSessionMessage({ chatId, text }))
+  ) {
     return { completionStatus: "workout_session" };
   }
 

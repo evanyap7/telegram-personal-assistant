@@ -150,6 +150,13 @@ function run() {
     day: 40,
     startImmediately: false,
   });
+  for (const phrase of ["today is day 12", "it's day 12", "i'm on day 12", "we're on workout day 12"]) {
+    assert.deepEqual(
+      parseWorkoutDayCommand(phrase),
+      { kind: "set", day: 12, startImmediately: false },
+      phrase
+    );
+  }
   assert.deepEqual(parseWorkoutDayCommand("next workout day"), {
     kind: "next",
     startImmediately: false,
