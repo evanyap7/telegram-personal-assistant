@@ -44,7 +44,8 @@ export function decryptSecret(value: string): string | null {
   if (!key) return null;
 
   const [ivB64, tagB64, dataB64] = value.slice(PREFIX.length).split(":");
-  if (!ivB64 || !tagB64 || !dataB64) return null;
+  // dataB64 is legitimately "" when the plaintext is empty.
+  if (!ivB64 || !tagB64 || dataB64 === undefined) return null;
 
   try {
     const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB64, "base64"));
