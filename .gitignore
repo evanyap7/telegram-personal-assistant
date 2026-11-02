@@ -50,3 +50,7 @@ service-account*.json
 
 skills-lock.json
 
+
+# local agent skills and Python caches
+.agents/
+__pycache__/

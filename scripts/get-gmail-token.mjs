@@ -51,7 +51,7 @@ const authUrl = oauth2Client.generateAuthUrl({
   ],
 });
 
-console.log("\n🔗 Open this URL in your browser to authorize Gmail API access for evanyap7@gmail.com:\n");
+console.log("\n🔗 Open this URL in your browser to authorize Gmail API access for your account:\n");
 console.log(authUrl);
 console.log("\nWaiting for authentication...\n");
 

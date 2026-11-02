@@ -95,7 +95,7 @@ export async function handleEmailDraftAction(params: {
   await sendTelegramMessage(
     chatId,
     [
-      `${resolveNotice}Create this draft in your Gmail (evanyap7@gmail.com)?`,
+      `${resolveNotice}Create this draft in your Gmail?`,
       "",
       formatEmailDraftPreview({
         to: resolvedTo,
