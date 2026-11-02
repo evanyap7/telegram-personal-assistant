@@ -79,3 +79,11 @@ npm run bench:all       # latency, cost per call, parallel sync; results in docs
 npm run test:workout-session && npm run test:split && npm run test:calendar && npm run test:calendar-batch && npm run test:memory
 ```
 </details>
+
+## AI assistance
+
+I built this with AI coding assistants, including Claude Code. The instructions they work from are in `CLAUDE.md` and `AGENTS.md`, and the tests are how I check their work.
+
+## License
+
+The code is [MIT](LICENSE).
