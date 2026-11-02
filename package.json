@@ -27,6 +27,7 @@
     "eval:intents": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-intents.ts --live",
     "test:ego": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-ego.ts",
     "eval:ego": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/eval-ego.ts",
+    "test:properties": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-properties.ts",
     "test:ai-router": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-ai-router.ts",
     "check:ai-live": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/ai-live-check.ts",
     "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts",
@@ -51,6 +52,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
+    "fast-check": "^4.10.2",
     "husky": "^9.1.7",
     "tailwindcss": "^4",
     "typescript": "^5"
