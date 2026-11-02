@@ -34,6 +34,7 @@ const SUITES = [
   { name: "Multi-Item To-Do Batch Logging", command: "npm run test:todos-batch" },
   { name: "EGO Orchestrator (tools, replies, voice)", command: "npm run test:ego" },
   { name: "AI Router (credits, fallback, tiers)", command: "npm run test:ai-router" },
+  { name: "Property-Based Tests (bill split, secrets, security, dates)", command: "npm run test:properties" },
   { name: "Assistant Intent Classification Fixtures", command: "npm run test:intents" },
 ];
 
