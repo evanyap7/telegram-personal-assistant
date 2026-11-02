@@ -2,7 +2,7 @@
 
 **One Telegram chat that runs my day.** Type or send a voice note and EGO logs the expense, books the meeting, coaches the lift and chases the to-do. No app switching, no forms.
 
-Built solo as a serverless bot: Next.js, TypeScript, Claude (Haiku, Sonnet, Opus), Perplexity Sonar, Vercel AI SDK, on Vercel, with Google Sheets, Calendar and Gmail as the backend. **97% routing accuracy** (38/39) on a live eval set.
+Built solo as a serverless bot: Next.js, TypeScript, Claude (Haiku, Sonnet, Opus), Perplexity Sonar, Vercel AI SDK, on Vercel, with Google Sheets, Calendar and Gmail as the backend. **97% routing accuracy** (38/39) on my own 39-message eval set, re-run 2026-11-03 ([benchmarks](docs/benchmarks.md)).
 
 ```mermaid
 flowchart LR
@@ -75,6 +75,7 @@ Setup guides: [Apple Wallet](APPLE_WALLET_SETUP.md), [Gmail push](GMAIL_PUSH_SET
 ```bash
 npm run test:ego        # orchestrator
 npm run eval:ego        # routing accuracy vs live model (-- --dry-run for offline)
+npm run bench:all       # latency, cost per call, parallel sync; results in docs/benchmarks.md
 npm run test:workout-session && npm run test:split && npm run test:calendar && npm run test:calendar-batch && npm run test:memory
 ```
 </details>
