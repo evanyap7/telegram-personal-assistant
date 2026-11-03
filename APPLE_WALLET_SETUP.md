@@ -57,14 +57,14 @@ Now configure the fields:
 Set the URL to your assistant endpoint with your secret key:
 
 ```text
-https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322
+https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=<CRON_SECRET>
 ```
 
 
 #### B. Expand Arrow (Options)
 Tap the small arrow **`>`** next to the URL to expand options:
 - **Method**: Change from `GET` to **`POST`**.
-- **Headers**: (Optional if using `?key=` query param, or add header `x-api-key`: `d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322`).
+- **Headers**: (Optional if using `?key=` query param, or add header `x-api-key`: `<CRON_SECRET>`).
 - **Request Body**: Change from `JSON` / None to **JSON**.
 
 #### C. Add JSON Fields
@@ -120,7 +120,7 @@ Before worrying about iOS Shortcuts, you can verify that your backend endpoint, 
 
 👉 Open this link directly in Safari on your iPhone:
 ```text
-https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322&amount=1.50&merchant=Test+Coffee
+https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=<CRON_SECRET>&amount=1.50&merchant=Test+Coffee
 ```
 - Within 1–2 seconds, you should receive a Telegram notification: `💳 Apple Pay Expense Logged!`
 - If you receive that message, your webhook backend and Google Sheets are **100% healthy and working**.
@@ -183,7 +183,7 @@ Whenever you use Apple Pay in an app or on a website, your bank (DBS, POSB, UOB,
 7. Tap **New Blank Automation** -> **Add Action**.
 8. Search for and select **"Get Contents of URL"**.
 9. Configure the action:
-   - **URL**: `https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322`
+   - **URL**: `https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=<CRON_SECRET>`
    - Tap the arrow **`>`** to expand options:
      - **Method**: Change from `GET` to **`POST`**.
      - **Request Body**: Change to **JSON**.
@@ -222,7 +222,7 @@ You can test the assistant's unstructured SMS and text parser right now in Safar
 
 👉 Open this link in Safari:
 ```text
-https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322&text=DBS+Alert:+SGD+24.50+was+charged+to+your+DBS+Card+at+SHOPEE+on+28+Sep
+https://telegram-personal-assistant-sigma.vercel.app/api/apple-wallet?key=<CRON_SECRET>&text=DBS+Alert:+SGD+24.50+was+charged+to+your+DBS+Card+at+SHOPEE+on+28+Sep
 ```
 - Within 1–2 seconds, you will receive a Telegram message: `💳 Apple Pay Expense Logged!` with **SHOPEE** and **SGD 24.50**.
 - You can tap **`[🗑️ Undo / Delete]`** in Telegram to remove the test row immediately.

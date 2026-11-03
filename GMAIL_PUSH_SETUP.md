@@ -41,7 +41,7 @@ This is the standard, official way Gmail sends real-time webhooks directly to we
 4. **Delivery type**: Select **Push**.
 5. **Endpoint URL**:
    ```
-   https://telegram-personal-assistant-sigma.vercel.app/api/gmail-webhook?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322
+   https://telegram-personal-assistant-sigma.vercel.app/api/gmail-webhook?key=<CRON_SECRET>
    ```
    *(Replace with your custom secret if you customized `APPLE_WALLET_SECRET` or `GMAIL_WEBHOOK_SECRET`)*
 6. Leave other settings at default and click **Create**.
@@ -72,7 +72,7 @@ If you prefer not to touch Google Cloud Pub/Sub, you can set up a 1-minute Googl
 function checkPayLahReceipts() {
   const threads = GmailApp.search('from:(dbs.com) ("PayLah" OR "PayNow") is:unread', 0, 5);
   if (threads.length > 0) {
-    const url = "https://telegram-personal-assistant-sigma.vercel.app/api/gmail-webhook?key=d1220059c7590b7eadb8d71f5064e28cb13e17dff0048322";
+    const url = "https://telegram-personal-assistant-sigma.vercel.app/api/gmail-webhook?key=<CRON_SECRET>";
     UrlFetchApp.fetch(url, { method: "POST" });
   }
 }

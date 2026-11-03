@@ -144,7 +144,7 @@ function runTests() {
     assert(encryptSecret("1234") === null, "No encryption without MEMORY_ENCRYPTION_KEY");
     assert(decryptSecret("plain value") === "plain value", "Plaintext passes through decrypt");
 
-    process.env.MEMORY_ENCRYPTION_KEY = "test-key-that-is-long-enough-123";
+    process.env.MEMORY_ENCRYPTION_KEY = "test-key-that-is-long-enough-123"; // gitleaks:allow (test fixture, not a real key)
     const sealed = encryptSecret("0123") ?? "";
     assert(isEncryptedValue(sealed), "Encrypted value carries enc:v1 prefix");
     assert(!sealed.includes("0123"), "Ciphertext does not contain plaintext");
