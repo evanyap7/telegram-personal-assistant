@@ -1,4 +1,26 @@
 import { google } from "googleapis";
+import fs from "node:fs";
+import path from "node:path";
+
+function loadEnv() {
+  const envPath = path.resolve(process.cwd(), ".env.local");
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, "utf-8").split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const idx = trimmed.indexOf("=");
+      if (idx !== -1) {
+        const key = trimmed.slice(0, idx).trim();
+        const val = trimmed.slice(idx + 1).trim();
+        if (!process.env[key]) {
+          process.env[key] = val;
+        }
+      }
+    }
+  }
+}
+loadEnv();
 
 function cleanPrivateKey(rawKey) {
   if (!rawKey) return undefined;
@@ -41,19 +63,45 @@ export async function setupDashboardSheet() {
 
   console.log("Current sheets:", existingTitles);
 
-  // Find all month transaction sheets
-  const monthSheets = existingTitles.filter((title) =>
-    /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}$/i.test(title)
-  );
-  if (!monthSheets.includes("Oct 2026")) {
-    monthSheets.push("Oct 2026");
+  // Helper to parse month and year for chronological sorting
+  function parseMonthYear(title) {
+    const match = title.match(/([A-Za-z]+)\s+(\d{4})/);
+    if (!match) return new Date(0);
+    const months = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
+    };
+    const m = months[match[1].toLowerCase().slice(0, 3)] ?? 0;
+    const y = parseInt(match[2], 10) || 2026;
+    return new Date(Date.UTC(y, m, 1));
   }
+
+  // Find all month transaction sheets (filtering out historic test sheets like 2001)
+  const monthSheets = existingTitles.filter(
+    (title) =>
+      /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}$/i.test(title) &&
+      parseMonthYear(title).getUTCFullYear() >= 2026
+  );
+
+  // Ensure known 2026 months exist in list if they are among sheet titles
+  for (const m of ["Sep 2026", "Oct 2026", "Nov 2026"]) {
+    if (existingTitles.includes(m) && !monthSheets.includes(m)) {
+      monthSheets.push(m);
+    }
+  }
+
+  const sortedMonthSheetsAsc = [...monthSheets].sort(
+    (a, b) => parseMonthYear(a).getTime() - parseMonthYear(b).getTime()
+  );
+  const sortedMonthSheetsDesc = [...sortedMonthSheetsAsc].reverse();
 
   const DASHBOARD_TITLE = "📊 Dashboard";
   let dashboardSheetId;
   const existingDashboard = sheetList.find(
     (s) => s.properties?.title === DASHBOARD_TITLE || s.properties?.title === "Dashboard"
   );
+
+  const totalRowCount = Math.max(45, 36 + sortedMonthSheetsAsc.length);
 
   if (existingDashboard) {
     dashboardSheetId = existingDashboard.properties.sheetId;
@@ -70,7 +118,7 @@ export async function setupDashboardSheet() {
                 title: DASHBOARD_TITLE,
                 index: 0,
                 gridProperties: {
-                  rowCount: 45,
+                  rowCount: totalRowCount,
                   columnCount: 14,
                   hideGridlines: false,
                 },
@@ -94,7 +142,7 @@ export async function setupDashboardSheet() {
                 title: DASHBOARD_TITLE,
                 index: 0,
                 gridProperties: {
-                  rowCount: 45,
+                  rowCount: totalRowCount,
                   columnCount: 14,
                   hideGridlines: false,
                 },
@@ -178,9 +226,8 @@ export async function setupDashboardSheet() {
   console.log("Populating values, formulas, and labels...");
   await sheets.spreadsheets.values.clear({
     spreadsheetId,
-    range: "'📊 Dashboard'!A1:N45",
+    range: "'📊 Dashboard'!A1:N60",
   });
-  const defaultMonth = existingTitles.includes("Sep 2026") ? "Sep 2026" : monthSheets[0] || "Sep 2026";
 
   const valuesPayload = [
     // Row 1 (Empty spacer)
@@ -198,8 +245,8 @@ export async function setupDashboardSheet() {
       "",
       "ACTIVE MONTH:",
       "",
-      defaultMonth,
-      '=IF(ISNUMBER($L$2), TEXT($L$2, "mmm yyyy"), TO_TEXT($L$2))',
+      "Auto (Current)",
+      '=IF(OR(ISBLANK($L$2), $L$2="", $L$2="Auto (Current)", $L$2="Current Month"), TEXT(TODAY(), "mmm yyyy"), IF(ISNUMBER($L$2), TEXT($L$2, "mmm yyyy"), TO_TEXT($L$2)))',
     ],
     // Row 3: Header Subtitle
     [
@@ -430,33 +477,33 @@ export async function setupDashboardSheet() {
       "Remaining / Variance",
       "Status",
     ],
-    // Rows 33-34: Multi-Month Rows
-    [
-      "",
-      "Sep 2026",
-      "Uncapped",
-      '=IFERROR(SUMIFS(\'Sep 2026\'!D2:D, \'Sep 2026\'!C2:C, "expense", \'Sep 2026\'!H2:H, "<>deleted"), 0)',
-      "—",
-      "📊 Baseline (No Cap)",
-    ],
-    [
-      "",
-      "Oct 2026",
-      '=IFERROR(VLOOKUP("overall_budget", BudgetConfig!A:B, 2, FALSE), 500)',
-      '=IFERROR(SUMIFS(\'Oct 2026\'!D2:D, \'Oct 2026\'!C2:C, "expense", \'Oct 2026\'!H2:H, "<>deleted"), 0)',
-      '=IF(ISNUMBER(C34), C34 - D34, "—")',
-      '=IF(D34=0, "🎯 Starts Next Month", IF(E34>=0, "✅ On Track", "🚨 Budget Exceeded"))',
-    ],
-    // Row 35: Empty spacer
-    [""],
-    // Row 36: Spacer
-    [""],
-    // Row 37: Footer
-    [
-      "",
-      "⚡ Powered by Evan's Telegram Assistant • Live Sync with Apple Pay, PayLah, & DBS • Auto-categorized via Claude AI",
-    ],
   ];
+
+  // Dynamically populate Multi-Month Budget Tracking rows
+  const historyStartRow = 33;
+  sortedMonthSheetsAsc.forEach((m, idx) => {
+    const rowNum = historyStartRow + idx;
+    const isSep = m === "Sep 2026";
+    const budgetFormula = isSep
+      ? "Uncapped"
+      : '=IFERROR(VLOOKUP("overall_budget", BudgetConfig!A:B, 2, FALSE), 700)';
+    const spentFormula = `=IFERROR(SUMIFS('${m}'!D2:D, '${m}'!C2:C, "expense", '${m}'!H2:H, "<>deleted"), 0)`;
+    const varianceFormula = `=IF(ISNUMBER(C${rowNum}), C${rowNum} - D${rowNum}, "—")`;
+    const statusFormula = isSep
+      ? "📊 Baseline (No Cap)"
+      : `=IF(D${rowNum}=0, "🎯 No Expenses Yet", IF(E${rowNum}>=0, "✅ On Track", "🚨 Budget Exceeded"))`;
+
+    valuesPayload.push(["", m, budgetFormula, spentFormula, varianceFormula, statusFormula]);
+  });
+
+  // Empty spacer
+  valuesPayload.push([""]);
+  // Footer row
+  const footerRowIndex = valuesPayload.length;
+  valuesPayload.push([
+    "",
+    "⚡ Powered by Evan's Telegram Assistant • Live Sync with Apple Pay, PayLah, & DBS • Auto-categorized via Claude AI",
+  ]);
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -484,9 +531,9 @@ export async function setupDashboardSheet() {
       rule: {
         condition: {
           type: "ONE_OF_LIST",
-          values: monthSheets.map((m) => ({ userEnteredValue: m })),
+          values: ["Auto (Current)", ...sortedMonthSheetsDesc].map((m) => ({ userEnteredValue: m })),
         },
-        strict: true,
+        strict: false,
         showCustomUi: true,
       },
     },
@@ -528,8 +575,8 @@ export async function setupDashboardSheet() {
     { startRowIndex: 22, endRowIndex: 23, startColumnIndex: 1, endColumnIndex: 6 },
     // Budget History Section Header (B31:F31)
     { startRowIndex: 30, endRowIndex: 31, startColumnIndex: 1, endColumnIndex: 6 },
-    // Footer (B37:L37)
-    { startRowIndex: 36, endRowIndex: 37, startColumnIndex: 1, endColumnIndex: 12 },
+    // Footer (B{footerRowIndex+1}:L{footerRowIndex+1})
+    { startRowIndex: footerRowIndex, endRowIndex: footerRowIndex + 1, startColumnIndex: 1, endColumnIndex: 12 },
   ];
 
   for (const m of merges) {
@@ -1183,7 +1230,7 @@ export async function setupDashboardSheet() {
       range: {
         sheetId: dashboardSheetId,
         startRowIndex: 32,
-        endRowIndex: 34,
+        endRowIndex: 32 + sortedMonthSheetsAsc.length,
         startColumnIndex: 2,
         endColumnIndex: 5,
       },
@@ -1199,13 +1246,53 @@ export async function setupDashboardSheet() {
     },
   });
 
-  // Footer (Row 37)
+  // Multi-Month Rows Month label format (Col B) & Status format (Col F)
+  stylingRequests.push(
+    {
+      repeatCell: {
+        range: {
+          sheetId: dashboardSheetId,
+          startRowIndex: 32,
+          endRowIndex: 32 + sortedMonthSheetsAsc.length,
+          startColumnIndex: 1,
+          endColumnIndex: 2,
+        },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { fontSize: 9, bold: true },
+            verticalAlignment: "MIDDLE",
+          },
+        },
+        fields: "userEnteredFormat(textFormat,verticalAlignment)",
+      },
+    },
+    {
+      repeatCell: {
+        range: {
+          sheetId: dashboardSheetId,
+          startRowIndex: 32,
+          endRowIndex: 32 + sortedMonthSheetsAsc.length,
+          startColumnIndex: 5,
+          endColumnIndex: 6,
+        },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { fontSize: 9 },
+            verticalAlignment: "MIDDLE",
+          },
+        },
+        fields: "userEnteredFormat(textFormat,verticalAlignment)",
+      },
+    }
+  );
+
+  // Footer (Row footerRowIndex)
   stylingRequests.push({
     repeatCell: {
       range: {
         sheetId: dashboardSheetId,
-        startRowIndex: 36,
-        endRowIndex: 37,
+        startRowIndex: footerRowIndex,
+        endRowIndex: footerRowIndex + 1,
         startColumnIndex: 1,
         endColumnIndex: 12,
       },

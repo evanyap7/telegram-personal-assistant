@@ -401,6 +401,128 @@ export async function ensureMonthlyTransactionsSheet(
   if (knownSheetNamesCache) {
     knownSheetNamesCache.add(sheetName);
   }
+
+  // Automatically sync dashboard month selector & history rows for the new month
+  await syncDashboardMonthSelector().catch((err) => {
+    console.warn("Could not sync dashboard for new month:", err);
+  });
+}
+
+/**
+ * Keeps the Google Sheets '📊 Dashboard' synchronized with available monthly sheets:
+ * 1. Updates L2's validation dropdown to include "Auto (Current)" and all active months
+ * 2. Ensures M2 formula dynamically falls back to TEXT(TODAY(), "mmm yyyy")
+ * 3. Appends new month rows to the Monthly Budget Tracking & History table
+ */
+export async function syncDashboardMonthSelector(): Promise<void> {
+  const titles = await getAllSheetTitles(true);
+  const dashboardTitle = titles.find((t) => t === "📊 Dashboard" || t === "Dashboard");
+  if (!dashboardTitle) return;
+
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  // Find all 2026+ month transaction sheets
+  const txnSheets = titles.filter(isTransactionSheetTitle).filter((t) => {
+    const d = parseMonthYearFromTitle(t);
+    return d.getUTCFullYear() >= 2026;
+  });
+
+  if (txnSheets.length === 0) return;
+
+  const sortedAsc = [...txnSheets].sort((a, b) => {
+    return parseMonthYearFromTitle(a).getTime() - parseMonthYearFromTitle(b).getTime();
+  });
+  const sortedDesc = [...sortedAsc].reverse();
+
+  const meta = await withExponentialBackoff(() =>
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: "sheets(properties(sheetId,title))",
+    })
+  );
+  const dashSheet = meta.data.sheets?.find((s) => s.properties?.title === dashboardTitle);
+  const dashboardSheetId = dashSheet?.properties?.sheetId;
+  if (dashboardSheetId === undefined || dashboardSheetId === null) return;
+
+  // 1. Ensure L2 data validation includes "Auto (Current)" and all active months
+  const dropdownValues = ["Auto (Current)", ...sortedDesc];
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            setDataValidation: {
+              range: {
+                sheetId: dashboardSheetId,
+                startRowIndex: 1,
+                endRowIndex: 2,
+                startColumnIndex: 11,
+                endColumnIndex: 12,
+              },
+              rule: {
+                condition: {
+                  type: "ONE_OF_LIST",
+                  values: dropdownValues.map((v) => ({ userEnteredValue: v })),
+                },
+                strict: false,
+                showCustomUi: true,
+              },
+            },
+          },
+        ],
+      },
+    })
+  );
+
+  // 2. Ensure M2 formula has dynamic fallback to current month
+  const m2Formula =
+    '=IF(OR(ISBLANK($L$2), $L$2="", $L$2="Auto (Current)", $L$2="Current Month"), TEXT(TODAY(), "mmm yyyy"), IF(ISNUMBER($L$2), TEXT($L$2, "mmm yyyy"), TO_TEXT($L$2)))';
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${dashboardTitle}'!M2`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [[m2Formula]] },
+    })
+  );
+
+  // 3. Sync the "MONTHLY BUDGET TRACKING & HISTORY" table (Rows 33+)
+  const historyRes = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${dashboardTitle}'!B33:B`,
+    })
+  );
+  const existingHistoryMonths = (historyRes.data.values ?? []).map((r) => r[0]?.trim()).filter(Boolean);
+
+  for (let i = 0; i < sortedAsc.length; i++) {
+    const m = sortedAsc[i];
+    const rowNum = 33 + i;
+    if (!existingHistoryMonths.includes(m)) {
+      const isSep = m === "Sep 2026";
+      const budgetFormula = isSep
+        ? "Uncapped"
+        : '=IFERROR(VLOOKUP("overall_budget", BudgetConfig!A:B, 2, FALSE), 700)';
+      const spentFormula = `=IFERROR(SUMIFS('${m}'!D2:D, '${m}'!C2:C, "expense", '${m}'!H2:H, "<>deleted"), 0)`;
+      const varianceFormula = `=IF(ISNUMBER(C${rowNum}), C${rowNum} - D${rowNum}, "—")`;
+      const statusFormula = isSep
+        ? "📊 Baseline (No Cap)"
+        : `=IF(D${rowNum}=0, "🎯 No Expenses Yet", IF(E${rowNum}>=0, "✅ On Track", "🚨 Budget Exceeded"))`;
+
+      await withExponentialBackoff(() =>
+        sheets.spreadsheets.values.update({
+          spreadsheetId,
+          range: `'${dashboardTitle}'!B${rowNum}:F${rowNum}`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: {
+            values: [[m, budgetFormula, spentFormula, varianceFormula, statusFormula]],
+          },
+        })
+      );
+    }
+  }
 }
 
 function normaliseCell(value: string | undefined): string {
