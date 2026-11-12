@@ -76,18 +76,34 @@ function log(event: string, values: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ event, timestamp: new Date().toISOString(), ...values }));
 }
 
+export interface SseOptions {
+  /**
+   * Receives the run promise synchronously, before sseResponse returns, so a route can
+   * pass it to `after()` from next/server while still in the request scope. That keeps a
+   * serverless function alive until the turn finishes even if the client disconnects.
+   * The promise never rejects. A hook that throws is logged and ignored.
+   */
+  keepAlive?: (run: Promise<void>) => void;
+}
+
 /**
  * Streams the events `run` emits as server-sent events. The run starts at once and each
  * event is enqueued as soon as it is emitted, so frames reach the client while the turn
  * is still working. The stream closes when the run settles. A run that throws ends with a
  * generic `error` frame. After the client disconnects, emits are silent no-ops and the
- * run carries on, so a turn's side effects finish like a Telegram turn's.
+ * run carries on (kept alive through `options.keepAlive`), so a turn's side effects
+ * finish like a Telegram turn's.
  */
-export function sseResponse(run: (emit: (e: AppEvent) => void) => Promise<void>): Response {
+export function sseResponse(
+  run: (emit: (e: AppEvent) => void) => Promise<void>,
+  options: SseOptions = {}
+): Response {
   const encoder = new TextEncoder();
   let closed = false;
+  let running: Promise<void> = Promise.resolve();
 
   const stream = new ReadableStream<Uint8Array>({
+    // Called synchronously by the constructor, so `running` is set before it returns.
     start(controller) {
       const emit = (e: AppEvent) => {
         if (closed) return;
@@ -107,7 +123,7 @@ export function sseResponse(run: (emit: (e: AppEvent) => void) => Promise<void>)
         }
       };
       // Not awaited: start() returning early lets the response begin before the turn ends.
-      void Promise.resolve()
+      running = Promise.resolve()
         .then(() => run(emit))
         .catch((err) => {
           log("app.sse.run_failed", { error: err instanceof Error ? err.message : String(err) });
@@ -120,11 +136,19 @@ export function sseResponse(run: (emit: (e: AppEvent) => void) => Promise<void>)
     },
   });
 
+  if (options.keepAlive) {
+    try {
+      options.keepAlive(running);
+    } catch (err) {
+      log("app.sse.keep_alive_failed", { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   return new Response(stream, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-store",
+      "Cache-Control": "no-store, no-transform",
       "X-Accel-Buffering": "no",
       "X-Content-Type-Options": "nosniff",
     },

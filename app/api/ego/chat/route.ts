@@ -22,11 +22,21 @@ export async function POST(request: Request): Promise<Response> {
   if (!trimmed) return jsonError(400, "text is required");
   if (!isValidRequestId(requestId)) return jsonError(400, "Invalid requestId");
 
-  // Loaded only for a valid request: the production wiring pulls in the whole EGO
-  // pipeline, which the offline validation tests must not load.
-  const { appTurnDeps } = await import("@/lib/app/turn-deps");
+  // next/server cannot load under the offline test loader, so it is imported only here.
+  // after() needs the request scope, which survives this await.
+  const { after } = await import("next/server");
 
-  return sseResponse((emit) =>
-    runAppTurn(appTurnDeps, { text: trimmed, inputMode: "text", requestId }, emit)
+  return sseResponse(
+    async (emit) => {
+      // Immediate feedback before the cold-start import of the pipeline. An import failure
+      // throws here and becomes a generic SSE error frame, not a framework 500.
+      emit({ type: "thinking" });
+      // Loaded only for a valid request: the production wiring pulls in the whole EGO
+      // pipeline, which the offline validation tests must not load.
+      const { appTurnDeps } = await import("@/lib/app/turn-deps");
+      await runAppTurn(appTurnDeps, { text: trimmed, inputMode: "text", requestId }, emit);
+    },
+    // Keeps the function alive until the turn finishes, even if the client disconnects.
+    { keepAlive: (run) => after(run) }
   );
 }

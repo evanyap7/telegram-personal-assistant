@@ -161,7 +161,10 @@ async function testSseResponse() {
   });
   assert(res.status === 200, "sse: 200");
   assert(res.headers.get("content-type") === "text/event-stream; charset=utf-8", "sse: event-stream content type");
-  assert(res.headers.get("cache-control") === "no-store", "sse: Cache-Control no-store");
+  assert(
+    res.headers.get("cache-control") === "no-store, no-transform",
+    "sse: Cache-Control no-store, no-transform"
+  );
   assert(res.headers.get("x-accel-buffering") === "no", "sse: proxy buffering disabled");
   const events = parseFrames(await readAll(res));
   assert(
@@ -229,6 +232,69 @@ async function testSseResponse() {
   releaseCancelled();
   await new Promise((r) => setTimeout(r, 10));
   assert(runCompleted && !emitAfterCancelThrew, "sse: emits after client cancel are silent no-ops");
+
+  await testKeepAlive();
+}
+
+async function testKeepAlive() {
+  // The run promise is handed to the keep-alive hook (after() in the routes) synchronously,
+  // while still inside the request scope, and a cancelled stream does not stop the run.
+  const handed: Promise<unknown>[] = [];
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((r) => (releaseRun = r));
+  const steps: string[] = [];
+  const res = sseResponse(
+    async (emit) => {
+      emit({ type: "thinking" });
+      steps.push("finance row written");
+      await runGate;
+      steps.push("todo written");
+      emit({ type: "done" });
+    },
+    { keepAlive: (p) => handed.push(p) }
+  );
+  assert(handed.length === 1, "keepAlive: run promise handed over once, before sseResponse returns");
+  const reader = res.body!.getReader();
+  await reader.read();
+  await reader.cancel();
+  releaseRun();
+  let settled = false;
+  await Promise.race([
+    handed[0].then(() => (settled = true)),
+    new Promise((r) => setTimeout(r, 500)),
+  ]);
+  assert(
+    settled && steps.join(",") === "finance row written,todo written",
+    "keepAlive: after the client cancels, the kept-alive run still finishes every step",
+    steps
+  );
+
+  // The kept-alive promise never rejects, even when the run throws.
+  const handedBoom: Promise<unknown>[] = [];
+  const boom = sseResponse(
+    async () => {
+      throw new Error("boom");
+    },
+    { keepAlive: (p) => handedBoom.push(p) }
+  );
+  let rejected = false;
+  await handedBoom[0].catch(() => (rejected = true));
+  await boom.text();
+  assert(handedBoom.length === 1 && !rejected, "keepAlive: promise resolves even when the run throws");
+
+  // A keep-alive hook that throws (for example, no request scope) does not break the stream.
+  const noScope = sseResponse(
+    async (emit) => {
+      emit({ type: "done" });
+    },
+    {
+      keepAlive: () => {
+        throw new Error("outside a request scope");
+      },
+    }
+  );
+  const noScopeEvents = parseFrames(await noScope.text());
+  assert(noScopeEvents.at(-1)?.type === "done", "keepAlive: a throwing hook still streams the run", noScopeEvents);
 }
 
 function testRequestIdShape() {
