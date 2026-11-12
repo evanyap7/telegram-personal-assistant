@@ -4,6 +4,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { initialAvatarState, reduceAvatar, type AvatarEvent, type AvatarState } from "@/lib/app/avatar-state";
 import type { AppButton, AppEvent } from "@/lib/app/events";
+import { readSse } from "@/lib/app/sse-client";
 
 export interface ChatMessage {
   /** Stable React key. */
@@ -32,44 +33,6 @@ const MOOD_DECAY_MS = 8000;
 function newRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
-}
-
-function isAppEvent(value: unknown): value is AppEvent {
-  return typeof value === "object" && value !== null && typeof (value as { type?: unknown }).type === "string";
-}
-
-/** Reads a text/event-stream body and calls `onEvent` for each well-formed data frame. */
-async function readSse(body: ReadableStream<Uint8Array>, onEvent: (e: AppEvent) => void): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const flush = (frame: string) => {
-    const data = frame
-      .split("\n")
-      .filter((l) => l.startsWith("data:"))
-      .map((l) => l.slice(5).replace(/^ /, ""))
-      .join("\n");
-    if (!data) return;
-    try {
-      const parsed: unknown = JSON.parse(data);
-      if (isAppEvent(parsed)) onEvent(parsed);
-    } catch {
-      // Ignore a malformed frame; the stream continues.
-    }
-  };
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buffer.search(/\r?\n\r?\n/)) !== -1) {
-      const sep = buffer.slice(idx).match(/^\r?\n\r?\n/)![0].length;
-      flush(buffer.slice(0, idx));
-      buffer = buffer.slice(idx + sep);
-    }
-  }
-  buffer += decoder.decode();
-  if (buffer.trim()) flush(buffer);
 }
 
 export function useEgoChat(): EgoChat {
@@ -169,10 +132,15 @@ export function useEgoChat(): EgoChat {
           body: JSON.stringify({ ...payload, requestId: newRequestId() }),
           signal: controller.signal,
         });
-        if (res.status === 401 || res.status === 403) {
+        if (res.status === 401) {
           finished = true;
           dispatchAvatar({ type: "turn_error" });
           router.replace("/ego/login");
+          return;
+        }
+        if (res.status === 403) {
+          // A valid session but a refused origin; /ego/login would bounce straight back.
+          fail("The server refused that request. Reload the page and try again.");
           return;
         }
         if (!res.ok || !res.body) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { AVATAR_FRAMES, AVATAR_REGIONS, type AvatarFrameName, type Rect } from "@/lib/app/avatar-layout";
 import { mouthForLevel, type AvatarState, type Mood, type Mouth } from "@/lib/app/avatar-state";
 import { LayerStack } from "./layerStack";
@@ -38,12 +38,28 @@ function simulatedLevel(tSec: number): number {
 
 const FEATHER = "radial-gradient(ellipse 50% 50% at 50% 50%, #000 62%, transparent 100%)";
 
+function MoodLayer({ mood, stack }: { mood: Mood; stack: LayerStack }) {
+  const setRef = useCallback((el: HTMLImageElement | null) => stack.register(mood, el), [stack, mood]);
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      ref={setRef}
+      className="ego-base"
+      src={AVATAR_FRAMES[mood]}
+      alt=""
+      draggable={false}
+      style={{ opacity: mood === "neutral" ? 1 : 0 }}
+    />
+  );
+}
+
 function RegionLayer({ layer, frame, rect, stack }: { layer: string; frame: AvatarFrameName; rect: Rect; stack: LayerStack }) {
   const src = AVATAR_FRAMES[frame];
+  const setRef = useCallback((el: HTMLDivElement | null) => stack.register(layer, el), [stack, layer]);
   const feather = FEATHER;
   return (
     <div
-      ref={(el) => stack.register(layer, el)}
+      ref={setRef}
       className="ego-region"
       style={{
         left: `${rect.x * 100}%`,
@@ -81,8 +97,8 @@ function RegionLayer({ layer, frame, rect, stack }: { layer: string; frame: Avat
  */
 export default function Avatar({ state, levelRef }: { state: AvatarState; levelRef?: RefObject<number | null> }) {
   const [moodStack] = useState(() => new LayerStack(MOODS, MOOD_MS, "neutral"));
-  const [eyeStack] = useState(() => new LayerStack(["blink"], BLINK_MS));
-  const [mouthStack] = useState(() => new LayerStack(SHAPES, MOUTH_MS));
+  const [eyeStack] = useState(() => new LayerStack(["blink"], BLINK_MS, null, 10));
+  const [mouthStack] = useState(() => new LayerStack(SHAPES, MOUTH_MS, null, 10));
 
   const speakingRef = useRef(false);
   const levelSourceRef = useRef<RefObject<number | null> | undefined>(levelRef);
@@ -126,7 +142,7 @@ export default function Avatar({ state, levelRef }: { state: AvatarState; levelR
     let current: Mouth = "closed";
     let changedAt = 0;
     const loop = (now: number) => {
-      const dt = Math.min(64, now - last);
+      const dt = Math.max(0, Math.min(64, now - last));
       last = now;
 
       const speaking = speakingRef.current;
@@ -175,16 +191,7 @@ export default function Avatar({ state, levelRef }: { state: AvatarState; levelR
       <div className="ego-frame">
         <div className="ego-breathe">
           {MOODS.map((m) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={m}
-              ref={(el) => moodStack.register(m, el)}
-              className="ego-base"
-              src={AVATAR_FRAMES[m]}
-              alt=""
-              draggable={false}
-              style={{ opacity: m === "neutral" ? 1 : 0 }}
-            />
+            <MoodLayer key={m} mood={m} stack={moodStack} />
           ))}
           <RegionLayer layer="blink" frame="blink" rect={AVATAR_REGIONS.eyes} stack={eyeStack} />
           {SHAPES.map((s) => (

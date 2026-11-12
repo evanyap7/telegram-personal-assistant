@@ -41,7 +41,7 @@ export default function Conversation({
   }, [messages]);
 
   return (
-    <section className="ego-chat" aria-label="Conversation" role="log" aria-live="polite">
+    <section className="ego-chat" aria-label="Conversation" role="log" aria-live="polite" aria-relevant="additions text" tabIndex={0}>
       {messages.length === 0 && <p className="ego-empty">Ask me anything, or tell me what you spent.</p>}
       {messages.map((m) => (
         <div key={m.key} className={`ego-msg ${m.role === "user" ? "me" : "bot"}`}>
@@ -59,7 +59,7 @@ export default function Conversation({
             m.buttons?.map((row, r) => (
               <div className="ego-btns" key={r}>
                 {row.map((b) => (
-                  <button key={b.data} type="button" disabled={busy} onClick={() => onPress(m.id!, b.data)}>
+                  <button key={b.data} type="button" aria-disabled={busy} onClick={() => !busy && onPress(m.id!, b.data)}>
                     {b.text}
                   </button>
                 ))}

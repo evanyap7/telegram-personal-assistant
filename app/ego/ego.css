@@ -105,7 +105,8 @@
 .ego-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .ego-btns button { font: inherit; font-size: 13px; min-height: 36px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
 .ego-btns button:first-child { border-color: var(--accent); color: var(--accent); }
-.ego-btns button:disabled { opacity: 0.5; cursor: default; }
+.ego-btns button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.ego-toast:empty { display: none; }
 
 /* Composer */
 .ego-composer { display: flex; gap: 8px; align-items: center; }

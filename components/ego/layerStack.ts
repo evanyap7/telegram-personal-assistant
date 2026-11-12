@@ -24,8 +24,11 @@ export class LayerStack {
   private order: string[] = [];
   private target: string | null;
   private ms: number;
+  private zBase: number;
 
-  constructor(names: readonly string[], ms: number, initial: string | null = null) {
+  /** `zBase` keeps stacks in separate z bands (mood bases below, eye/mouth regions above). */
+  constructor(names: readonly string[], ms: number, initial: string | null = null, zBase = 1) {
+    this.zBase = zBase;
     this.ms = ms;
     this.target = initial;
     for (const n of names) this.layers.set(n, { el: null, p: n === initial ? 1 : 0, shown: -1, z: -1 });
@@ -54,8 +57,13 @@ export class LayerStack {
     if (name === null) return;
     const layer = this.layers.get(name);
     if (!layer) return;
-    this.order = this.order.filter((n) => n !== name);
-    this.order.push(name);
+    // Already fully opaque (beneath a half-faded layer): keep its place and let tick() fade
+    // the layers above it out, so nothing vanishes instantly. Otherwise re-stack it on top,
+    // continuing from its current opacity.
+    if (layer.p < 1) {
+      this.order = this.order.filter((n) => n !== name);
+      this.order.push(name);
+    }
     if (this.ms <= 0) this.settle();
   }
 
@@ -77,15 +85,21 @@ export class LayerStack {
       const top = this.layers.get(this.target)!;
       top.p = Math.min(1, top.p + step);
       if (top.p >= 1) {
-        for (const n of this.order) if (n !== this.target) this.layers.get(n)!.p = 0;
-        this.order = [this.target];
+        // Opaque: everything beneath is hidden, drop it; anything above fades out.
+        const idx = this.order.indexOf(this.target);
+        for (const n of this.order.slice(0, idx)) this.layers.get(n)!.p = 0;
+        for (const n of this.order.slice(idx + 1)) {
+          const l = this.layers.get(n)!;
+          l.p = Math.max(0, l.p - step);
+        }
+        this.order = this.order.slice(idx).filter((n) => n === this.target || this.layers.get(n)!.p > 0);
       }
     }
     this.apply();
   }
 
   private apply() {
-    let z = 1;
+    let z = this.zBase;
     const inOrder = new Set(this.order);
     for (const n of this.order) this.write(this.layers.get(n)!, ease(this.layers.get(n)!.p), z++);
     for (const [n, l] of this.layers) if (!inOrder.has(n)) this.write(l, 0, 0);

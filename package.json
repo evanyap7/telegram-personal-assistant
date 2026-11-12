@@ -23,6 +23,7 @@
     "test:app-channel": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-channel.ts",
     "test:app-turn": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-turn.ts",
     "test:app-routes": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-routes.ts",
+    "test:app-sse-client": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-sse-client.ts",
     "test:app-pure": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-pure.ts",
     "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts",
     "test:cron-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-cron-auth.ts",

@@ -12,11 +12,9 @@ export default function EgoApp() {
       <Avatar state={avatar} />
       <Conversation messages={messages} busy={busy} onPress={pressButton} />
       <Composer busy={busy} onSend={send} />
-      {toast && (
-        <div className="ego-toast" role="status">
-          {toast}
-        </div>
-      )}
+      <div className="ego-toast" role="status" aria-live="polite">
+        {toast}
+      </div>
     </main>
   );
 }

@@ -14,6 +14,7 @@ import {
   type AvatarState,
 } from "../lib/app/avatar-state";
 import { parseInlineMarkdown } from "../lib/app/markdown";
+import { LayerStack } from "../components/ego/layerStack";
 
 let passed = 0;
 let failed = 0;
@@ -238,6 +239,60 @@ console.log("\n--- markdown performance guard ---");
       assert(segs.map((x) => x.text).join("") === p, `plain pathological input round-trips: ${JSON.stringify(p.slice(0, 8))}`);
     }
   }
+}
+
+
+// LayerStack: crossfade order and reversal behaviour.
+{
+  type Fake = { style: { opacity: string; zIndex: string } };
+  const mk = (stack: LayerStack, names: string[]) => {
+    const els: Record<string, Fake> = {};
+    for (const n of names) {
+      els[n] = { style: { opacity: "", zIndex: "" } };
+      stack.register(n, els[n] as unknown as HTMLElement);
+    }
+    return els;
+  };
+  const op = (e: Fake) => Number(e.style.opacity);
+
+  const moods = new LayerStack(["a", "b"], 100, "a");
+  const regions = new LayerStack(["blink"], 100, null, 10);
+  const me = mk(moods, ["a", "b"]);
+  const re = mk(regions, ["blink"]);
+  moods.tick(0);
+  moods.setTarget("b");
+  moods.tick(40);
+  regions.setTarget("blink");
+  regions.tick(100);
+  moods.tick(0);
+  assert(Number(re.blink.style.zIndex) > Number(me.b.style.zIndex), "region layer z-index stays above an incoming mood base");
+  assert(op(me.a) === 1 && op(me.b) > 0 && op(me.b) < 1, "outgoing mood stays opaque while incoming fades", [op(me.a), op(me.b)]);
+
+  // Reversal: b is half in over a; going back to a must fade b out, not make it vanish.
+  moods.setTarget("a");
+  moods.tick(0);
+  const afterSwitch = op(me.b);
+  assert(afterSwitch > 0 && afterSwitch < 1, "reversal does not snap the partial layer away", afterSwitch);
+  moods.tick(20);
+  const mid = op(me.b);
+  assert(mid < afterSwitch && mid > 0, "partial layer fades out gradually after reversal", [afterSwitch, mid]);
+  moods.tick(200);
+  assert(op(me.b) === 0 && op(me.a) === 1, "reversal settles with the original layer fully opaque");
+
+  // Null target fades the stack out but never touches the layer beneath it.
+  regions.setTarget(null);
+  regions.tick(30);
+  const f = op(re.blink);
+  assert(f > 0 && f < 1, "null target fades gradually", f);
+  regions.tick(200);
+  assert(op(re.blink) === 0, "null target ends fully transparent");
+
+  // Zero duration (reduced motion) is instant.
+  const instant = new LayerStack(["x", "y"], 0, "x");
+  const ie = mk(instant, ["x", "y"]);
+  instant.setTarget("y");
+  instant.tick(16);
+  assert(op(ie.y) === 1 && op(ie.x) === 0, "zero duration swaps instantly");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
