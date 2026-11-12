@@ -5,6 +5,7 @@
  *   node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-turn.ts
  */
 
+import { isShortLivedUpdateId } from "../lib/update-log-ids";
 import { encodeSse, type AppEvent } from "../lib/app/events";
 import {
   appUpdateId,
@@ -405,6 +406,16 @@ async function runTests() {
         "egoTurnFromMessage_maps_telegram_message: ids, date and reply mapped",
         t
       );
+    }
+    {
+      const real = appUpdateId("req-prune-1");
+      assert(isShortLivedUpdateId(String(real)), "prune: a real app update id is pruned", real);
+      assert(isShortLivedUpdateId(String(1e13)) && isShortLivedUpdateId(String(1e13 + 2 ** 40 - 1)), "prune: app id range bounds are pruned");
+      assert(isShortLivedUpdateId("123456789012"), "prune: 12-digit Telegram id still pruned");
+      assert(!isShortLivedUpdateId("9999999999999"), "prune: 13-digit id kept");
+      assert(!isShortLivedUpdateId(String(1e13 + 2 ** 40)), "prune: 14-digit id past the app range kept");
+      assert(!isShortLivedUpdateId("1234567890123456"), "prune: all-digit 16-char Gmail id kept");
+      assert(!isShortLivedUpdateId("18c2f1a9b3d4e5f6") && !isShortLivedUpdateId("") && !isShortLivedUpdateId("leave_now:1"), "prune: hex, empty and prefixed ids not matched by the numeric rule");
     }
   } finally {
     globalThis.fetch = originalFetch;

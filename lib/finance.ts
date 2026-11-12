@@ -3,6 +3,7 @@ import { deleteSheetRows } from "./sheet-rows";
 import { maskSensitiveFinancialData } from "./security";
 import { parseSingaporeDate } from "./date-parser";
 import { getMonthlyBudgetStatus, type MonthlyBudgetStatus } from "./budget";
+import { isShortLivedUpdateId } from "./update-log-ids";
 
 export { getMonthlyBudgetStatus, type MonthlyBudgetStatus };
 
@@ -1439,7 +1440,7 @@ export async function markUpdateFailed(
 
 /**
  * Prunes UpdateLog rows that only exist for short-term idempotency:
- * numeric Telegram update IDs (Telegram stops retrying within a day) and
+ * numeric Telegram and app update IDs (Telegram stops retrying within a day) and
  * leave-now notice keys. External receipt IDs (Gmail message IDs etc.) are
  * kept forever because they prevent old receipts from being imported twice.
  */
@@ -1462,7 +1463,7 @@ export async function pruneUpdateLog(
 
   rows.forEach((row, index) => {
     const id = String(row[0] ?? "");
-    const isShortLived = /^\d{1,12}$/.test(id) || id.startsWith("leave_now:");
+    const isShortLived = isShortLivedUpdateId(id) || id.startsWith("leave_now:");
     const startedMs = new Date(row[2]).getTime();
     if (isShortLived && !Number.isNaN(startedMs) && startedMs < cutoffMs) {
       pruneRowNumbers.push(index + 2);
