@@ -97,6 +97,7 @@ export async function startRecording(): Promise<Recording> {
   const chunks: Float32Array[] = [];
   let source: MediaStreamAudioSourceNode | null = null;
   let node: AudioNode | null = null;
+  let mute: GainNode | null = null;
   let workletUrl: string | null = null;
   let released = false;
 
@@ -109,6 +110,7 @@ export async function startRecording(): Promise<Recording> {
         if ("port" in node) (node as AudioWorkletNode).port.onmessage = null;
         if ("onaudioprocess" in node) (node as ScriptProcessorNode).onaudioprocess = null;
       }
+      mute?.disconnect();
       source?.disconnect();
     } catch {
       // Already disconnected.
@@ -131,9 +133,14 @@ export async function startRecording(): Promise<Recording> {
       try {
         workletUrl = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: "application/javascript" }));
         await withTimeout(ctx.audioWorklet.addModule(workletUrl), 1500);
-        const worklet = new AudioWorkletNode(ctx, "ego-capture", { numberOfOutputs: 0 });
+        // Safari does not run a node with no path to the destination, so route it through a muted gain.
+        const worklet = new AudioWorkletNode(ctx, "ego-capture", { numberOfOutputs: 1, outputChannelCount: [1] });
         worklet.port.onmessage = (e: MessageEvent<Float32Array>) => chunks.push(e.data);
+        mute = ctx.createGain();
+        mute.gain.value = 0;
         source.connect(worklet);
+        worklet.connect(mute);
+        mute.connect(ctx.destination);
         node = worklet;
         usedWorklet = true;
       } catch {
