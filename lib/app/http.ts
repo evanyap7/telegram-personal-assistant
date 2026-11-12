@@ -22,8 +22,8 @@ export function jsonError(status: number, error: string): Response {
 }
 
 /** Reads at most `maxBytes` bytes; returns null if the body is larger. */
-async function readCappedText(request: Request, maxBytes: number): Promise<string | null> {
-  if (!request.body) return "";
+export async function readCappedBytes(request: Request, maxBytes: number): Promise<Uint8Array | null> {
+  if (!request.body) return new Uint8Array(0);
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -37,7 +37,12 @@ async function readCappedText(request: Request, maxBytes: number): Promise<strin
     }
     chunks.push(value);
   }
-  return Buffer.concat(chunks).toString("utf-8");
+  return Buffer.concat(chunks);
+}
+
+async function readCappedText(request: Request, maxBytes: number): Promise<string | null> {
+  const bytes = await readCappedBytes(request, maxBytes);
+  return bytes === null ? null : Buffer.from(bytes).toString("utf-8");
 }
 
 /**

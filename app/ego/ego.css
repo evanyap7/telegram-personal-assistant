@@ -135,3 +135,7 @@
 .ego-push-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .ego-push-btn:disabled { opacity: 0.6; cursor: default; }
 .ego-push-hint { margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+/* Hold to talk */
+.ego-round.ego-recording { background: var(--navy); color: var(--on-navy); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent); }
+.ego-voice-hint { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: 12px; background: var(--navy); color: var(--on-navy); font-size: 13px; text-align: center; }

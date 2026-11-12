@@ -20,6 +20,7 @@ export interface ChatMessage {
 export interface EgoChat {
   messages: ChatMessage[];
   send(text: string): void;
+  sendVoice(audio: Blob): void;
   pressButton(messageId: number, data: string): void;
   avatar: AvatarState;
   dispatchAvatar(e: AvatarEvent): void;
@@ -73,6 +74,10 @@ export function useEgoChat(): EgoChat {
           // Emitted more than once per turn; request_sent is idempotent.
           dispatchAvatar({ type: "request_sent" });
           break;
+        case "transcript":
+          // What the server heard becomes the user's message, ahead of EGO's reply.
+          if (e.text) setMessages((m) => [...m, { key: `u-${++localKey.current}`, role: "user", text: e.text }]);
+          break;
         case "message":
           setMessages((m) =>
             m.some((x) => x.id === e.id)
@@ -112,7 +117,7 @@ export function useEgoChat(): EgoChat {
   );
 
   const run = useCallback(
-    async (url: string, payload: Record<string, unknown>) => {
+    async (url: string, payload: Record<string, unknown> | FormData) => {
       if (busyRef.current) return;
       busyRef.current = true;
       setBusy(true);
@@ -126,12 +131,20 @@ export function useEgoChat(): EgoChat {
         dispatchAvatar({ type: "turn_error" });
       };
       try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ ...payload, requestId: newRequestId() }),
-          signal: controller.signal,
-        });
+        const requestId = newRequestId();
+        let init: RequestInit;
+        if (payload instanceof FormData) {
+          payload.append("requestId", requestId);
+          // No content-type: the browser adds the multipart boundary.
+          init = { method: "POST", body: payload };
+        } else {
+          init = {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...payload, requestId }),
+          };
+        }
+        const res = await fetch(url, { ...init, signal: controller.signal });
         if (res.status === 401) {
           finished = true;
           dispatchAvatar({ type: "turn_error" });
@@ -172,6 +185,16 @@ export function useEgoChat(): EgoChat {
     [run]
   );
 
+  const sendVoice = useCallback(
+    (audio: Blob) => {
+      if (busyRef.current) return;
+      const form = new FormData();
+      form.append("audio", audio, "voice.wav");
+      void run("/api/ego/voice", form);
+    },
+    [run]
+  );
+
   const pressButton = useCallback(
     (messageId: number, data: string) => {
       void run("/api/ego/callback", { data, messageId });
@@ -179,5 +202,5 @@ export function useEgoChat(): EgoChat {
     [run]
   );
 
-  return { messages, send, pressButton, avatar, dispatchAvatar, busy, toast };
+  return { messages, send, sendVoice, pressButton, avatar, dispatchAvatar, busy, toast };
 }

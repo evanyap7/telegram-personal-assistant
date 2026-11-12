@@ -1,14 +1,32 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { AvatarEvent } from "@/lib/app/avatar-state";
+import HoldToTalk from "./HoldToTalk";
 
-export default function Composer({ busy, onSend }: { busy: boolean; onSend(text: string): void }) {
+export default function Composer({
+  busy,
+  onSend,
+  onVoice,
+  dispatchAvatar,
+}: {
+  busy: boolean;
+  onSend(text: string): void;
+  onVoice(audio: Blob): void;
+  dispatchAvatar(e: AvatarEvent): void;
+}) {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Keep the keyboard up: when a turn ends and focus fell to the page, return it to the field.
+  // Set when a typed message is sent, i.e. the field had focus when the turn started.
+  const refocusAfterTurn = useRef(false);
+
+  // Keep the keyboard up only for a typed turn: when it ends and focus fell to the page,
+  // return it to the field. Never on mount, and not after a voice turn.
   useEffect(() => {
-    if (!busy && document.activeElement === document.body) inputRef.current?.focus();
+    if (busy) return;
+    if (refocusAfterTurn.current && document.activeElement === document.body) inputRef.current?.focus();
+    refocusAfterTurn.current = false;
   }, [busy]);
 
   const canSend = text.trim().length > 0 && !busy;
@@ -21,6 +39,7 @@ export default function Composer({ busy, onSend }: { busy: boolean; onSend(text:
         onSend(text);
         setText("");
         inputRef.current?.focus();
+        refocusAfterTurn.current = true;
       }}
     >
       <input
@@ -38,10 +57,7 @@ export default function Composer({ busy, onSend }: { busy: boolean; onSend(text:
           Send
         </button>
       ) : (
-        // Hold-to-talk is wired up in a later task; inert until then.
-        <button className="ego-round" type="button" disabled aria-label="Hold to talk (coming soon)">
-          Hold
-        </button>
+        <HoldToTalk disabled={busy} onVoice={onVoice} dispatchAvatar={dispatchAvatar} />
       )}
     </form>
   );
