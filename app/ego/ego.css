@@ -124,3 +124,7 @@
 .ego-primary { font: inherit; font-weight: 600; padding: 12px; border-radius: 12px; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
 .ego-primary:disabled { opacity: 0.55; cursor: default; }
 .ego-error { margin: 0; color: var(--accent); font-size: 13px; }
+
+.ego-install { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 12px; background: #1d2340; color: #f3f1f2; font-size: 14px; }
+.ego-install p { margin: 0; }
+.ego-install button { flex: none; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 8px; padding: 6px 10px; font: inherit; }
