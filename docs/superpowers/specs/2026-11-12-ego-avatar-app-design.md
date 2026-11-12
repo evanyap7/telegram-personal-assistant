@@ -81,7 +81,7 @@ Because replies are sent as side effects from about 300 places, changing every c
 
 ### Asset production
 
-The reference sheet is a front/back/left/right turnaround of one character in a navy suit and burgundy tie. The builder needs, at matching framing and lighting: neutral, warm smile, focused, concerned, eyes closed (blink), and four to five mouth shapes (closed, slightly open, open, wide, "oo"). Production tool: Dreamina, as the owner chose. Dreamina is not connected to this environment, so the owner generates the images from prompts and a shot list the builder provides, and drops the files in `public/avatar/`. The reference sheet is copied into the repo under `docs/avatar/` for provenance.
+The reference sheet is a front/back/left/right turnaround of one character in a navy suit and burgundy tie. The builder needs, at matching framing and lighting: neutral, warm smile, focused, concerned, eyes closed (blink), and four mouth shapes (closed, small, open, wide; "oo" is dropped because loudness alone cannot select it). Production tool: Dreamina, as the owner chose. Dreamina is not connected to this environment, so the owner generates the images from prompts and a shot list the builder provides, and drops the files in `public/avatar/`. The reference sheet is copied into the repo under `docs/avatar/` for provenance.
 
 ## Constraints
 

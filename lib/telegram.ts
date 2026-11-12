@@ -1,3 +1,5 @@
+import { currentChannel } from "./channel";
+
 export type InlineKeyboardButton = {
   text: string;
   callback_data: string;
@@ -121,6 +123,11 @@ export async function sendTelegramChatAction(
   chatId: number,
   action: "typing" | "upload_photo" | "record_voice" | "upload_document" = "typing"
 ): Promise<void> {
+  const channel = currentChannel();
+  if (channel) {
+    channel.action(action);
+    return;
+  }
   try {
     await callTelegram("sendChatAction", {
       chat_id: chatId,
@@ -138,6 +145,11 @@ export async function sendTelegramMessage(
   replyMarkup?: InlineKeyboardMarkup,
   parseMode: "Markdown" | "HTML" | null = "Markdown"
 ): Promise<void> {
+  const channel = currentChannel();
+  if (channel) {
+    channel.send(text, replyMarkup);
+    return;
+  }
   const chunks = splitIntoTelegramChunks(text);
 
   for (let i = 0; i < chunks.length; i++) {
@@ -155,6 +167,11 @@ export async function answerTelegramCallback(
   callbackQueryId: string,
   text?: string
 ): Promise<void> {
+  const channel = currentChannel();
+  if (channel) {
+    channel.answerCallback(text);
+    return;
+  }
   await callTelegram("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
     text,
@@ -165,6 +182,11 @@ export async function removeTelegramInlineKeyboard(
   chatId: number,
   messageId: number
 ): Promise<void> {
+  const channel = currentChannel();
+  if (channel) {
+    channel.removeKeyboard(messageId);
+    return;
+  }
   await callTelegram("editMessageReplyMarkup", {
     chat_id: chatId,
     message_id: messageId,
@@ -181,6 +203,11 @@ export async function editTelegramMessage(
   replyMarkup?: InlineKeyboardMarkup,
   parseMode: "Markdown" | "HTML" | null = "Markdown"
 ): Promise<void> {
+  const channel = currentChannel();
+  if (channel) {
+    channel.edit(messageId, text, replyMarkup);
+    return;
+  }
   await callTelegram("editMessageText", {
     chat_id: chatId,
     message_id: messageId,
@@ -209,6 +236,11 @@ export async function sendTelegramDocument(
   filename: string,
   caption?: string
 ): Promise<void> {
+  const channel = currentChannel();
+  if (channel) {
+    channel.document(filename, fileContent, caption);
+    return;
+  }
   const token = getTelegramToken();
   const formData = new FormData();
   formData.append("chat_id", String(chatId));
