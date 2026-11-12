@@ -1,6 +1,7 @@
-import { MAX_INPUT_CHARS, requireOwner } from "./auth";
+import { requireOwner } from "./auth";
 import { encodeWav } from "./audio";
 import { jsonError, readJsonObject } from "./http";
+import { SPEAK_LIMIT_PER_MIN, rateLimited } from "./rate-limit";
 import { cleanSpeechText } from "./speech-text";
 
 // Gemini text-to-speech. The AI SDK has no speech support for the Google provider, so this
@@ -61,6 +62,9 @@ export async function synthesize(text: string, fetchImpl: FetchLike = fetch): Pr
   return { wav: encodeWav(samples, rate) };
 }
 
+/** The client sends chunks of at most 400 characters; anything far past that is not a reply chunk. */
+export const SPEAK_MAX_INPUT_CHARS = 1000;
+
 export interface SpeakDeps {
   synthesize(text: string): Promise<{ wav: Uint8Array }>;
 }
@@ -69,11 +73,13 @@ export interface SpeakDeps {
 export async function handleSpeakPost(request: Request, deps: SpeakDeps): Promise<Response> {
   const denied = requireOwner(request);
   if (denied) return denied;
+  const limited = rateLimited(request, "speak", SPEAK_LIMIT_PER_MIN);
+  if (limited) return limited;
   const body = await readJsonObject(request);
   if (!body.ok) return body.response;
   const text = body.value.text;
   if (typeof text !== "string") return jsonError(400, "text is required");
-  if (text.length > MAX_INPUT_CHARS) return jsonError(413, "Message too long");
+  if (text.length > SPEAK_MAX_INPUT_CHARS) return jsonError(413, "Message too long");
   const cleaned = cleanSpeechText(text);
   if (!cleaned) return jsonError(400, "Nothing to say");
   try {

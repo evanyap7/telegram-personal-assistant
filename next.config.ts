@@ -24,9 +24,14 @@ const nextConfig: NextConfig = {
           },
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(self), geolocation=()",
+            value: "camera=(), microphone=(), geolocation=()",
           },
         ],
+      },
+      // Later rules override earlier ones for the same key: only /ego may use the microphone.
+      {
+        source: "/ego/:path*",
+        headers: [{ key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" }],
       },
       {
         source: "/sw.js",

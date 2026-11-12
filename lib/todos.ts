@@ -1,7 +1,7 @@
 import { getSheetsClient } from "./google";
 import { formatSingaporeTimestamp } from "./finance";
 import { sendTelegramMessage } from "./telegram";
-import { pushOwnerDefault } from "./app/push-default";
+import { pushIfProactive, type ProactiveSendOptions } from "./app/push-default";
 
 const TODOS_SHEET = "Todos";
 
@@ -623,7 +623,7 @@ export type TodoReminderCheckResult = {
   }>;
 };
 
-export async function checkAndSendTodoReminders(): Promise<TodoReminderCheckResult> {
+export async function checkAndSendTodoReminders(opts?: ProactiveSendOptions): Promise<TodoReminderCheckResult> {
   const now = new Date();
   if (isQuietHours(now)) {
     return {
@@ -708,7 +708,7 @@ export async function checkAndSendTodoReminders(): Promise<TodoReminderCheckResu
         ],
       });
 
-      await pushOwnerDefault("Task reminder", message);
+      await pushIfProactive(opts, "Task reminder", message);
 
       const nowIso = now.toISOString();
       await updateTodoLastRemindedAt(todo.taskId, nowIso);

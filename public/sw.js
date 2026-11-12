@@ -2,6 +2,7 @@
  * Never caches /api/* or HTML. Navigations are network-first and are never stored; on failure an inline
  * offline page is shown. Non-GET requests are not intercepted, so the login cookie flow is untouched. */
 const CACHE = "ego-shell-v2";
+const MAX_STATIC_ENTRIES = 80;
 const PRECACHE = ["/icons/icon-192.png", "/icons/icon-512.png"];
 
 const OFFLINE_HTML =
@@ -21,6 +22,12 @@ self.addEventListener("activate", (event) => {
       .then(() => self.clients.claim()),
   );
 });
+
+// Oldest entries first (cache.keys() is insertion order); keeps the cache from growing with every deploy.
+async function trimCache(cache) {
+  const keys = await cache.keys();
+  for (let i = 0; i < keys.length - MAX_STATIC_ENTRIES; i++) await cache.delete(keys[i]);
+}
 
 function isStaticAsset(url) {
   return (
@@ -56,7 +63,7 @@ self.addEventListener("fetch", (event) => {
       const refresh = fetch(request).then((res) => {
         if (res.ok && res.status === 200) {
           const copy = res.clone();
-          event.waitUntil(cache.put(request, copy));
+          event.waitUntil(cache.put(request, copy).then(() => trimCache(cache)));
         }
         return res;
       });

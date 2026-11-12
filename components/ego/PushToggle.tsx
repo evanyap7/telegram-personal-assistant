@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-type State = "loading" | "unsupported" | "ios-install" | "denied" | "unconfigured" | "off" | "on" | "busy";
+type State = "loading" | "unsupported" | "ios-install" | "denied" | "unconfigured" | "unavailable" | "off" | "on" | "busy";
 
 function urlBase64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
@@ -16,6 +16,19 @@ function sameKey(a: ArrayBuffer | null, b: Uint8Array): boolean {
   if (!a || a.byteLength !== b.length) return false;
   const x = new Uint8Array(a);
   return x.every((v, i) => v === b[i]);
+}
+
+const SW_READY_TIMEOUT_MS = 5000;
+
+class SwTimeout extends Error {}
+
+/** navigator.serviceWorker.ready never settles when registration failed; give up after 5 s. */
+function swReady(): Promise<ServiceWorkerRegistration> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new SwTimeout("service worker not ready")), SW_READY_TIMEOUT_MS);
+  });
+  return Promise.race([navigator.serviceWorker.ready, timeout]).finally(() => clearTimeout(timer));
 }
 
 function isIos(): boolean {
@@ -35,6 +48,7 @@ const LABEL: Record<State, string> = {
   "ios-install": "Notifications",
   denied: "Notifications blocked",
   unconfigured: "Notifications unavailable",
+  unavailable: "Notifications unavailable",
   off: "Notifications off",
   on: "Notifications on",
   busy: "Working...",
@@ -45,6 +59,7 @@ const HINT: Partial<Record<State, string>> = {
   "ios-install": "On iPhone, add EGO to your Home Screen first, then open it from there to turn on notifications.",
   denied: "Notifications are blocked. Allow them for this site in your browser or system settings.",
   unconfigured: "Push is not set up on the server yet.",
+  unavailable: "The service worker did not start, so notifications cannot be set up here. Reload to try again.",
 };
 
 /** Small header toggle: subscribes this device to web push for EGO's proactive messages. */
@@ -61,11 +76,11 @@ export default function PushToggle() {
         next = "denied";
       } else {
         try {
-          const reg = await navigator.serviceWorker.ready;
+          const reg = await swReady();
           const sub = await reg.pushManager.getSubscription();
           next = sub && Notification.permission === "granted" ? "on" : "off";
-        } catch {
-          next = "off";
+        } catch (err) {
+          next = err instanceof SwTimeout ? "unavailable" : "off";
         }
       }
       if (!cancelled) setState(next);
@@ -97,7 +112,7 @@ export default function PushToggle() {
       const { publicKey } = (await keyRes.json()) as { publicKey: string };
       const appKey = urlBase64ToBytes(publicKey);
 
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await swReady();
       let existing = await reg.pushManager.getSubscription();
       if (existing && !sameKey(existing.options.applicationServerKey, appKey)) {
         await existing.unsubscribe().catch(() => {});
@@ -112,15 +127,15 @@ export default function PushToggle() {
         return setState(res.status === 503 ? "unconfigured" : "off");
       }
       setState("on");
-    } catch {
-      setState("off");
+    } catch (err) {
+      setState(err instanceof SwTimeout ? "unavailable" : "off");
     }
   }
 
   async function disable() {
     setState("busy");
     try {
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await swReady();
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
         await post({ action: "unsubscribe", endpoint: sub.endpoint }).catch(() => {});

@@ -31,3 +31,11 @@ export function runInChannel<T>(channel: OutputChannel, fn: () => Promise<T>): P
 export function currentChannel(): OutputChannel | undefined {
   return storage.getStore();
 }
+
+/**
+ * Runs fn with no channel, so sends go to real Telegram. For global sweeps (due reminders)
+ * that mark items as delivered: they must not be swallowed by one app request's stream.
+ */
+export function runOutsideChannel<T>(fn: () => Promise<T>): Promise<T> {
+  return storage.exit(fn);
+}

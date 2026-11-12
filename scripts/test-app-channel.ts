@@ -5,7 +5,7 @@
  *   node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-channel.ts
  */
 
-import { runInChannel, type OutputChannel } from "../lib/channel";
+import { runOutsideChannel, runInChannel, type OutputChannel } from "../lib/channel";
 import {
   sendTelegramMessage,
   editTelegramMessage,
@@ -111,6 +111,22 @@ async function runTests() {
       assert(
         fetchCalls.length === 1 && fetchCalls[0].endsWith("/sendMessage"),
         "no_channel_is_unchanged: fetch called once with sendMessage"
+      );
+    }
+
+    // outside_channel_goes_to_telegram: reminder sweeps must not be swallowed by an app stream
+    {
+      fetchCalls = [];
+      const log: string[] = [];
+      await runInChannel(makeChannel(log), async () => {
+        await runOutsideChannel(async () => {
+          await sendTelegramMessage(1, "due reminder");
+        });
+        await sendTelegramMessage(1, "status line");
+      });
+      assert(
+        fetchCalls.length === 1 && fetchCalls[0].endsWith("/sendMessage") && log.length === 1 && log[0].startsWith("send:status line"),
+        `outside_channel_goes_to_telegram: sweep send hits Telegram, later send still diverts ${JSON.stringify({ fetchCalls, log })}`
       );
     }
 

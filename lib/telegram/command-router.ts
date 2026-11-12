@@ -43,6 +43,7 @@ import {
   handleRecurringCommand,
 } from "../handlers/recurring-handler";
 import { checkAndSendLeaveNowAlerts } from "../travel";
+import { currentChannel, runOutsideChannel } from "../channel";
 import { triageUnreadInbox } from "../inbox-triage";
 import {
   handleRecallCommand,
@@ -109,11 +110,17 @@ export async function dispatchCommand(
 
   // Reminders check
   if (text === "/reminders" || lowerText === "check reminders") {
-    const [eventResult, todoResult, leaveNowSent] = await Promise.all([
-      checkAndSendEventReminders(),
-      checkAndSendTodoReminders(),
-      checkAndSendLeaveNowAlerts(chatId),
-    ]);
+    // The sweeps mark reminders as delivered, so they run outside any app channel: due
+    // reminders go to real Telegram (as the cron would send them) rather than into one app
+    // request's stream. From the app the chat id is not a Telegram chat, so use the owner's.
+    const fromApp = currentChannel() !== undefined;
+    const [eventResult, todoResult, leaveNowSent] = await runOutsideChannel(() =>
+      Promise.all([
+        checkAndSendEventReminders(),
+        checkAndSendTodoReminders(),
+        checkAndSendLeaveNowAlerts(fromApp ? undefined : chatId),
+      ])
+    );
 
     const lines: string[] = ["🔔 *Reminders Status*:"];
     if (eventResult.remindersSent > 0) {

@@ -10,7 +10,7 @@ import {
   type CategorySpending,
 } from "./finance";
 import { sendTelegramMessage } from "./telegram";
-import { pushOwnerDefault } from "./app/push-default";
+import { pushIfProactive, type ProactiveSendOptions } from "./app/push-default";
 import { formatCalendarDate } from "./handlers/calendar-handler";
 import { triageUnreadInbox, type InboxTriageSummary } from "./inbox-triage";
 
@@ -223,7 +223,7 @@ export function formatMorningBrief(data: MorningBriefData): string {
   return lines.join("\n").trim();
 }
 
-export async function sendMorningBrief(chatId?: number): Promise<string> {
+export async function sendMorningBrief(chatId?: number, opts?: ProactiveSendOptions): Promise<string> {
   const targetChatId = chatId ?? Number(process.env.TELEGRAM_ALLOWED_USER_ID);
   if (!targetChatId) {
     throw new Error("No recipient chatId provided or TELEGRAM_ALLOWED_USER_ID configured.");
@@ -232,7 +232,7 @@ export async function sendMorningBrief(chatId?: number): Promise<string> {
   const data = await aggregateMorningBrief();
   const text = formatMorningBrief(data);
   await sendTelegramMessage(targetChatId, text);
-  await pushOwnerDefault("Morning brief", text);
+  await pushIfProactive(opts, "Morning brief", text);
   return text;
 }
 
@@ -332,7 +332,7 @@ export function formatEveningRecap(data: EveningRecapData): string {
   return lines.join("\n").trim();
 }
 
-export async function sendEveningRecap(chatId?: number): Promise<string> {
+export async function sendEveningRecap(chatId?: number, opts?: ProactiveSendOptions): Promise<string> {
   const targetChatId = chatId ?? Number(process.env.TELEGRAM_ALLOWED_USER_ID);
   if (!targetChatId) {
     throw new Error("No recipient chatId provided or TELEGRAM_ALLOWED_USER_ID configured.");
@@ -342,7 +342,7 @@ export async function sendEveningRecap(chatId?: number): Promise<string> {
   const text = formatEveningRecap(data);
 
   await sendTelegramMessage(targetChatId, text);
-  await pushOwnerDefault("Evening recap", text);
+  await pushIfProactive(opts, "Evening recap", text);
   return text;
 }
 
@@ -470,7 +470,7 @@ export function formatWeeklyReport(data: WeeklyReportData): string {
   return lines.join("\n").trim();
 }
 
-export async function sendWeeklyReport(chatId?: number): Promise<string> {
+export async function sendWeeklyReport(chatId?: number, opts?: ProactiveSendOptions): Promise<string> {
   const targetChatId = chatId ?? Number(process.env.TELEGRAM_ALLOWED_USER_ID);
   if (!targetChatId) {
     throw new Error("No recipient chatId provided or TELEGRAM_ALLOWED_USER_ID configured.");
@@ -479,6 +479,6 @@ export async function sendWeeklyReport(chatId?: number): Promise<string> {
   const data = await aggregateWeeklyReport();
   const text = formatWeeklyReport(data);
   await sendTelegramMessage(targetChatId, text);
-  await pushOwnerDefault("Weekly report", text);
+  await pushIfProactive(opts, "Weekly report", text);
   return text;
 }

@@ -1,5 +1,5 @@
 import { sendTelegramMessage } from "../telegram";
-import { pushOwnerDefault } from "../app/push-default";
+import { pushIfProactive } from "../app/push-default";
 import { getDayPlan } from "./ph3-program";
 import { applyEdits } from "./plan-edits";
 import { clearRestTimer, loadRestTimer } from "./rest-timer-store";
@@ -44,6 +44,6 @@ export async function fireDueRestTimer(): Promise<RestTimerResult> {
   const plan = applyEdits(await planPromise, session.edits ?? []);
   const restText = ["⏱ *Rest is over — you're up.*", "", buildSetPrompt(plan, session.exIdx, session.setIdx)].join("\n");
   await sendTelegramMessage(timer.chatId, restText, buildWorkoutActiveInlineKeyboard());
-  await pushOwnerDefault("Rest is over", restText);
+  await pushIfProactive({ push: true }, "Rest is over", restText);
   return "sent";
 }

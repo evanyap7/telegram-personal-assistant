@@ -10,7 +10,9 @@
 import { SESSION_COOKIE, signSession } from "../lib/app/auth";
 import { initialAvatarState, reduceAvatar, type AvatarEvent } from "../lib/app/avatar-state";
 import { CHUNK_CHARS, FIRST_CHUNK_CHARS, ON_SCREEN_LINE, SPEECH_MAX_CHARS, cleanSpeechText, splitSpeechChunks } from "../lib/app/speech-text";
-import { handleSpeakPost, synthesize, type SpeakDeps } from "../lib/app/tts";
+import { SPEAK_LIMIT_PER_MIN } from "../lib/app/rate-limit";
+import { resetRateLimits } from "../lib/app/rate-limit";
+import { SPEAK_MAX_INPUT_CHARS, handleSpeakPost, synthesize, type SpeakDeps } from "../lib/app/tts";
 
 let passed = 0;
 let failed = 0;
@@ -148,6 +150,7 @@ async function testRoute() {
   assert((await handleSpeakPost(speakRequest({ body: body(42) }), deps)).status === 400, "non-string text -> 400");
   assert((await handleSpeakPost(speakRequest({ body: body("🍜 🎉") }), deps)).status === 400, "emoji-only text -> 400");
   assert((await handleSpeakPost(speakRequest({ body: body("") }), deps)).status === 400, "empty text -> 400");
+  assert((await handleSpeakPost(speakRequest({ body: body("a".repeat(SPEAK_MAX_INPUT_CHARS + 1)) }), deps)).status === 413, "text over the speak cap -> 413 before synthesis");
   assert((await handleSpeakPost(speakRequest({ body: body("a".repeat(4001)) }), deps)).status === 413, "text over MAX_INPUT_CHARS -> 413");
   assert((await handleSpeakPost(speakRequest({ body: JSON.stringify({ text: "a", pad: "b".repeat(40_000) }) }), deps)).status === 413, "body over the cap -> 413");
   assert(spoken.length === 0, "rejected requests never synthesize");
@@ -157,8 +160,22 @@ async function testRoute() {
   assert(spoken[0] === "Logged $14", "synthesizer receives the cleaned text", spoken);
   assert((await ok.arrayBuffer()).byteLength === 4, "body is the WAV bytes");
 
-  const long = await handleSpeakPost(speakRequest({ body: body("Sentence one is here. ".repeat(100)) }), deps);
-  assert(long.status === 200 && spoken[1].length <= SPEECH_MAX_CHARS, "long text is cut before synthesis");
+  // Per-session rate limit: the first SPEAK_LIMIT_PER_MIN calls pass, the next is 429 without synthesizing.
+  resetRateLimits();
+  const sameCookie = `${SESSION_COOKIE}=${signSession(SECRET, Date.now())}`; // one browser session
+  const before = spoken.length;
+  let allowed = 0;
+  for (let i = 0; i < SPEAK_LIMIT_PER_MIN; i++) {
+    if ((await handleSpeakPost(speakRequest({ cookie: sameCookie, body: body("hello there") }), deps)).status === 200) allowed++;
+  }
+  assert(allowed === SPEAK_LIMIT_PER_MIN, "calls up to the limit are allowed", allowed);
+  const limited = await handleSpeakPost(speakRequest({ cookie: sameCookie, body: body("hello there") }), deps);
+  assert(limited.status === 429 && spoken.length === before + SPEAK_LIMIT_PER_MIN, "call over the limit -> 429, no synthesis");
+  assert((await handleSpeakPost(speakRequest({ cookie: null, body: body("hi") }), deps)).status === 401, "unauthenticated is 401, not counted");
+  resetRateLimits();
+
+  const long = await handleSpeakPost(speakRequest({ body: body("Sentence one is here. ".repeat(40)) }), deps);
+  assert(long.status === 200 && spoken[spoken.length - 1].length <= SPEECH_MAX_CHARS, "long text is cut before synthesis");
 
   fail = true;
   const err = await handleSpeakPost(speakRequest({ body: body("hello") }), deps);

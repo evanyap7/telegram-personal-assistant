@@ -2,6 +2,7 @@ import { requireOwner } from "./auth";
 import { VOICE_MAX_BYTES, VOICE_MIN_SAMPLES_16K, parseWav, samplesAt16k } from "./audio";
 import type { AppEvent } from "./events";
 import { isValidRequestId, jsonError, readCappedBytes, sseResponse } from "./http";
+import { VOICE_LIMIT_PER_MIN, rateLimited } from "./rate-limit";
 import { ERROR_REPLY } from "./turn";
 
 // The voice endpoint's logic, with the model call and the turn injected so the request
@@ -25,6 +26,8 @@ export interface VoiceDeps {
 export async function handleVoicePost(request: Request, deps: VoiceDeps): Promise<Response> {
   const denied = requireOwner(request);
   if (denied) return denied;
+  const limited = rateLimited(request, "voice", VOICE_LIMIT_PER_MIN);
+  if (limited) return limited;
 
   const contentType = request.headers.get("content-type") ?? "";
   if (!/^multipart\/form-data\s*;/i.test(contentType)) return jsonError(415, "Unsupported Media Type");

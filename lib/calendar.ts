@@ -1,7 +1,7 @@
 import { getCalendarId } from "./calendars";
 import { getCalendarClient } from "./google";
 import { sendTelegramMessage } from "./telegram";
-import { pushOwnerDefault } from "./app/push-default";
+import { pushIfProactive, type ProactiveSendOptions } from "./app/push-default";
 
 export type TimedCalendarEventInput = {
   calendarName: "personal" | "work";
@@ -762,7 +762,7 @@ export type ReminderCheckResult = {
   }>;
 };
 
-export async function checkAndSendEventReminders(): Promise<ReminderCheckResult> {
+export async function checkAndSendEventReminders(opts?: ProactiveSendOptions): Promise<ReminderCheckResult> {
   const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
   if (!allowedUserId) {
     throw new Error("TELEGRAM_ALLOWED_USER_ID is missing.");
@@ -870,7 +870,7 @@ export async function checkAndSendEventReminders(): Promise<ReminderCheckResult>
             .join("\n");
 
           await sendTelegramMessage(allowedUserId, message);
-          await pushOwnerDefault(`Upcoming: ${item.summary}`, message);
+          await pushIfProactive(opts, `Upcoming: ${item.summary}`, message);
 
           // Mark as reminded on the event itself so we never notify twice
           await calendar.events.patch({

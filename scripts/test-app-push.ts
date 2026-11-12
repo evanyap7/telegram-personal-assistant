@@ -7,7 +7,9 @@
  */
 
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 import { SESSION_COOKIE, signSession } from "../lib/app/auth";
+import { pushIfProactive } from "../lib/app/push-default";
 import { pushOwner, safeEgoUrl, type PushDeps, type StoredSubscription } from "../lib/app/push";
 import { AUTH_BYTES, P256DH_BYTES, validEndpoint, validKey } from "../lib/app/push-validate";
 import { GET, POST, runtime } from "../app/api/ego/push/route";
@@ -216,12 +218,64 @@ async function main() {
   assert(validKey(KEY65, P256DH_BYTES) && validKey(KEY16, AUTH_BYTES), "validKey accepts exact lengths");
   assert(!validKey(KEY16, P256DH_BYTES) && !validKey("a b", AUTH_BYTES) && !validKey("", AUTH_BYTES) && !validKey(7, AUTH_BYTES), "validKey rejects wrong length/charset/type");
 
+  console.log("on-demand vs proactive push");
+  {
+    const env = process.env as Record<string, string | undefined>;
+    const saved = { k: env.VAPID_PUBLIC_KEY, p: env.VAPID_PRIVATE_KEY, s: env.VAPID_SUBJECT };
+    env.VAPID_PUBLIC_KEY = "PUB";
+    env.VAPID_PRIVATE_KEY = "PRIV";
+    env.VAPID_SUBJECT = "mailto:owner@example.com";
+    const on = fakes([sub(1), sub(2)]);
+    await pushIfProactive(undefined, "Morning brief", "text", undefined, on.deps);
+    await pushIfProactive({}, "Morning brief", "text", undefined, on.deps);
+    assert(on.sent.length === 0, "on-demand send (no push flag) does not push", on.sent);
+    const cron = fakes([sub(1), sub(2)]);
+    await pushIfProactive({ push: true }, "Morning brief", "text", undefined, cron.deps);
+    assert(cron.sent.length === 2, "cron send ({ push: true }) pushes to every device", cron.sent);
+    // Cron entry points must opt in explicitly.
+    const briefing = readFileSync("app/api/cron/briefing/route.ts", "utf-8");
+    const reminders = readFileSync("app/api/cron/calendar-reminders/route.ts", "utf-8");
+    assert((briefing.match(/\{ push: true \}/g) ?? []).length === 3, "briefing cron passes push: true for all three briefs");
+    assert(reminders.includes("checkAndSendEventReminders({ push: true })") && reminders.includes("checkAndSendTodoReminders({ push: true })"), "reminder cron passes push: true");
+    const router = readFileSync("lib/telegram/command-router.ts", "utf-8");
+    const dispatcher = readFileSync("lib/handlers/dispatcher.ts", "utf-8");
+    assert(!/push:\s*true/.test(router) && !/push:\s*true/.test(dispatcher), "on-demand callers never opt in to push");
+    for (const [k, v] of [["VAPID_PUBLIC_KEY", saved.k], ["VAPID_PRIVATE_KEY", saved.p], ["VAPID_SUBJECT", saved.s]] as const) {
+      if (v === undefined) delete env[k];
+      else env[k] = v;
+    }
+  }
+
   console.log("service worker");
   const sw = readFileSync("public/sw.js", "utf-8");
-  assert(sw.includes('addEventListener("push"') && sw.includes("showNotification"), "sw handles push");
-  assert(sw.includes('addEventListener("notificationclick"') && sw.includes("openWindow") && sw.includes(".focus()"), "sw handles notificationclick");
-  assert(sw.includes("/icons/icon-192.png"), "sw notification icon is icon-192");
-  assert(/const CACHE = "ego-shell-v\d+"/.test(sw), "sw cache logic intact");
+  // Run the real handlers in a vm with a stubbed self, and check what they do.
+  const listeners: Record<string, (e: Record<string, unknown>) => void> = {};
+  const shown: { title: string; opts: { body: string; icon: string; data: { url: string } } }[] = [];
+  const opened: string[] = [];
+  const self = {
+    location: { origin: "https://ego.example.com" },
+    addEventListener: (t: string, fn: (e: Record<string, unknown>) => void) => void (listeners[t] = fn),
+    registration: {
+      showNotification: async (title: string, opts: (typeof shown)[number]["opts"]) => void shown.push({ title, opts }),
+    },
+    clients: { matchAll: async () => [], openWindow: async (u: string) => void opened.push(u), claim: async () => {} },
+  };
+  vm.runInNewContext(sw, { self, caches: {}, fetch: async () => ({}), URL, Response, console });
+  const waits: Promise<unknown>[] = [];
+  const waitUntil = (p: Promise<unknown>) => void waits.push(p);
+  listeners.push({ data: { json: () => ({ title: "Hi", body: "There", url: "/ego?x=1" }) }, waitUntil });
+  listeners.push({ data: { json: () => ({ title: "", body: 5, url: "https://evil.example.com" }) }, waitUntil });
+  listeners.push({ data: { json: () => { throw new Error("bad json"); } }, waitUntil });
+  await Promise.all(waits);
+  assert(shown.length === 3, "push handler shows a notification per push", shown.length);
+  assert(shown[0].title === "Hi" && shown[0].opts.body === "There" && shown[0].opts.data.url === "/ego?x=1", "push payload is used", shown[0]);
+  assert(shown[0].opts.icon === "/icons/icon-192.png", "notification icon is icon-192");
+  assert(shown[1].title === "EGO" && shown[1].opts.data.url === "/ego", "bad title and off-site url fall back", shown[1]);
+  assert(shown[2].title === "EGO" && shown[2].opts.data.url === "/ego", "malformed payload falls back", shown[2]);
+  const closed: boolean[] = [];
+  listeners.notificationclick({ notification: { close: () => void closed.push(true), data: { url: "//evil.example.com" } }, waitUntil });
+  await Promise.all(waits);
+  assert(closed.length === 1 && opened[0] === "/ego", "notificationclick closes and opens a safe /ego url", opened);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

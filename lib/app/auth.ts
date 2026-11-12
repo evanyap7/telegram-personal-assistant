@@ -52,7 +52,7 @@ export function isSameOrigin(request: Request): boolean {
   }
 }
 
-function readCookie(request: Request, name: string): string | undefined {
+export function readCookie(request: Request, name: string): string | undefined {
   const header = request.headers.get("cookie");
   if (!header) return undefined;
   for (const part of header.split(";")) {

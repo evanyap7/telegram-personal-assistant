@@ -44,11 +44,11 @@ export async function GET(req: NextRequest) {
   try {
     let resultText = "";
     if (type === "morning") {
-      resultText = await sendMorningBrief();
+      resultText = await sendMorningBrief(undefined, { push: true });
     } else if (type === "evening") {
-      resultText = await sendEveningRecap();
+      resultText = await sendEveningRecap(undefined, { push: true });
     } else if (type === "weekly") {
-      resultText = await sendWeeklyReport();
+      resultText = await sendWeeklyReport(undefined, { push: true });
     } else {
       return NextResponse.json(
         { ok: false, error: `Invalid briefing type: ${type}` },

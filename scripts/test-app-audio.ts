@@ -17,6 +17,7 @@ import {
 } from "../lib/app/audio";
 import { SESSION_COOKIE, signSession } from "../lib/app/auth";
 import type { AppEvent } from "../lib/app/events";
+import { VOICE_LIMIT_PER_MIN, resetRateLimits } from "../lib/app/rate-limit";
 import { NOTHING_HEARD, handleVoicePost, type VoiceDeps } from "../lib/app/voice";
 
 let passed = 0;
@@ -149,6 +150,7 @@ async function testRoute() {
   assert(route.runtime === "nodejs" && route.maxDuration === 120, "route: nodejs runtime, maxDuration 120");
 
   let c = freshCalls();
+  resetRateLimits();
   assert((await handleVoicePost(voiceRequest({ cookie: null }), deps("hi", c))).status === 401, "no cookie -> 401");
   assert((await handleVoicePost(voiceRequest({ cookie: `${SESSION_COOKIE}=garbage` }), deps("hi", c))).status === 401, "bad cookie -> 401");
   assert((await handleVoicePost(voiceRequest({ origin: "https://evil.example.com" }), deps("hi", c))).status === 403, "wrong Origin -> 403");
@@ -178,6 +180,7 @@ async function testRoute() {
   );
   assert(c.transcribed === 0, "oversized requests never transcribe");
 
+  resetRateLimits();
   assert((await handleVoicePost(voiceRequest({ requestId: "bad id;" }), deps("hi", c))).status === 400, "bad requestId -> 400");
   assert((await handleVoicePost(voiceRequest({ requestId: null }), deps("hi", c))).status === 400, "missing requestId -> 400");
   assert((await handleVoicePost(voiceRequest({ audio: null }), deps("hi", c))).status === 400, "missing audio -> 400");
@@ -207,6 +210,7 @@ async function testRoute() {
 
   // Empty transcript.
   c = freshCalls();
+  resetRateLimits();
   ev = await frames(await handleVoicePost(voiceRequest({}), deps("   ", c)));
   assert(ev.some((e) => e.type === "error" && e.message === NOTHING_HEARD), "empty transcript -> 'couldn't hear anything' error", ev);
   assert(c.transcribed === 1 && c.turns.length === 0, "empty transcript: transcribed once, no turn");
@@ -226,6 +230,17 @@ async function testRoute() {
   assert(ev.findIndex((e) => e.type === "message") > ti && ev.at(-1)?.type === "done", "transcript precedes the turn's events");
   assert(c.turns.length === 1 && c.turns[0].text === "add lunch 12.50" && c.turns[0].requestId === REQUEST_ID, "turn runs with the transcript and requestId");
   assert(c.kept === 1, "run promise is handed to keepAlive");
+
+  // Per-session rate limit: over the limit -> 429 before transcription.
+  resetRateLimits();
+  c = freshCalls();
+  const sameCookie = `${SESSION_COOKIE}=${signSession(SECRET, Date.now())}`; // one browser session
+  for (let i = 0; i < VOICE_LIMIT_PER_MIN; i++) {
+    await (await handleVoicePost(voiceRequest({ cookie: sameCookie, audio: encodeWav(tone(VOICE_MIN_SAMPLES_16K - 1), 16000) }), deps("hi", c))).text();
+  }
+  const limited = await handleVoicePost(voiceRequest({ cookie: sameCookie }), deps("hi", c));
+  assert(limited.status === 429 && c.transcribed === 0, "voice over the limit -> 429, nothing transcribed");
+  resetRateLimits();
 }
 
 async function main() {

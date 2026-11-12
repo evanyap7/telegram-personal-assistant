@@ -13,8 +13,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const [eventResult, todoResult, leaveNowSent] = await Promise.all([
-      checkAndSendEventReminders(),
-      checkAndSendTodoReminders(),
+      checkAndSendEventReminders({ push: true }),
+      checkAndSendTodoReminders({ push: true }),
       checkAndSendLeaveNowAlerts(),
     ]);
 

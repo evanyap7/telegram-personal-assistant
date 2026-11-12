@@ -40,11 +40,21 @@ function plain(text: string): string {
  * never throws. Inside a request it is handed to after(), so it neither delays the response
  * nor is cut off by it; elsewhere it is awaited.
  */
-export async function pushOwnerDefault(title: string, body: string, url?: string): Promise<void> {
+export async function pushOwnerDefault(
+  title: string,
+  body: string,
+  url?: string,
+  deps?: PushDeps
+): Promise<void> {
   try {
     const cfg = vapidConfig();
     if (!cfg) return;
-    const run = () => pushOwner(defaultDeps(cfg), title, plain(body), url);
+    const run = () => pushOwner(deps ?? defaultDeps(cfg), title, plain(body), url);
+    if (deps) {
+      // Injected deps (tests): run inline so the caller can observe the result.
+      await run();
+      return;
+    }
     try {
       const { after } = await import("next/server");
       after(run);
@@ -55,4 +65,25 @@ export async function pushOwnerDefault(title: string, body: string, url?: string
   } catch {
     // Never break the Telegram path.
   }
+}
+
+/** Options for sends that can run from a cron (proactive) or on demand. */
+export interface ProactiveSendOptions {
+  /** True only from cron entry points. On-demand callers leave it unset, so no push fires. */
+  push?: boolean;
+}
+
+/**
+ * Pushes only when the caller marked the send as proactive. A message the owner asked for
+ * ("give me my brief", "/reminders") already reached them in the channel they asked from.
+ */
+export async function pushIfProactive(
+  opts: ProactiveSendOptions | undefined,
+  title: string,
+  body: string,
+  url?: string,
+  deps?: PushDeps
+): Promise<void> {
+  if (!opts?.push) return;
+  await pushOwnerDefault(title, body, url, deps);
 }
