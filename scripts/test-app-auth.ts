@@ -104,6 +104,19 @@ async function main() {
     assert(badOrigin.status === 403, "login with bad Origin -> 403");
     const malformed = await login(req({ origin: `https://${HOST}`, body: "nope" }) as never);
     assert(malformed.status === 401, "non-object body -> 401");
+    const raw = (ct: string | null, body: string) =>
+      new Request(`https://${HOST}/api/ego/login`, {
+        method: "POST",
+        headers: { host: HOST, origin: `https://${HOST}`, ...(ct ? { "content-type": ct } : {}) },
+        body,
+      });
+    const body = JSON.stringify({ token: TOKEN });
+    assert((await login(raw("text/plain", body) as never)).status === 415, "wrong content-type -> 415");
+    assert((await login(raw(null, body) as never)).status === 415, "missing content-type -> 415");
+    const huge = JSON.stringify({ token: "x".repeat(2000) });
+    assert((await login(raw("application/json", huge) as never)).status === 413, "oversized body -> 413");
+    const cs = await login(raw("application/json; charset=utf-8", body) as never);
+    assert(cs.status === 200, "JSON with charset suffix still logs in");
     env.NODE_ENV = "production";
     const prod = await login(req({ origin: `https://${HOST}`, body: { token: TOKEN } }) as never);
     assert(/secure/i.test(prod.headers.get("set-cookie") ?? ""), "Secure in production");
