@@ -7,6 +7,8 @@ import { RecorderError, startRecording, type Recording } from "./recorder";
 
 /** Auto-stop, so a stuck button cannot record past the upload cap (60 s is about 1.9 MB). */
 const MAX_HOLD_MS = 60_000;
+/** Longest wait for the microphone to open; the permission prompt gets generous room. */
+const START_TIMEOUT_MS = 20_000;
 
 export default function HoldToTalk({
   disabled,
@@ -66,7 +68,21 @@ export default function HoldToTalk({
     setMessage(null);
     let rec: Recording;
     try {
-      rec = await startRecording();
+      // Safety net: if the microphone never opens, say so instead of sitting silent.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const opening = startRecording();
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // A recorder that opens after giving up must not keep the microphone.
+          opening.then((late) => late.cancel(), () => undefined);
+          reject(new RecorderError("failed", "timeout"));
+        }, START_TIMEOUT_MS);
+      });
+      try {
+        rec = await Promise.race([opening, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
       phase.current = "idle";
       if (!mounted.current) return;

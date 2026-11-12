@@ -45,6 +45,23 @@ export function recordingSupported(): boolean {
   );
 }
 
+/** Rejects if the promise has not settled in `ms`: some iOS audio calls hang instead of failing. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout")), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
 /** Starts capturing. Rejects with a RecorderError; nothing stays open on failure. */
 export async function startRecording(): Promise<Recording> {
   const Ctor = audioContextCtor();
@@ -113,7 +130,7 @@ export async function startRecording(): Promise<Recording> {
     if (ctx.audioWorklet && typeof AudioWorkletNode !== "undefined") {
       try {
         workletUrl = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: "application/javascript" }));
-        await ctx.audioWorklet.addModule(workletUrl);
+        await withTimeout(ctx.audioWorklet.addModule(workletUrl), 1500);
         const worklet = new AudioWorkletNode(ctx, "ego-capture", { numberOfOutputs: 0 });
         worklet.port.onmessage = (e: MessageEvent<Float32Array>) => chunks.push(e.data);
         source.connect(worklet);
