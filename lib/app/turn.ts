@@ -111,7 +111,8 @@ export function createAppChannel(
   };
 }
 
-const ERROR_REPLY = "Something went wrong on my side. Please try again.";
+/** The generic, detail-free message an app error event carries. */
+export const ERROR_REPLY = "Something went wrong on my side. Please try again.";
 
 /**
  * Runs one app turn and streams its events. Mirrors the Telegram webhook: dedupe on the
