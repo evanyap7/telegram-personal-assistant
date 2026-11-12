@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { AvatarEvent } from "@/lib/app/avatar-state";
-import { cleanSpeechText } from "@/lib/app/speech-text";
+import { cleanSpeechText, splitSpeechChunks } from "@/lib/app/speech-text";
 
 const LEVEL_HZ = 30;
+/** A context the browser will not start (no gesture) must not wedge the queue. */
+const RESUME_TIMEOUT_MS = 2000;
 /** Speech RMS sits around 0.05 to 0.25; this brings it to the avatar's 0..1 range. */
 const LEVEL_GAIN = 4;
 
@@ -20,8 +22,9 @@ interface Player {
 /**
  * Plays EGO's replies aloud, one after another in the order they were queued, and feeds the
  * output level to the avatar. Each reply is fetched as soon as it is queued so the next one
- * is ready when the current one ends. `levelRef` is read by Avatar; `level` events go to the
- * avatar state at about 30 Hz. Browsers only start audio after a user gesture, so call
+ * is ready when the current one ends. A reply is split into sentence chunks so the first
+ * sound does not wait for the whole reply to be synthesized. `levelRef` is read by Avatar,
+ * updated at about 30 Hz. Browsers only start audio after a user gesture, so call
  * `unlock()` from the tap or key press that starts a turn.
  */
 export function useSpeech(dispatch: (e: AvatarEvent) => void) {
@@ -54,7 +57,6 @@ export function useSpeech(dispatch: (e: AvatarEvent) => void) {
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
       const level = Math.min(1, Math.sqrt(sum / buf.length) * LEVEL_GAIN);
       levelRef.current = level;
-      dispatchRef.current({ type: "level", value: level });
     }, 1000 / LEVEL_HZ);
   }, []);
 
@@ -92,7 +94,13 @@ export function useSpeech(dispatch: (e: AvatarEvent) => void) {
       const player = ensurePlayer();
       if (!bytes || !player) continue;
       try {
-        await player.ctx.resume();
+        await Promise.race([
+          player.ctx.resume(),
+          new Promise<void>((resolve) => setTimeout(resolve, RESUME_TIMEOUT_MS)),
+        ]);
+        if (generation !== generationRef.current) return;
+        // Still suspended: skip this reply rather than wait for a gesture that is not coming.
+        if (player.ctx.state !== "running") continue;
         const buffer = await player.ctx.decodeAudioData(bytes);
         if (generation !== generationRef.current) return;
         const source = player.ctx.createBufferSource();
@@ -125,26 +133,36 @@ export function useSpeech(dispatch: (e: AvatarEvent) => void) {
   /** Queues a reply for speech. Text with nothing speakable is ignored. Returns whether it was queued. */
   const enqueue = useCallback(
     (text: string): boolean => {
-      if (!cleanSpeechText(text)) return false;
+      const chunks = splitSpeechChunks(cleanSpeechText(text));
+      if (chunks.length === 0) return false;
       if (!abortRef.current) abortRef.current = new AbortController();
       const signal = abortRef.current.signal;
-      const audio = fetch("/api/ego/speak", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-        signal,
-      })
-        .then((res) => (res.ok ? res.arrayBuffer() : null))
-        .catch(() => null);
-      queueRef.current.push({ audio });
+      // Every chunk is requested now (a few small calls); playback order is the queue order.
+      for (const chunk of chunks) {
+        const audio = fetch("/api/ego/speak", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: chunk }),
+          signal,
+        })
+          .then((res) => (res.ok ? res.arrayBuffer() : null))
+          .catch(() => null);
+        queueRef.current.push({ audio });
+      }
       void pump();
       return true;
     },
     [pump]
   );
 
-  /** Stops playback and drops anything queued. Does nothing when EGO is not speaking. */
-  const stop = useCallback(() => {
+  /** Whether anything is playing or waiting to play. */
+  const isActive = useCallback(() => playingRef.current || queueRef.current.length > 0, []);
+
+  /**
+   * Stops playback and drops anything queued; does nothing when EGO is not speaking.
+   * `settle: false` leaves a thinking avatar thinking (a server turn is still running).
+   */
+  const stop = useCallback((opts?: { settle?: boolean }) => {
     if (!playingRef.current && queueRef.current.length === 0) return;
     generationRef.current++;
     abortRef.current?.abort();
@@ -164,7 +182,7 @@ export function useSpeech(dispatch: (e: AvatarEvent) => void) {
     stopLevel();
     startedRef.current = false;
     dispatchRef.current({ type: "speech_interrupted" });
-    dispatchRef.current({ type: "speech_abandoned" });
+    if (opts?.settle !== false) dispatchRef.current({ type: "speech_abandoned" });
   }, [stopLevel]);
 
   useEffect(() => {
@@ -177,8 +195,9 @@ export function useSpeech(dispatch: (e: AvatarEvent) => void) {
       abort.current?.abort();
       clearInterval(timer.current);
       void player.current?.ctx.close().catch(() => undefined);
+      player.current = null;
     };
   }, []);
 
-  return { levelRef, enqueue, stop, unlock };
+  return { levelRef, enqueue, isActive, stop, unlock };
 }

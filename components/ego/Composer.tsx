@@ -9,7 +9,9 @@ export default function Composer({
   onSend,
   onVoice,
   dispatchAvatar,
+  onGesture,
 }: {
+  onGesture?: () => void;
   busy: boolean;
   onSend(text: string): void;
   onVoice(audio: Blob): void;
@@ -57,7 +59,7 @@ export default function Composer({
           Send
         </button>
       ) : (
-        <HoldToTalk disabled={busy} onVoice={onVoice} dispatchAvatar={dispatchAvatar} />
+        <HoldToTalk disabled={busy} onVoice={onVoice} dispatchAvatar={dispatchAvatar} onGesture={onGesture} />
       )}
     </form>
   );

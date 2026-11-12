@@ -21,7 +21,7 @@ export async function synthesize(text: string, fetchImpl: FetchLike = fetch): Pr
   const key = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!key) throw new Error("GOOGLE_GENERATIVE_AI_API_KEY is missing.");
   const res = await fetchImpl(
-    `https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:streamGenerateContent?alt=sse`,
     {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
@@ -35,13 +35,29 @@ export async function synthesize(text: string, fetchImpl: FetchLike = fetch): Pr
     }
   );
   if (!res.ok) throw new Error(`Gemini TTS failed with status ${res.status}`);
-  const body = (await res.json()) as TtsResponse;
-  const inline = body.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
-  if (!inline?.data) throw new Error("Gemini TTS returned no audio.");
-  const pcm = Buffer.from(inline.data, "base64");
+  // The streaming endpoint is used even though the whole reply is read here: measured, it
+  // finishes a short chunk in about 2.3 s against 3.7 s for generateContent.
+  const parts: Buffer[] = [];
+  let mimeType: string | undefined;
+  for (const line of (await res.text()).split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    let event: TtsResponse;
+    try {
+      event = JSON.parse(line.slice(5)) as TtsResponse;
+    } catch {
+      continue;
+    }
+    for (const part of event.candidates?.[0]?.content?.parts ?? []) {
+      if (!part.inlineData?.data) continue;
+      mimeType ??= part.inlineData.mimeType;
+      parts.push(Buffer.from(part.inlineData.data, "base64"));
+    }
+  }
+  if (parts.length === 0) throw new Error("Gemini TTS returned no audio.");
+  const pcm = Buffer.concat(parts);
   const samples = new Float32Array(Math.floor(pcm.length / 2));
   for (let i = 0; i < samples.length; i++) samples[i] = pcm.readInt16LE(i * 2) / 32768;
-  const rate = Number(/rate=(\d+)/.exec(inline.mimeType ?? "")?.[1]) || DEFAULT_RATE;
+  const rate = Number(/rate=(\d+)/.exec(mimeType ?? "")?.[1]) || DEFAULT_RATE;
   return { wav: encodeWav(samples, rate) };
 }
 

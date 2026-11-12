@@ -32,6 +32,8 @@ export interface EgoChat {
   setSpeakerOn(on: boolean): void;
   /** Stops speech if EGO is speaking (a tap on the avatar). */
   stopSpeech(): void;
+  /** Prepares audio output; call synchronously from a press or tap. */
+  unlockSpeech(): void;
   busy: boolean;
   toast: string | null;
 }
@@ -65,9 +67,8 @@ export function useEgoChat(): EgoChat {
   const [avatar, dispatchAvatar] = useReducer(reduceAvatar, initialAvatarState);
   const speakerOn = useSyncExternalStore(subscribeSpeaker, readSpeakerPref, () => false);
   const speakerRef = useRef(false);
-  // Whether this turn's replies are spoken, and whether any was queued (so thinking holds).
+  // Whether this turn's replies are spoken.
   const speakTurnRef = useRef(false);
-  const spokenRef = useRef(false);
   const speech = useSpeech(dispatchAvatar);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -80,10 +81,19 @@ export function useEgoChat(): EgoChat {
     speakerRef.current = speakerOn;
   }, [speakerOn]);
 
+  // A tap on the avatar. While a server turn is running the thinking visual stays; with no
+  // turn running, thinking that is waiting for speech that will never come is cleared.
+  const stopSpeech = useCallback(() => {
+    const turnRunning = busyRef.current;
+    if (turnRunning) speakTurnRef.current = false;
+    speech.stop({ settle: !turnRunning });
+    if (!turnRunning) dispatchAvatar({ type: "speech_abandoned" });
+  }, [speech]);
+
   const setSpeakerOn = useCallback(
     (on: boolean) => {
       speakerRef.current = on;
-      if (!on) speech.stop();
+      if (!on) stopSpeech();
       try {
         localStorage.setItem(SPEAKER_KEY, on ? "on" : "off");
       } catch {
@@ -91,13 +101,16 @@ export function useEgoChat(): EgoChat {
       }
       speakerListeners.forEach((l) => l());
     },
-    [speech]
+    [stopSpeech]
   );
 
   // Recording over EGO's own voice would capture it, so the mic stops speech first.
   const dispatchWithSpeech = useCallback(
     (e: AvatarEvent) => {
-      if (e.type === "listen_start") speech.stop();
+      if (e.type === "listen_start") {
+        speech.unlock();
+        speech.stop();
+      }
       dispatchAvatar(e);
     },
     [speech]
@@ -140,7 +153,7 @@ export function useEgoChat(): EgoChat {
               ? m
               : [...m, { key: `e-${e.id}`, id: e.id, role: "ego", text: e.text, buttons: e.buttons }]
           );
-          if (speakTurnRef.current && speech.enqueue(e.text)) spokenRef.current = true;
+          if (speakTurnRef.current) speech.enqueue(e.text);
           break;
         case "edit":
           setMessages((m) => m.map((x) => (x.id === e.id ? { ...x, text: e.text, buttons: e.buttons } : x)));
@@ -164,7 +177,7 @@ export function useEgoChat(): EgoChat {
           dispatchAvatar({ type: "turn_error" });
           break;
         case "done":
-          dispatchAvatar({ type: "turn_done", status: e.status, willSpeak: spokenRef.current });
+          dispatchAvatar({ type: "turn_done", status: e.status, willSpeak: speakTurnRef.current && speech.isActive() });
           break;
         default:
           break;
@@ -181,7 +194,6 @@ export function useEgoChat(): EgoChat {
       speech.stop();
       speech.unlock();
       speakTurnRef.current = payload instanceof FormData || speakerRef.current;
-      spokenRef.current = false;
       dispatchAvatar({ type: "request_sent" });
       const controller = new AbortController();
       abortRef.current = controller;
@@ -273,7 +285,8 @@ export function useEgoChat(): EgoChat {
     levelRef: speech.levelRef,
     speakerOn,
     setSpeakerOn,
-    stopSpeech: speech.stop,
+    stopSpeech,
+    unlockSpeech: speech.unlock,
     busy,
     toast,
   };

@@ -12,8 +12,11 @@ export default function HoldToTalk({
   disabled,
   onVoice,
   dispatchAvatar,
+  onGesture,
 }: {
   disabled: boolean;
+  /** Called synchronously on the press, while the user gesture is still valid. */
+  onGesture?: () => void;
   onVoice(audio: Blob): void;
   dispatchAvatar(e: AvatarEvent): void;
 }) {
@@ -127,6 +130,7 @@ export default function HoldToTalk({
         style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
         onPointerDown={(e) => {
           if (e.pointerType === "mouse" && e.button !== 0) return;
+          onGesture?.();
           void begin();
         }}
         onPointerUp={end}
@@ -136,6 +140,7 @@ export default function HoldToTalk({
         onKeyDown={(e) => {
           if (e.key === " " && !e.repeat) {
             e.preventDefault();
+            onGesture?.();
             void begin();
           }
         }}

@@ -87,6 +87,18 @@ Median time to first audio **1,059 ms** (min 764 ms, max 1,607 ms), under the
 full-response figure, which grows with the length of the reply (capped at 400
 characters). The time to first audio only applies if the response is streamed.
 
+**Follow-up (client sentence chunks).** The app now splits a reply into sentence
+chunks (the first about 100 characters, the rest up to 220) and requests each as
+its own `/api/ego/speak` call, so the first sound waits only for the first chunk.
+Measured on 2026-11-13, one generic 76-character sentence, 5 calls, whole
+response: `generateContent` 3,177 to 3,909 ms (median 3,673 ms);
+`streamGenerateContent` read to the end 2,180 to 2,621 ms (median 2,337 ms). The
+route therefore uses the streaming endpoint, and the expected wait for the first
+sound is about 2.3 s plus network and the orchestrator turn, whatever the reply
+length. Two caveats: the chunk requests run in parallel and may slow each other,
+and this was not measured end to end on a phone. Prosody can shift a little
+between chunks.
+
 ## Older figures this replaces
 
 Older copies of the README, CV and portfolio quote figures that these re-runs

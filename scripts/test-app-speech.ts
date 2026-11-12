@@ -9,7 +9,7 @@
 
 import { SESSION_COOKIE, signSession } from "../lib/app/auth";
 import { initialAvatarState, reduceAvatar, type AvatarEvent } from "../lib/app/avatar-state";
-import { ON_SCREEN_LINE, SPEECH_MAX_CHARS, cleanSpeechText } from "../lib/app/speech-text";
+import { CHUNK_CHARS, FIRST_CHUNK_CHARS, ON_SCREEN_LINE, SPEECH_MAX_CHARS, cleanSpeechText, splitSpeechChunks } from "../lib/app/speech-text";
 import { handleSpeakPost, synthesize, type SpeakDeps } from "../lib/app/tts";
 
 let passed = 0;
@@ -50,16 +50,42 @@ function testCleaning() {
   const noStops = "word ".repeat(200);
   const hard = cleanSpeechText(noStops);
   assert(hard.length <= SPEECH_MAX_CHARS && !hard.endsWith(" "), "no sentence end -> cut at a word boundary");
+  assert(cleanSpeechText("© 2026 Acme™ and Tide® 🎉") === "© 2026 Acme™ and Tide®", "(c), (R) and TM symbols are kept, emoji dropped");
+  assert(cleanSpeechText("Use (c) or a | b for choices") === "Use (c) or a | b for choices", "one pipe in prose is not a table");
+  assert(cleanSpeechText("Cost: a | b | c") === "Cost: a | b | c", "two pipes on one line are not a table");
+  assert(cleanSpeechText("|---|---|") === ON_SCREEN_LINE, "a separator row marks a table");
+  assert(cleanSpeechText("a | b\nc | d\ne | f") === ON_SCREEN_LINE, "three pipe lines are a table");
   const exact = "a".repeat(SPEECH_MAX_CHARS);
   assert(cleanSpeechText(exact) === exact, "exactly the limit is kept whole");
 }
 
-function pcmResponse(samples: number[], mimeType = "audio/L16;codec=pcm;rate=24000"): Response {
+function testChunks() {
+  const sentence = "This is one fairly ordinary sentence of speech.";
+  const text = Array.from({ length: 8 }, () => sentence).join(" ");
+  const chunks = splitSpeechChunks(text);
+  assert(chunks.join(" ") === text, "chunks rejoin to the original text");
+  assert(chunks.length > 1 && chunks[0].length <= FIRST_CHUNK_CHARS, "first chunk is short", chunks[0].length);
+  assert(chunks.slice(1).every((c) => c.length <= CHUNK_CHARS), "later chunks stay under the chunk size");
+  assert(chunks.every((c) => /[.!?]$/.test(c)), "every chunk ends at a sentence boundary");
+  assert(splitSpeechChunks("Short reply.").join("|") === "Short reply.", "a short reply is one chunk");
+  assert(splitSpeechChunks("Paid 14.50 today. Done!").join("|") === "Paid 14.50 today. Done!", "decimals are not sentence ends");
+  const long = "x".repeat(300) + ".";
+  assert(splitSpeechChunks(long + " Next.").length === 2 && splitSpeechChunks(long)[0] === long, "one long sentence stays whole");
+  assert(splitSpeechChunks("").length === 0, "empty -> no chunks");
+  assert(splitSpeechChunks(cleanSpeechText("Sentence one is here. ".repeat(100))).join(" ").length <= SPEECH_MAX_CHARS, "cut text chunks within the cap");
+}
+
+function pcmEvent(samples: number[], mimeType: string): string {
   const buf = Buffer.alloc(samples.length * 2);
   samples.forEach((v, i) => buf.writeInt16LE(v, i * 2));
-  return Response.json({
-    candidates: [{ content: { parts: [{ inlineData: { mimeType, data: buf.toString("base64") } }] } }],
-  });
+  const json = { candidates: [{ content: { parts: [{ inlineData: { mimeType, data: buf.toString("base64") } }] } }] };
+  return `data: ${JSON.stringify(json)}\r\n\r\n`;
+}
+
+/** A streamed reply: the PCM split over events, as the SSE endpoint sends it. */
+function pcmResponse(samples: number[], mimeType = "audio/L16;codec=pcm;rate=24000"): Response {
+  const mid = Math.ceil(samples.length / 2);
+  return new Response(pcmEvent(samples.slice(0, mid), mimeType) + pcmEvent(samples.slice(mid), mimeType));
 }
 
 async function testSynthesize() {
@@ -73,7 +99,8 @@ async function testSynthesize() {
   assert(String.fromCharCode(...wav.slice(0, 4)) === "RIFF", "synthesize returns a WAV");
   assert(view.getUint32(24, true) === 24000 && wav.length === 44 + 8, "rate from the mime type, 2 bytes per sample");
   assert(Math.abs(view.getInt16(46, true) - 16384) <= 1, "PCM samples round-trip");
-  assert(seen !== null && /gemini-.*tts:generateContent$/.test((seen as { url: string }).url), "calls the TTS model");
+  assert(Math.abs(view.getInt16(50, true) - 32767) <= 1 && wav.length === 44 + 8, "audio split over several events is joined in order");
+  assert(seen !== null && /gemini-.*tts:streamGenerateContent\?alt=sse$/.test((seen as { url: string }).url), "calls the TTS model");
   assert((seen as unknown as { key: string }).key === "test-key", "key sent in a header, not the URL");
   assert((seen as unknown as { body: string }).body.includes('"AUDIO"') && (seen as unknown as { body: string }).body.includes("Hello there"), "asks for audio of the text");
 
@@ -83,7 +110,7 @@ async function testSynthesize() {
   await synthesize("x", async () => new Response("no", { status: 500 })).catch(() => (threw = true));
   assert(threw, "HTTP failure throws");
   threw = false;
-  await synthesize("x", async () => Response.json({ candidates: [] })).catch(() => (threw = true));
+  await synthesize("x", async () => new Response("data: {\"candidates\":[]}\n\n")).catch(() => (threw = true));
   assert(threw, "no audio in the response throws");
 }
 
@@ -162,6 +189,17 @@ function testAvatar() {
   const speaking = run([{ type: "turn_done" }, { type: "speech_start" }]);
   assert(reduceAvatar(speaking, { type: "speech_abandoned" }) === speaking, "speech_abandoned leaves speaking alone");
   assert(reduceAvatar(speaking, { type: "request_sent" }) === speaking, "a repeated thinking event does not cut off speech");
+  // I2: a stale willSpeak:false (speech already finished) must not leave thinking stuck; and
+  // the tap recovery (speech_abandoned) clears a thinking that nothing will end.
+  const stuck = states([
+    { type: "request_sent" }, { type: "speech_start" }, { type: "speech_end" },
+    { type: "request_sent" }, { type: "turn_done", willSpeak: false },
+  ]);
+  assert(stuck[stuck.length - 1] === "idle", "turn_done without live speech ends thinking", stuck);
+  const held = run([{ type: "request_sent" }, { type: "turn_done", willSpeak: true }]);
+  assert(reduceAvatar(held, { type: "speech_abandoned" }).activity === "idle", "tap recovery clears held thinking");
+  const thinking = run([{ type: "request_sent" }]);
+  assert(reduceAvatar(thinking, { type: "speech_interrupted" }) === thinking, "speech_interrupted alone keeps a running turn thinking");
   assert(
     run([{ type: "speech_start" }, { type: "level", value: 0.5 }, { type: "speech_interrupted" }]).mouth === "closed",
     "speech_interrupted closes the mouth"
@@ -189,6 +227,8 @@ async function runAll() {
   console.log("\n🗣  Spoken replies\n");
   console.log("Speech text:");
   testCleaning();
+  console.log("Chunks:");
+  testChunks();
   console.log("Synthesize:");
   await testSynthesize();
   console.log("Speak route:");
