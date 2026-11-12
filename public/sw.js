@@ -1,7 +1,7 @@
 /* EGO service worker (scope /ego). Caches only static assets: /avatar/*.webp, /icons/*, /_next/static/*.
  * Never caches /api/* or HTML. Navigations are network-first and are never stored; on failure an inline
  * offline page is shown. Non-GET requests are not intercepted, so the login cookie flow is untouched. */
-const CACHE = "ego-shell-v1";
+const CACHE = "ego-shell-v2";
 const PRECACHE = ["/icons/icon-192.png", "/icons/icon-512.png"];
 
 const OFFLINE_HTML =
@@ -47,17 +47,24 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (!isStaticAsset(url)) return;
+  // Hashed /_next/static files are immutable (cache-first); unhashed avatar/icon files use stale-while-revalidate.
+  const immutable = url.pathname.startsWith("/_next/static/");
   event.respondWith(
-    caches.match(request).then(
-      (hit) =>
-        hit ||
-        fetch(request).then((res) => {
-          if (res.ok && res.status === 200) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(request, copy));
-          }
-          return res;
-        }),
-    ),
+    caches.open(CACHE).then(async (cache) => {
+      const hit = await cache.match(request);
+      if (hit && immutable) return hit;
+      const refresh = fetch(request).then((res) => {
+        if (res.ok && res.status === 200) {
+          const copy = res.clone();
+          event.waitUntil(cache.put(request, copy));
+        }
+        return res;
+      });
+      if (hit) {
+        event.waitUntil(refresh.catch(() => {}));
+        return hit;
+      }
+      return refresh;
+    }),
   );
 });

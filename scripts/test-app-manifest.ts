@@ -43,7 +43,9 @@ assert(sw.includes("caches.delete"), "old caches deleted on activate");
 assert(/request\.method\s*!==\s*["']GET["']/.test(sw), "non-GET requests are not intercepted");
 assert(sw.includes("/api/"), "sw refers to /api/ (bypass rule)");
 assert(sw.includes('mode === "navigate"') && sw.includes("EGO is offline"), "navigations are network-first with offline page");
-assert(!/cache\.put\([^)]*navigate/.test(sw), "navigation responses are not cached");
+const navStart = sw.indexOf('mode === "navigate"');
+const navBlock = sw.slice(navStart, sw.indexOf("return;", navStart));
+assert(navStart > 0 && navBlock.includes("fetch(request)") && !navBlock.includes("caches"), "navigation branch never touches the cache", navBlock);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
