@@ -1,0 +1,125 @@
+/* EGO app. Everything is scoped under .ego-root so the marketing page's styles are untouched. */
+.ego-root {
+  --bg: #f3f1f2;
+  --surface: #ffffff;
+  --ink: #1b1c2a;
+  --muted: #6a6b7c;
+  --navy: #1d2340;
+  --on-navy: #ffffff;
+  --accent: #7a1f3d;
+  --accent-ink: #ffffff;
+  --line: #e0dde0;
+  --bubble: #e9e6ea;
+  --ok: #2f8f5b;
+  --display: var(--font-fraunces), Georgia, serif;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 15px;
+}
+@media (prefers-color-scheme: dark) {
+  .ego-root {
+    --bg: #0f1220;
+    --surface: #171b2e;
+    --ink: #eceaf0;
+    --muted: #9a9bb0;
+    --navy: #0b0e1c;
+    --on-navy: #eceaf0;
+    --accent: #c4476e;
+    --line: #2a2f48;
+    --bubble: #222740;
+    --ok: #4fbf84;
+    color-scheme: dark;
+  }
+}
+
+.ego-root :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* App grid: stage on top, chat, composer pinned below. Two columns from 860px. */
+.ego-app {
+  height: 100dvh;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+@media (min-width: 860px) {
+  .ego-app {
+    grid-template-columns: 380px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: 32px;
+    padding-top: 24px;
+  }
+  .ego-stage { grid-row: 1 / 3; justify-content: center; }
+}
+
+.ego-stage { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.ego-frame {
+  position: relative;
+  width: min(56vw, 220px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--navy);
+  box-shadow: 0 0 0 3px var(--surface), 0 0 0 4px var(--line);
+  /* Own compositing layer so the breathing transform and opacity fades never repaint the page. */
+  isolation: isolate;
+}
+@media (min-width: 860px) { .ego-frame { width: 300px; } }
+
+/* Breathing is a slow, constant loop that is independent of state changes. */
+.ego-breathe { position: absolute; inset: 0; animation: ego-breathe 6s ease-in-out infinite; will-change: transform; }
+@keyframes ego-breathe { 50% { transform: scale(1.012); } }
+
+.ego-base { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; will-change: opacity; }
+.ego-region { position: absolute; overflow: hidden; pointer-events: none; will-change: opacity; }
+.ego-region img { position: absolute; max-width: none; object-fit: cover; }
+
+.ego-name { font-family: var(--display); font-size: 22px; letter-spacing: 0.01em; }
+.ego-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.ego-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: background-color 0.2s; }
+.s-listening .ego-dot { background: var(--accent); }
+.s-thinking .ego-dot { background: var(--accent); animation: ego-pulse 1s infinite; }
+.s-speaking .ego-dot { background: var(--ok); }
+@keyframes ego-pulse { 50% { opacity: 0.25; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ego-breathe, .s-thinking .ego-dot { animation: none; }
+}
+
+/* Conversation */
+.ego-chat { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; overscroll-behavior: contain; }
+.ego-empty { margin: auto; color: var(--muted); text-align: center; }
+.ego-msg { max-width: min(88%, 520px); padding: 10px 14px; border-radius: 16px; line-height: 1.45; background: var(--bubble); overflow-wrap: anywhere; }
+.ego-msg.me { align-self: flex-end; background: var(--navy); color: var(--on-navy); border-bottom-right-radius: 4px; }
+.ego-msg.bot { align-self: flex-start; border-bottom-left-radius: 4px; }
+.ego-text { white-space: pre-wrap; }
+.ego-msg b { font-weight: 600; }
+.ego-msg code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; padding: 1px 5px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.ego-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ego-btns button { font: inherit; font-size: 13px; min-height: 36px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.ego-btns button:first-child { border-color: var(--accent); color: var(--accent); }
+.ego-btns button:disabled { opacity: 0.5; cursor: default; }
+
+/* Composer */
+.ego-composer { display: flex; gap: 8px; align-items: center; }
+.ego-composer input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 12px 14px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.ego-round { flex: none; width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+.ego-round:disabled { opacity: 0.55; cursor: default; }
+
+.ego-toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 8px 14px; border-radius: 99px; background: var(--navy); color: var(--on-navy); font-size: 13px; }
+
+/* Login */
+.ego-login { height: 100dvh; max-width: 360px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+.ego-login .ego-name { text-align: center; font-size: 32px; margin-bottom: 12px; }
+.ego-login label { font-size: 13px; color: var(--muted); }
+.ego-login input { font: inherit; font-size: 16px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.ego-primary { font: inherit; font-weight: 600; padding: 12px; border-radius: 12px; border: 0; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+.ego-primary:disabled { opacity: 0.55; cursor: default; }
+.ego-error { margin: 0; color: var(--accent); font-size: 13px; }

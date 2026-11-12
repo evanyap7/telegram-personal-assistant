@@ -1,6 +1,6 @@
 /**
  * Avatar frame files and the regions that change between them.
- * Provenance and prompts: docs/avatar/shot-list.md. All frames are 1536x1536 and share
+ * Provenance and prompts: docs/avatar/shot-list.md. Full-resolution PNG sources are in docs/avatar/source (1536x1536); the app serves 768px webp copies. All frames share
  * framing, so a renderer can either crossfade whole frames (default, drift-proof) or swap
  * just the eye and mouth regions over a base portrait.
  */
@@ -25,15 +25,15 @@ export interface Rect {
 }
 
 export const AVATAR_FRAMES: Record<AvatarFrameName, string> = {
-  neutral: "/avatar/neutral.png",
-  warm: "/avatar/warm.png",
-  focused: "/avatar/focused.png",
-  concerned: "/avatar/concerned.png",
-  blink: "/avatar/blink.png",
-  "mouth-closed": "/avatar/mouth-closed.png",
-  "mouth-small": "/avatar/mouth-small.png",
-  "mouth-open": "/avatar/mouth-open.png",
-  "mouth-wide": "/avatar/mouth-wide.png",
+  neutral: "/avatar/neutral.webp",
+  warm: "/avatar/warm.webp",
+  focused: "/avatar/focused.webp",
+  concerned: "/avatar/concerned.webp",
+  blink: "/avatar/blink.webp",
+  "mouth-closed": "/avatar/mouth-closed.webp",
+  "mouth-small": "/avatar/mouth-small.webp",
+  "mouth-open": "/avatar/mouth-open.webp",
+  "mouth-wide": "/avatar/mouth-wide.webp",
 };
 
 /** Estimated from the generated frames; generous so a layered renderer can feather the edges. */
