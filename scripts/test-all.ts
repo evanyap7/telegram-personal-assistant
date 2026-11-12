@@ -31,6 +31,7 @@ const SUITES = [
   { name: "App Token Sign-In (session cookie, Origin check)", command: "npm run test:app-auth" },
   { name: "App Turn Runner (events, SSE, dedupe)", command: "npm run test:app-turn" },
   { name: "App Chat & Callback Routes (validation, SSE)", command: "npm run test:app-routes" },
+  { name: "App Avatar State & Safe Markdown", command: "npm run test:app-pure" },
   { name: "Currency Conversion & CSV Export", command: "npm run test:currency-export" },
   { name: "Cron Endpoint Request Authorization", command: "npm run test:cron-auth" },
   { name: "Workout Progressive Overload Engine", command: "npm run test:workout" },
