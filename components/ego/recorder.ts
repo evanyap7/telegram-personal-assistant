@@ -52,12 +52,24 @@ export async function startRecording(): Promise<Recording> {
     throw new RecorderError("unsupported", "Voice input is not supported in this browser.");
   }
 
+  // Create and resume the context synchronously, while the press is still a user gesture.
+  // iOS leaves a context created after the permission prompt suspended, and resume() can then hang.
+  let ctx: AudioContext | null = null;
+  try {
+    ctx = new Ctor();
+    if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
+  } catch {
+    ctx = null;
+  }
+  const closeEarly = () => void ctx?.close().catch(() => undefined);
+
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
   } catch (err) {
+    closeEarly();
     const name = err instanceof DOMException ? err.name : "";
     if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") {
       throw new RecorderError("denied", "Microphone access is blocked.");
@@ -66,7 +78,6 @@ export async function startRecording(): Promise<Recording> {
   }
 
   const chunks: Float32Array[] = [];
-  let ctx: AudioContext | null = null;
   let source: MediaStreamAudioSourceNode | null = null;
   let node: AudioNode | null = null;
   let workletUrl: string | null = null;
@@ -91,8 +102,12 @@ export async function startRecording(): Promise<Recording> {
   };
 
   try {
-    ctx = new Ctor();
-    if (ctx.state === "suspended") await ctx.resume();
+    if (!ctx) ctx = new Ctor();
+    if (ctx.state === "suspended") {
+      // Never wait forever: a context that will not resume must fail visibly, not hang.
+      await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
+      if (ctx.state === "suspended") throw new RecorderError("failed", "The audio engine did not start.");
+    }
     source = ctx.createMediaStreamSource(stream);
     let usedWorklet = false;
     if (ctx.audioWorklet && typeof AudioWorkletNode !== "undefined") {
@@ -123,7 +138,7 @@ export async function startRecording(): Promise<Recording> {
     throw err instanceof RecorderError ? err : new RecorderError("failed", "I could not start recording.");
   }
 
-  const sampleRate = ctx.sampleRate;
+  const sampleRate = ctx!.sampleRate;
   return {
     async stop() {
       // Give the worklet a beat to flush its last message before tearing down.
