@@ -94,8 +94,9 @@ Measured on 2026-11-13, one generic 76-character sentence, 5 calls, whole
 response: `generateContent` 3,177 to 3,909 ms (median 3,673 ms);
 `streamGenerateContent` read to the end 2,180 to 2,621 ms (median 2,337 ms). The
 route therefore uses the streaming endpoint, and the expected wait for the first
-sound is about 2.3 s plus network and the orchestrator turn, whatever the reply
-length. Two caveats: the chunk requests run in parallel and may slow each other,
+sound is about 2.3 s plus network and the orchestrator turn when the first
+sentence is short. A long single first sentence stays whole and is slower, since
+the cut only happens at sentence boundaries. Two caveats: the chunk requests run in parallel and may slow each other,
 and this was not measured end to end on a phone. Prosody can shift a little
 between chunks.
 

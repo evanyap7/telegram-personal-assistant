@@ -34,6 +34,48 @@ flowchart LR
 - **Cost-aware.** Haiku classifies, Sonnet orchestrates, Opus is the last resort. `/credits` warns at 10% and 5% balance.
 - **Stateless.** State lives in Google Sheets, so it runs happily on cold-start serverless functions.
 
+## Avatar app (/ego)
+
+`/ego` is a web app that talks to the same assistant as Telegram: same tools, same
+sheets, same buttons (undo, edit), shown as an animated avatar. You can type or
+hold a button to talk, and replies can be spoken aloud with lip sync. It installs
+as a home-screen app on phone and desktop and can push proactive messages (briefings,
+nags, alerts).
+
+Setup:
+
+1. Set `EGO_APP_TOKEN` (the sign-in token, at least 32 random characters) and
+   `EGO_APP_SECRET` (signs the session cookie) in `.env.local` and Vercel.
+   Spoken replies and voice input reuse `GOOGLE_GENERATIVE_AI_API_KEY`.
+2. For push, generate a VAPID key pair with `npx web-push generate-vapid-keys`.
+   Put the keys in `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`, and set
+   `VAPID_SUBJECT` to a contact such as `mailto:owner@example.com`.
+   If the VAPID variables are missing, push is a silent no-op: the app and
+   Telegram keep working, nothing is sent and nothing errors.
+3. Redeploy, open `https://<your-deployment>/ego`, and sign in with the token.
+
+Install:
+
+- **iPhone or iPad (Safari):** open `/ego`, sign in, tap Share, then Add to Home
+  Screen, and open it from the new icon.
+- **Android (Chrome):** open `/ego`, sign in, then menu, Install app (or Add to Home
+  screen).
+- **Desktop (Chrome or Edge):** open `/ego`, sign in, then click the install icon in
+  the address bar.
+
+Push notifications: turn them on with the notifications toggle in the app. On iOS
+push only works from the installed home-screen app, not from a Safari tab; the app
+shows a hint when it is not installed.
+
+Using it:
+
+- **Hold to talk:** press and hold the mic button, speak, release to send. The
+  browser asks for microphone permission the first time.
+- **Spoken replies:** replies are read aloud in short chunks so the first sound
+  starts early. The "Voice replies" toggle turns this on or off and is remembered
+  per device.
+- **Interrupt:** tap the avatar while it is speaking to stop it.
+
 ## Run your own
 
 1. `npm install`, copy the variables below into `.env.local` and Vercel.
@@ -49,7 +91,8 @@ flowchart LR
 | Google | `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_SHEET_ID`, `GOOGLE_WORKOUT_SHEET_ID`, `GOOGLE_CALENDAR_ID_PERSONAL`, `GOOGLE_CALENDAR_ID_WORK`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` |
 | AI | `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` (voice only) |
 | Other | `CRON_SECRET`, `APPLE_WALLET_SECRET`, `GMAIL_PUBSUB_TOPIC` |
-| Optional | `MEMORY_ENCRYPTION_KEY`, `MONTHLY_BUDGET` |
+| Avatar app | `EGO_APP_TOKEN` (at least 32 characters), `EGO_APP_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (for example `mailto:owner@example.com`) |
+| Optional | `MEMORY_ENCRYPTION_KEY`, `MONTHLY_BUDGET`, `EGO_EVAL_MODEL` (eval script only) |
 
 Setup guides: [Apple Wallet](APPLE_WALLET_SETUP.md), [Gmail push](GMAIL_PUSH_SETUP.md).
 </details>
