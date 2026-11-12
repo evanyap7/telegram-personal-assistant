@@ -61,6 +61,32 @@ cheaper than Opus and 84.5% cheaper than Sonar.
 Mean reduction **about 74%** (6 receipts, 3 runs). Only run 1's timings were
 kept. With 6 receipts each run is noisy, so quote the mean, not one run.
 
+## Spoken replies: Gemini text-to-speech (Task 11 spike)
+
+Measured on **2026-11-13**, live `gemini-3.8-flash-tts` (voice Kore) via
+`streamGenerateContent`, one generic 20-word sentence, 10 sequential calls.
+"First audio" is the time from sending the request to the first stream chunk
+that carries audio data. No personal data was sent.
+
+| Call | First audio | Full response |
+| --- | --- | --- |
+| 1 | 1,607 ms | 3,320 ms |
+| 2 | 1,074 ms | 2,907 ms |
+| 3 | 1,128 ms | 2,759 ms |
+| 4 | 951 ms | 2,989 ms |
+| 5 | 1,099 ms | 2,675 ms |
+| 6 | 1,039 ms | 2,837 ms |
+| 7 | 764 ms | 2,604 ms |
+| 8 | 1,043 ms | 2,793 ms |
+| 9 | 1,000 ms | 2,675 ms |
+| 10 | 1,107 ms | 3,039 ms |
+
+Median time to first audio **1,059 ms** (min 764 ms, max 1,607 ms), under the
+2.5 s go/no-go limit. Median full-response time is about 2.8 s for 20 words.
+`POST /api/ego/speak` returns one complete WAV, so what the app waits for is the
+full-response figure, which grows with the length of the reply (capped at 400
+characters). The time to first audio only applies if the response is streamed.
+
 ## Older figures this replaces
 
 Older copies of the README, CV and portfolio quote figures that these re-runs

@@ -95,7 +95,16 @@ function RegionLayer({ layer, frame, rect, stack }: { layer: string; frame: Avat
  * smoothing, hysteresis and a minimum hold per shape; without it, a simulated envelope runs
  * while speaking.
  */
-export default function Avatar({ state, levelRef }: { state: AvatarState; levelRef?: RefObject<number | null> }) {
+export default function Avatar({
+  state,
+  levelRef,
+  onTap,
+}: {
+  state: AvatarState;
+  levelRef?: RefObject<number | null>;
+  /** Tapping the face; the app uses it to interrupt speech. */
+  onTap?: () => void;
+}) {
   const [moodStack] = useState(() => new LayerStack(MOODS, MOOD_MS, "neutral"));
   const [eyeStack] = useState(() => new LayerStack(["blink"], BLINK_MS, null, 10));
   const [mouthStack] = useState(() => new LayerStack(SHAPES, MOUTH_MS, null, 10));
@@ -187,7 +196,7 @@ export default function Avatar({ state, levelRef }: { state: AvatarState; levelR
   }, [moodStack, eyeStack, mouthStack]);
 
   return (
-    <section className="ego-stage" aria-label="EGO">
+    <section className="ego-stage" aria-label="EGO" onClick={onTap}>
       <div className="ego-frame">
         <div className="ego-breathe">
           {MOODS.map((m) => (

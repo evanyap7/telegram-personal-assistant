@@ -27,6 +27,7 @@
     "test:app-manifest": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-manifest.ts",
     "test:app-push": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-push.ts",
     "test:app-audio": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-audio.ts",
+    "test:app-speech": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-speech.ts",
     "test:app-pure": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-pure.ts",
     "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts",
     "test:cron-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-cron-auth.ts",

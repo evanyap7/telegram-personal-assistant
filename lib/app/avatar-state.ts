@@ -15,11 +15,14 @@ export type AvatarEvent =
   | { type: "listen_start" }
   | { type: "listen_end" }
   | { type: "request_sent" }
-  | { type: "turn_done"; status?: string }
+  /** `willSpeak`: a spoken reply is on its way, so thinking continues until speech starts. */
+  | { type: "turn_done"; status?: string; willSpeak?: boolean }
   | { type: "turn_error" }
   | { type: "speech_start" }
   | { type: "speech_end" }
   | { type: "speech_interrupted" }
+  /** Speech was expected but never started (synthesis failed): thinking ends. */
+  | { type: "speech_abandoned" }
   | { type: "level"; value: number }
   | { type: "blink"; on: boolean }
   | { type: "mood_decay" };
@@ -54,12 +57,15 @@ export function reduceAvatar(state: AvatarState, event: AvatarEvent): AvatarStat
     case "listen_end":
       return state.activity === "listening" ? next(state, { activity: "idle" }) : state;
     case "request_sent":
+      // The server repeats "thinking" during a turn; it must not cut off speech already playing.
+      if (state.activity === "speaking") return state;
       return next(state, { activity: "thinking", mood: "focused", mouth: "closed" });
     case "turn_done":
       return next(state, {
         mood: event.status && FAILURE_STATUS.test(event.status) ? "concerned" : "warm",
-        // A text-only turn never speaks, so thinking ends here; other activities are left alone.
-        activity: state.activity === "thinking" ? "idle" : state.activity,
+        // A text-only turn never speaks, so thinking ends here. When a reply will be spoken,
+        // thinking holds until speech_start so there is no thinking -> idle -> speaking flicker.
+        activity: state.activity === "thinking" && !event.willSpeak ? "idle" : state.activity,
       });
     case "turn_error":
       return next(state, { activity: "idle", mood: "concerned", mouth: "closed" });
@@ -70,6 +76,8 @@ export function reduceAvatar(state: AvatarState, event: AvatarEvent): AvatarStat
       return state.activity === "speaking" || state.mouth !== "closed"
         ? next(state, { activity: "idle", mouth: "closed" })
         : state;
+    case "speech_abandoned":
+      return state.activity === "thinking" ? next(state, { activity: "idle" }) : state;
     case "level":
       return next(state, { mouth: state.activity === "speaking" ? mouthForLevel(event.value) : "closed" });
     case "blink":

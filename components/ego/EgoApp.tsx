@@ -7,11 +7,20 @@ import PushToggle from "./PushToggle";
 import { useEgoChat } from "./useEgoChat";
 
 export default function EgoApp() {
-  const { messages, send, sendVoice, pressButton, avatar, dispatchAvatar, busy, toast } = useEgoChat();
+  const { messages, send, sendVoice, pressButton, avatar, dispatchAvatar, levelRef, speakerOn, setSpeakerOn, stopSpeech, busy, toast } =
+    useEgoChat();
   return (
     <main className="ego-app">
       <PushToggle />
-      <Avatar state={avatar} />
+      <button
+        type="button"
+        className="ego-push-btn ego-speaker"
+        aria-pressed={speakerOn}
+        onClick={() => setSpeakerOn(!speakerOn)}
+      >
+        {speakerOn ? "Voice replies on" : "Voice replies off"}
+      </button>
+      <Avatar state={avatar} levelRef={levelRef} onTap={stopSpeech} />
       <Conversation messages={messages} busy={busy} onPress={pressButton} />
       <Composer busy={busy} onSend={send} onVoice={sendVoice} dispatchAvatar={dispatchAvatar} />
       <div className="ego-toast" role="status" aria-live="polite">

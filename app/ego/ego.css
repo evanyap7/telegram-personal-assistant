@@ -134,6 +134,7 @@
 .ego-push-btn { font: inherit; font-size: 12px; min-height: 32px; padding: 4px 12px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
 .ego-push-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .ego-push-btn:disabled { opacity: 0.6; cursor: default; }
+.ego-speaker { position: fixed; top: 8px; left: 8px; z-index: 5; }
 .ego-push-hint { margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.4; }
 
 /* Hold to talk */

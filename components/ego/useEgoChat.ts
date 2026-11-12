@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { initialAvatarState, reduceAvatar, type AvatarEvent, type AvatarState } from "@/lib/app/avatar-state";
 import type { AppButton, AppEvent } from "@/lib/app/events";
 import { readSse } from "@/lib/app/sse-client";
+import { useSpeech } from "./useSpeech";
 
 export interface ChatMessage {
   /** Stable React key. */
@@ -24,11 +25,33 @@ export interface EgoChat {
   pressButton(messageId: number, data: string): void;
   avatar: AvatarState;
   dispatchAvatar(e: AvatarEvent): void;
+  /** Live output level (0..1) for the avatar's mouth while EGO is speaking. */
+  levelRef: RefObject<number | null>;
+  /** Whether typed turns are spoken too; voice turns are always spoken. */
+  speakerOn: boolean;
+  setSpeakerOn(on: boolean): void;
+  /** Stops speech if EGO is speaking (a tap on the avatar). */
+  stopSpeech(): void;
   busy: boolean;
   toast: string | null;
 }
 
 const MOOD_DECAY_MS = 8000;
+const SPEAKER_KEY = "ego-speaker";
+
+// The speaker preference lives in localStorage; the server render and a blocked store read "off".
+const speakerListeners = new Set<() => void>();
+const subscribeSpeaker = (listener: () => void) => {
+  speakerListeners.add(listener);
+  return () => void speakerListeners.delete(listener);
+};
+function readSpeakerPref(): boolean {
+  try {
+    return localStorage.getItem(SPEAKER_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
 
 /** A fresh id per chat message or button press; matches /^[A-Za-z0-9_-]{8,128}$/. */
 function newRequestId(): string {
@@ -40,12 +63,45 @@ export function useEgoChat(): EgoChat {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [avatar, dispatchAvatar] = useReducer(reduceAvatar, initialAvatarState);
+  const speakerOn = useSyncExternalStore(subscribeSpeaker, readSpeakerPref, () => false);
+  const speakerRef = useRef(false);
+  // Whether this turn's replies are spoken, and whether any was queued (so thinking holds).
+  const speakTurnRef = useRef(false);
+  const spokenRef = useRef(false);
+  const speech = useSpeech(dispatchAvatar);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const busyRef = useRef(false);
   const localKey = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    speakerRef.current = speakerOn;
+  }, [speakerOn]);
+
+  const setSpeakerOn = useCallback(
+    (on: boolean) => {
+      speakerRef.current = on;
+      if (!on) speech.stop();
+      try {
+        localStorage.setItem(SPEAKER_KEY, on ? "on" : "off");
+      } catch {
+        // Preference just won't persist this session after a reload.
+      }
+      speakerListeners.forEach((l) => l());
+    },
+    [speech]
+  );
+
+  // Recording over EGO's own voice would capture it, so the mic stops speech first.
+  const dispatchWithSpeech = useCallback(
+    (e: AvatarEvent) => {
+      if (e.type === "listen_start") speech.stop();
+      dispatchAvatar(e);
+    },
+    [speech]
+  );
 
   useEffect(() => {
     return () => {
@@ -84,6 +140,7 @@ export function useEgoChat(): EgoChat {
               ? m
               : [...m, { key: `e-${e.id}`, id: e.id, role: "ego", text: e.text, buttons: e.buttons }]
           );
+          if (speakTurnRef.current && speech.enqueue(e.text)) spokenRef.current = true;
           break;
         case "edit":
           setMessages((m) => m.map((x) => (x.id === e.id ? { ...x, text: e.text, buttons: e.buttons } : x)));
@@ -107,13 +164,13 @@ export function useEgoChat(): EgoChat {
           dispatchAvatar({ type: "turn_error" });
           break;
         case "done":
-          dispatchAvatar({ type: "turn_done", status: e.status });
+          dispatchAvatar({ type: "turn_done", status: e.status, willSpeak: spokenRef.current });
           break;
         default:
           break;
       }
     },
-    [showToast]
+    [showToast, speech]
   );
 
   const run = useCallback(
@@ -121,6 +178,10 @@ export function useEgoChat(): EgoChat {
       if (busyRef.current) return;
       busyRef.current = true;
       setBusy(true);
+      speech.stop();
+      speech.unlock();
+      speakTurnRef.current = payload instanceof FormData || speakerRef.current;
+      spokenRef.current = false;
       dispatchAvatar({ type: "request_sent" });
       const controller = new AbortController();
       abortRef.current = controller;
@@ -172,7 +233,7 @@ export function useEgoChat(): EgoChat {
         setBusy(false);
       }
     },
-    [handle, router]
+    [handle, router, speech]
   );
 
   const send = useCallback(
@@ -202,5 +263,18 @@ export function useEgoChat(): EgoChat {
     [run]
   );
 
-  return { messages, send, sendVoice, pressButton, avatar, dispatchAvatar, busy, toast };
+  return {
+    messages,
+    send,
+    sendVoice,
+    pressButton,
+    avatar,
+    dispatchAvatar: dispatchWithSpeech,
+    levelRef: speech.levelRef,
+    speakerOn,
+    setSpeakerOn,
+    stopSpeech: speech.stop,
+    busy,
+    toast,
+  };
 }

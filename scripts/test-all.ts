@@ -33,6 +33,7 @@ const SUITES = [
   { name: "App Chat & Callback Routes (validation, SSE)", command: "npm run test:app-routes" },
   { name: "App SSE Client (chunking, CRLF, partial frames)", command: "npm run test:app-sse-client" },
   { name: "App Voice Input (WAV helpers, voice route)", command: "npm run test:app-audio" },
+  { name: "App Spoken Replies (speech text, speak route, TTS)", command: "npm run test:app-speech" },
   { name: "App Avatar State & Safe Markdown", command: "npm run test:app-pure" },
   { name: "App PWA Manifest & Service Worker rules", command: "npm run test:app-manifest" },
   { name: "App Web Push (fan-out, route guards, service worker)", command: "npm run test:app-push" },
