@@ -147,7 +147,7 @@ export async function sendTelegramMessage(
 ): Promise<void> {
   const channel = currentChannel();
   if (channel) {
-    channel.send(text, replyMarkup);
+    channel.send(text, replyMarkup, parseMode);
     return;
   }
   const chunks = splitIntoTelegramChunks(text);
@@ -205,7 +205,7 @@ export async function editTelegramMessage(
 ): Promise<void> {
   const channel = currentChannel();
   if (channel) {
-    channel.edit(messageId, text, replyMarkup);
+    channel.edit(messageId, text, replyMarkup, parseMode);
     return;
   }
   await callTelegram("editMessageText", {

@@ -21,6 +21,7 @@
     "test:memory": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-memory.ts",
     "test:app-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-auth.ts",
     "test:app-channel": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-channel.ts",
+    "test:app-turn": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-turn.ts",
     "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts",
     "test:cron-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-cron-auth.ts",
     "test:workout": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-workout.ts",

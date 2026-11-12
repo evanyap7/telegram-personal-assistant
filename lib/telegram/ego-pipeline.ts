@@ -5,6 +5,7 @@ import { getLatestTransaction } from "@/lib/finance";
 import { resolveRepliedTransaction } from "@/lib/handlers/finance-handler";
 import { getLatestPendingImage, getLatestUserCalendarContext } from "@/lib/pending-actions";
 import { dispatchCommand } from "@/lib/telegram/command-router";
+import { egoTurnFromMessage, type EgoTurn } from "@/lib/telegram/ego-turn";
 import type { TelegramUpdate } from "@/lib/telegram-types";
 import {
   handleStrictSetShortcut,
@@ -14,9 +15,11 @@ import {
 
 type TelegramMessage = NonNullable<TelegramUpdate["message"]>;
 
+export { egoTurnFromMessage, type EgoTurn };
+
 /**
- * EGO-mode handling of one text message (typed, a photo caption, or a voice transcript).
- * Photo/voice intake, auth, dedupe and callbacks stay in the route.
+ * EGO-mode handling of one Telegram text message (typed, a photo caption, or a voice
+ * transcript). Photo/voice intake, auth, dedupe and callbacks stay in the route.
  */
 export async function handleEgoText(params: {
   message: TelegramMessage;
@@ -25,8 +28,12 @@ export async function handleEgoText(params: {
   text: string;
   inputMode: InputMode;
 }): Promise<{ completionStatus?: string }> {
-  const { message, chatId, updateId, text, inputMode } = params;
-  const userId = message.from.id;
+  return handleEgoTurn(egoTurnFromMessage(params));
+}
+
+/** Runs one EGO turn: deterministic commands and shortcuts first, then the orchestrator. */
+export async function handleEgoTurn(turn: EgoTurn): Promise<{ completionStatus?: string }> {
+  const { chatId, userId, updateId, text, inputMode, date, replyTo } = turn;
 
   // Workout slash commands (/gym, /endworkout, /workoutday ...) and plain-text day commands
   // ("next day", "set workout day 12") are deterministic. Left to the model, a day command with
@@ -48,14 +55,12 @@ export async function handleEgoText(params: {
     return { completionStatus: "workout_set_shortcut" };
   }
 
-  const replyPhotos = message.reply_to_message?.photo;
+  const replyPhotos = replyTo?.photo;
   const [history, userCalendarContext, latestTxn, repliedTxn, pendingImage] = await Promise.all([
     getRecentChatHistory(userId, 8),
     getLatestUserCalendarContext(userId),
     getLatestTransaction(),
-    message.reply_to_message
-      ? resolveRepliedTransaction(message.reply_to_message)
-      : Promise.resolve(null),
+    replyTo ? resolveRepliedTransaction(replyTo) : Promise.resolve(null),
     replyPhotos?.length ? Promise.resolve(null) : getLatestPendingImage(userId),
   ]);
 
@@ -65,11 +70,11 @@ export async function handleEgoText(params: {
     updateId,
     text,
     inputMode,
-    messageDate: message.date ? new Date(message.date * 1000) : new Date(),
+    messageDate: date,
     history,
     userCalendarContext,
     targetTransaction: repliedTxn || latestTxn,
-    repliedToText: message.reply_to_message?.text,
+    repliedToText: replyTo?.text,
     repliedPhotoFileIds: replyPhotos?.length
       ? [replyPhotos[replyPhotos.length - 1].file_id]
       : undefined,
