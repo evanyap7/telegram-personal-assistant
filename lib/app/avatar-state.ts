@@ -58,6 +58,8 @@ export function reduceAvatar(state: AvatarState, event: AvatarEvent): AvatarStat
     case "turn_done":
       return next(state, {
         mood: event.status && FAILURE_STATUS.test(event.status) ? "concerned" : "warm",
+        // A text-only turn never speaks, so thinking ends here; other activities are left alone.
+        activity: state.activity === "thinking" ? "idle" : state.activity,
       });
     case "turn_error":
       return next(state, { activity: "idle", mood: "concerned", mouth: "closed" });

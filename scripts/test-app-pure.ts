@@ -84,6 +84,17 @@ for (const st of ["x_failed", "x_not_found", "x_empty"]) {
   const i = reduceAvatar(sp, { type: "speech_interrupted" });
   assert(i.activity === "idle" && i.mouth === "closed", "speech_interrupted -> idle, mouth closed", i);
 }
+{
+  const td = run([{ type: "request_sent" }, { type: "turn_done" }]);
+  assert(td.activity === "idle" && td.mood === "warm", "turn_done while thinking -> idle", td);
+  assert(reduceAvatar(td, { type: "speech_start" }).activity === "speaking", "speech_start works from idle after turn_done");
+  const spk = run([{ type: "speech_start" }]);
+  assert(reduceAvatar(spk, { type: "turn_done" }).activity === "speaking", "turn_done while speaking keeps speaking");
+  const lis = run([{ type: "listen_start" }]);
+  assert(reduceAvatar(lis, { type: "turn_done" }).activity === "listening", "turn_done while listening keeps listening");
+  const sp2 = reduceAvatar(spk, { type: "level", value: 0.3 });
+  assert(reduceAvatar(sp2, { type: "level", value: 0.3 }) === sp2, "level while speaking with unchanged mouth returns same reference");
+}
 assert(run([{ type: "blink", on: true }]).blinking === true, "blink on");
 {
   const b = run([{ type: "request_sent" }, { type: "blink", on: true }]);
@@ -190,6 +201,43 @@ assert(JSON.stringify(parseInlineMarkdown("")) === "[]", "empty string -> []");
 }
 for (const input of ["plain text, no markers.", "50% off * today", "a_b c_d", "multi\nline  text ", "  spaced  "]) {
   assert(join(input) === input, `plain input round-trips: ${JSON.stringify(input)}`, parseInlineMarkdown(input));
+}
+
+console.log("\n--- markdown whitespace/newline/doubling rules ---");
+for (const input of ["2 * 3 * 4", "* a\n* b", "a\n*b\nc*", "_ a _", "a\n_b\nc_", "__x__", "***", "** x **", "a * b*"]) {
+  const segs = parseInlineMarkdown(input);
+  assert(segs.length === 1 && segs[0].kind === "text" && segs[0].text === input, `stays plain: ${JSON.stringify(input)}`, segs);
+}
+{
+  const segs = parseInlineMarkdown("*_a_*");
+  assert(segs.length === 1 && segs[0].kind === "bold" && segs[0].text === "_a_", "*_a_* is bold with literal inner underscores", segs);
+  const m = parseInlineMarkdown("*a*\n*b*");
+  assert(m.map((x) => `${x.kind}:${x.text}`).join("|") === "bold:a|text:\n|bold:b", "bold on separate lines still works", m);
+}
+
+console.log("\n--- markdown performance guard ---");
+{
+  const patterns = [
+    " _a_a".repeat(40000),
+    "*".repeat(200000),
+    "_".repeat(200000),
+    "`".repeat(200000),
+    "*_".repeat(100000),
+    "*a ".repeat(70000),
+    "_a ".repeat(70000),
+    "`a ".repeat(70000),
+    "*_`a ".repeat(40000),
+  ];
+  for (const p of patterns) {
+    const t0 = Date.now();
+    const segs = parseInlineMarkdown(p);
+    const ms = Date.now() - t0;
+    assert(ms < 1000, `parses ${p.length} chars of ${JSON.stringify(p.slice(0, 8))} in under 1s (${ms}ms)`);
+    // Only inputs with no valid pairs are plain; the mixed ones legitimately form spans.
+    if (/^(\*+|_+|`+)$/.test(p) || p.startsWith("*a ") || p.startsWith("_a ")) {
+      assert(segs.map((x) => x.text).join("") === p, `plain pathological input round-trips: ${JSON.stringify(p.slice(0, 8))}`);
+    }
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
