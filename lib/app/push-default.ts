@@ -49,7 +49,8 @@ export async function pushOwnerDefault(title: string, body: string, url?: string
       const { after } = await import("next/server");
       after(run);
     } catch {
-      await run();
+      // No request scope: run detached so it can never delay the caller (pushOwner never rejects).
+      void run().catch(() => {});
     }
   } catch {
     // Never break the Telegram path.

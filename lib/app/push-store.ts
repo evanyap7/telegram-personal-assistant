@@ -49,11 +49,12 @@ async function readRows(): Promise<string[][]> {
 
 export async function listSubscriptions(): Promise<StoredSubscription[]> {
   const rows = await readRows();
-  const out: StoredSubscription[] = [];
+  const byEndpoint = new Map<string, StoredSubscription>();
   for (const [endpoint, p256dh, auth] of rows) {
-    if (endpoint && p256dh && auth) out.push({ endpoint, keys: { p256dh, auth } });
+    // Later rows win, so a refreshed duplicate replaces the stale one.
+    if (endpoint && p256dh && auth) byEndpoint.set(endpoint, { endpoint, keys: { p256dh, auth } });
   }
-  return out;
+  return [...byEndpoint.values()];
 }
 
 /** Adds the subscription, or refreshes its keys when the endpoint is already stored. */
@@ -63,6 +64,12 @@ export async function saveSubscription(sub: StoredSubscription): Promise<void> {
   const values = [[sub.endpoint, sub.keys.p256dh, sub.keys.auth, new Date().toISOString()]];
   const idx = rows.findIndex((r) => r[0] === sub.endpoint);
   if (idx >= 0) {
+    // Upsert the first match and blank any duplicates left by concurrent subscribes.
+    for (let i = idx + 1; i < rows.length; i++) {
+      if (rows[i][0] === sub.endpoint) {
+        await sheets.spreadsheets.values.clear({ spreadsheetId: spreadsheetId(), range: `${SHEET}!A${i + 2}:D${i + 2}` });
+      }
+    }
     const row = idx + 2;
     await sheets.spreadsheets.values.update({
       spreadsheetId: spreadsheetId(),

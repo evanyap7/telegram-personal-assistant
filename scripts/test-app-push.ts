@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { SESSION_COOKIE, signSession } from "../lib/app/auth";
 import { pushOwner, safeEgoUrl, type PushDeps, type StoredSubscription } from "../lib/app/push";
+import { AUTH_BYTES, P256DH_BYTES, validEndpoint, validKey } from "../lib/app/push-validate";
 import { GET, POST, runtime } from "../app/api/ego/push/route";
 
 let passed = 0;
@@ -22,6 +23,9 @@ function assert(condition: boolean, name: string, detail?: unknown) {
     failed++;
   }
 }
+
+const KEY65 = Buffer.alloc(65, 7).toString("base64url");
+const KEY16 = Buffer.alloc(16, 9).toString("base64url");
 
 const sub = (n: number): StoredSubscription => ({
   endpoint: `https://push.example.com/${n}`,
@@ -134,7 +138,7 @@ async function main() {
     );
   const good = {
     action: "subscribe",
-    subscription: { endpoint: "https://push.example.com/abc", keys: { p256dh: "BPkey_-1", auth: "auth_-1" } },
+    subscription: { endpoint: "https://fcm.googleapis.com/fcm/send/abc", keys: { p256dh: KEY65, auth: KEY16 } },
   };
 
   assert(runtime === "nodejs", "runtime is nodejs");
@@ -164,16 +168,53 @@ async function main() {
 
   const bad = (subscription: unknown) => post({ body: { action: "subscribe", subscription } });
   const k = good.subscription.keys;
-  assert((await bad({ endpoint: "http://push.example.com/a", keys: k })).status === 400, "http endpoint rejected");
+  assert((await bad({ endpoint: "http://fcm.googleapis.com/a", keys: k })).status === 400, "http endpoint rejected");
   assert((await bad({ endpoint: "javascript:alert(1)", keys: k })).status === 400, "non-URL scheme rejected");
-  assert((await bad({ endpoint: "https://u:p@push.example.com/a", keys: k })).status === 400, "credentials in URL rejected");
-  assert((await bad({ endpoint: "https://push.example.com/" + "a".repeat(3000), keys: k })).status === 400, "long endpoint rejected");
+  assert((await bad({ endpoint: "https://u:p@fcm.googleapis.com/a", keys: k })).status === 400, "credentials in URL rejected");
+  assert((await bad({ endpoint: "https://fcm.googleapis.com/" + "a".repeat(3000), keys: k })).status === 400, "long endpoint rejected");
   assert((await bad({ endpoint: good.subscription.endpoint, keys: { p256dh: "x".repeat(300), auth: "a" } })).status === 400, "long p256dh rejected");
   assert((await bad({ endpoint: good.subscription.endpoint, keys: { p256dh: "a", auth: "bad key!" } })).status === 400, "bad auth chars rejected");
   assert((await bad({ endpoint: good.subscription.endpoint })).status === 400, "missing keys rejected");
   assert((await bad(null)).status === 400, "null subscription rejected");
   assert((await post({ body: { action: "unsubscribe", endpoint: "http://x" } })).status === 400, "unsubscribe validates endpoint");
   assert((await post({ body: { action: "nope" } })).status === 400, "unknown action rejected");
+
+  assert((await bad({ endpoint: "https://push.example.com/a", keys: k })).status === 400, "non-push host rejected");
+  assert((await bad({ endpoint: good.subscription.endpoint, keys: { p256dh: KEY16, auth: KEY16 } })).status === 400, "wrong-length p256dh rejected");
+  {
+    const r = await POST(
+      new Request(`${ORIGIN}/api/ego/push`, {
+        method: "POST",
+        headers: { host: HOST, origin: ORIGIN, cookie, "content-type": "text/plain" },
+        body: "{}",
+      })
+    );
+    assert(r.status === 415, "text/plain -> 415", r.status);
+    const big = await POST(
+      new Request(`${ORIGIN}/api/ego/push`, {
+        method: "POST",
+        headers: { host: HOST, origin: ORIGIN, cookie, "content-type": "application/json" },
+        body: "x".repeat(5000),
+      })
+    );
+    assert(big.status === 413, "body over 4 KB -> 413", big.status);
+  }
+  delete env.VAPID_PUBLIC_KEY;
+  assert(
+    (await post({ body: { action: "unsubscribe", endpoint: "https://nope.example.com/x" } })).status === 400,
+    "unsubscribe is validated before the VAPID check"
+  );
+  env.VAPID_PUBLIC_KEY = "PUBKEY";
+
+  console.log("validators");
+  for (const h of ["fcm.googleapis.com", "updates.push.services.mozilla.com", "wns2-par02p.notify.windows.com", "web.push.apple.com", "api.push.apple.com"]) {
+    assert(validEndpoint(`https://${h}/x`), `allows ${h}`);
+  }
+  for (const u of ["https://127.0.0.1/x", "https://localhost/x", "https://[::1]/x", "https://10.0.0.1/x", "https://evil.com/fcm.googleapis.com", "https://fcm.googleapis.com.evil.com/x", "https://push.apple.com/x", "https://fcm.googleapis.com:8443/x", "http://fcm.googleapis.com/x", 5]) {
+    assert(!validEndpoint(u), `rejects ${String(u)}`);
+  }
+  assert(validKey(KEY65, P256DH_BYTES) && validKey(KEY16, AUTH_BYTES), "validKey accepts exact lengths");
+  assert(!validKey(KEY16, P256DH_BYTES) && !validKey("a b", AUTH_BYTES) && !validKey("", AUTH_BYTES) && !validKey(7, AUTH_BYTES), "validKey rejects wrong length/charset/type");
 
   console.log("service worker");
   const sw = readFileSync("public/sw.js", "utf-8");

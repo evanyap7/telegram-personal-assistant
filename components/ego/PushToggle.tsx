@@ -12,6 +12,12 @@ function urlBase64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+function sameKey(a: ArrayBuffer | null, b: Uint8Array): boolean {
+  if (!a || a.byteLength !== b.length) return false;
+  const x = new Uint8Array(a);
+  return x.every((v, i) => v === b[i]);
+}
+
 function isIos(): boolean {
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
 }
@@ -81,21 +87,25 @@ export default function PushToggle() {
   async function enable() {
     setState("busy");
     try {
+      // Permission first: iOS/Safari requires it to run before any await in the click handler.
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") return setState(permission === "denied" ? "denied" : "off");
+
       const keyRes = await fetch("/api/ego/push", { cache: "no-store" });
       if (keyRes.status === 503) return setState("unconfigured");
       if (!keyRes.ok) return setState("off");
       const { publicKey } = (await keyRes.json()) as { publicKey: string };
-
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") return setState(permission === "denied" ? "denied" : "off");
+      const appKey = urlBase64ToBytes(publicKey);
 
       const reg = await navigator.serviceWorker.ready;
+      let existing = await reg.pushManager.getSubscription();
+      if (existing && !sameKey(existing.options.applicationServerKey, appKey)) {
+        await existing.unsubscribe().catch(() => {});
+        existing = null;
+      }
       const sub =
-        (await reg.pushManager.getSubscription()) ??
-        (await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToBytes(publicKey),
-        }));
+        existing ??
+        (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey }));
       const res = await post({ action: "subscribe", subscription: sub.toJSON() });
       if (!res.ok) {
         await sub.unsubscribe().catch(() => {});

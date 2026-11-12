@@ -76,13 +76,8 @@ export function requireSession(request: Request): Response | null {
 
 /** null = allowed; otherwise a 401 or 403 Response. */
 export function requireOwner(request: Request): Response | null {
-  const secret = process.env.EGO_APP_SECRET;
-  if (!secret || !authConfigured()) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!verifySession(readCookie(request, SESSION_COOKIE), secret, Date.now())) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = requireSession(request);
+  if (denied) return denied;
   if (!isSameOrigin(request)) {
     return Response.json({ error: "Forbidden" }, { status: 403 });
   }
