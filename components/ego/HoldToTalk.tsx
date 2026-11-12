@@ -48,8 +48,15 @@ export default function HoldToTalk({
       try {
         const { samples, sampleRate } = await rec.stop();
         const pcm = downsample(samples, sampleRate, VOICE_SAMPLE_RATE);
+        let peak = 0;
+        for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]));
+        const heard = `Heard ${Math.round((samples.length / sampleRate) * 1000)} ms, peak ${peak.toFixed(3)}.`;
         if (pcm.length < VOICE_MIN_SAMPLES_16K) {
-          if (mounted.current) hint("Hold the button a little longer while you speak.");
+          if (mounted.current) hint(`${heard} Hold the button a little longer while you speak.`);
+          return;
+        }
+        if (peak < 0.005) {
+          if (mounted.current) hint(`${heard} The microphone sent silence.`);
           return;
         }
         const wav = encodeWav(pcm, VOICE_SAMPLE_RATE);
