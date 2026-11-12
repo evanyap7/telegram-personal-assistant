@@ -25,6 +25,7 @@
     "test:app-routes": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-routes.ts",
     "test:app-sse-client": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-sse-client.ts",
     "test:app-manifest": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-manifest.ts",
+    "test:app-push": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-push.ts",
     "test:app-pure": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-pure.ts",
     "test:currency-export": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-currency-export.ts",
     "test:cron-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-cron-auth.ts",
@@ -46,11 +47,13 @@
     "@ai-sdk/google": "^4.0.58",
     "@ai-sdk/open-responses": "^2.0.36",
     "@ai-sdk/perplexity": "^4.0.36",
+    "@types/web-push": "^3.6.4",
     "ai": "^7.0.85",
     "googleapis": "^176.0.0",
     "next": "16.3.3",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "web-push": "^4.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

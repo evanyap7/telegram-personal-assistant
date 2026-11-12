@@ -1,6 +1,7 @@
 import { getSheetsClient } from "./google";
 import { formatSingaporeTimestamp } from "./finance";
 import { sendTelegramMessage } from "./telegram";
+import { pushOwnerDefault } from "./app/push-default";
 
 const TODOS_SHEET = "Todos";
 
@@ -706,6 +707,8 @@ export async function checkAndSendTodoReminders(): Promise<TodoReminderCheckResu
           ],
         ],
       });
+
+      await pushOwnerDefault("Task reminder", message);
 
       const nowIso = now.toISOString();
       await updateTodoLastRemindedAt(todo.taskId, nowIso);

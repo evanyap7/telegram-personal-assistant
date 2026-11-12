@@ -1,6 +1,7 @@
 import { getCalendarId } from "./calendars";
 import { getCalendarClient } from "./google";
 import { sendTelegramMessage } from "./telegram";
+import { pushOwnerDefault } from "./app/push-default";
 
 export type TimedCalendarEventInput = {
   calendarName: "personal" | "work";
@@ -869,6 +870,7 @@ export async function checkAndSendEventReminders(): Promise<ReminderCheckResult>
             .join("\n");
 
           await sendTelegramMessage(allowedUserId, message);
+          await pushOwnerDefault(`Upcoming: ${item.summary}`, message);
 
           // Mark as reminded on the event itself so we never notify twice
           await calendar.events.patch({

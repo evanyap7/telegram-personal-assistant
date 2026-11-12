@@ -10,6 +10,7 @@ import {
   type CategorySpending,
 } from "./finance";
 import { sendTelegramMessage } from "./telegram";
+import { pushOwnerDefault } from "./app/push-default";
 import { formatCalendarDate } from "./handlers/calendar-handler";
 import { triageUnreadInbox, type InboxTriageSummary } from "./inbox-triage";
 
@@ -231,6 +232,7 @@ export async function sendMorningBrief(chatId?: number): Promise<string> {
   const data = await aggregateMorningBrief();
   const text = formatMorningBrief(data);
   await sendTelegramMessage(targetChatId, text);
+  await pushOwnerDefault("Morning brief", text);
   return text;
 }
 
@@ -340,6 +342,7 @@ export async function sendEveningRecap(chatId?: number): Promise<string> {
   const text = formatEveningRecap(data);
 
   await sendTelegramMessage(targetChatId, text);
+  await pushOwnerDefault("Evening recap", text);
   return text;
 }
 
@@ -476,5 +479,6 @@ export async function sendWeeklyReport(chatId?: number): Promise<string> {
   const data = await aggregateWeeklyReport();
   const text = formatWeeklyReport(data);
   await sendTelegramMessage(targetChatId, text);
+  await pushOwnerDefault("Weekly report", text);
   return text;
 }

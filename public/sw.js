@@ -68,3 +68,45 @@ self.addEventListener("fetch", (event) => {
     }),
   );
 });
+
+// Web push. The payload is JSON { title, body, url }; the click target is limited to same-origin /ego paths.
+function safeEgoUrl(url) {
+  if (typeof url !== "string" || url.length > 500) return "/ego";
+  if (!/^\/ego([/?#]|$)/.test(url) || url.includes("//") || url.includes("\\")) return "/ego";
+  return url;
+}
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = typeof data.title === "string" && data.title ? data.title : "EGO";
+  const body = typeof data.body === "string" ? data.body : "";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      data: { url: safeEgoUrl(data.url) },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = safeEgoUrl(event.notification.data && event.notification.data.url);
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        const path = new URL(client.url).pathname;
+        if (path === "/ego" || path.startsWith("/ego/")) {
+          return client.focus().then((c) => (c && "navigate" in c && target !== "/ego" ? c.navigate(target) : c));
+        }
+      }
+      return self.clients.openWindow(target);
+    }),
+  );
+});
