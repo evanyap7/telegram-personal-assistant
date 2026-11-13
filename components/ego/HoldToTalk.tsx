@@ -31,6 +31,11 @@ export default function HoldToTalk({
   const maxTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const messageTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mounted = useRef(true);
+  // Latest dispatch, so the unmount cleanup never re-runs (and cancels a live recording) when it changes.
+  const dispatchRef = useRef(dispatchAvatar);
+  useEffect(() => {
+    dispatchRef.current = dispatchAvatar;
+  }, [dispatchAvatar]);
 
   const hint = useCallback((text: string) => {
     setMessage(text);
@@ -137,10 +142,10 @@ export default function HoldToTalk({
         // Unmounted mid-hold (the field switched to Send): drop the audio, settle the avatar.
         active.current.cancel();
         active.current = null;
-        dispatchAvatar({ type: "listen_end" });
+        dispatchRef.current({ type: "listen_end" });
       }
     };
-  }, [dispatchAvatar]);
+  }, []);
 
   return (
     <>

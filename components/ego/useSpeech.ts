@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { AvatarEvent } from "@/lib/app/avatar-state";
 import { cleanSpeechText, splitSpeechChunks } from "@/lib/app/speech-text";
 
@@ -199,5 +199,5 @@ export function useSpeech(dispatch: (e: AvatarEvent) => void) {
     };
   }, []);
 
-  return { levelRef, enqueue, isActive, stop, unlock };
+  return useMemo(() => ({ levelRef, enqueue, isActive, stop, unlock }), [levelRef, enqueue, isActive, stop, unlock]);
 }
