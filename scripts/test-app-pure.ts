@@ -14,6 +14,7 @@ import {
   type AvatarState,
 } from "../lib/app/avatar-state";
 import { parseInlineMarkdown } from "../lib/app/markdown";
+import { createLevelNormalizer } from "../lib/app/speech-level";
 import { LayerStack } from "../components/ego/layerStack";
 
 let passed = 0;
@@ -143,6 +144,26 @@ assert(mouthForLevel(1) === "wide", "1 -> wide");
 assert(mouthForLevel(NaN) === "closed", "NaN -> closed");
 assert(mouthForLevel(-3) === "closed", "negative -> closed");
 assert(mouthForLevel(7) === "wide", ">1 -> wide");
+
+console.log("\n--- createLevelNormalizer ---");
+{
+  // Loud synthesized speech (RMS around 0.3) with syllable dips and a pause must still move the mouth.
+  const norm = createLevelNormalizer();
+  const shapes = new Set<string>();
+  const rms = [0.3, 0.28, 0.12, 0.3, 0.05, 0.29, 0.31, 0.015, 0.0, 0.3, 0.1, 0.3];
+  let last = 0;
+  for (let rep = 0; rep < 5; rep++) for (const r of rms) shapes.add(mouthForLevel((last = norm(r))));
+  assert(shapes.has("closed") && shapes.has("small") && shapes.has("open"), "loud speech still varies the mouth", [...shapes]);
+  assert(norm(0) === 0, "silence is 0");
+  assert(norm(0.3) > 0.9, "a peak after silence reads as near full level");
+
+  const quiet = createLevelNormalizer();
+  quiet(0.02);
+  quiet(0.02);
+  assert(quiet(0.02) > 0.9, "quiet steady speech is scaled up, not left closed");
+  assert(Number.isFinite(norm(NaN)) && norm(NaN) === 0, "NaN is 0");
+  assert(last >= 0 && last <= 1, "output stays within 0..1", last);
+}
 
 console.log("\n--- parseInlineMarkdown ---");
 const join = (t: string) => parseInlineMarkdown(t).map((x) => x.text).join("");

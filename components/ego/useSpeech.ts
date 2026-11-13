@@ -2,13 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { AvatarEvent } from "@/lib/app/avatar-state";
+import { createLevelNormalizer } from "@/lib/app/speech-level";
 import { cleanSpeechText, splitSpeechChunks } from "@/lib/app/speech-text";
 
 const LEVEL_HZ = 30;
 /** A context the browser will not start (no gesture) must not wedge the queue. */
 const RESUME_TIMEOUT_MS = 2000;
-/** Speech RMS sits around 0.05 to 0.25; this brings it to the avatar's 0..1 range. */
-const LEVEL_GAIN = 4;
 
 interface Item {
   audio: Promise<ArrayBuffer | null>;
@@ -50,13 +49,13 @@ export function useSpeech(dispatch: (e: AvatarEvent) => void) {
 
   const startLevel = useCallback((analyser: AnalyserNode) => {
     clearInterval(timerRef.current);
+    const normalize = createLevelNormalizer();
     const buf = new Float32Array(analyser.fftSize);
     timerRef.current = setInterval(() => {
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-      const level = Math.min(1, Math.sqrt(sum / buf.length) * LEVEL_GAIN);
-      levelRef.current = level;
+      levelRef.current = normalize(Math.sqrt(sum / buf.length));
     }, 1000 / LEVEL_HZ);
   }, []);
 
