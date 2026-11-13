@@ -8,8 +8,12 @@
 const PEAK_DECAY = 0.985;
 /** Below this RMS the signal is silence or hiss and must not set the scale. */
 const FLOOR = 0.01;
-/** Above 1, dips below the peak are deepened so quiet syllables read as a smaller mouth. */
-const CURVE = 1.4;
+/**
+ * Above 1, dips below the peak are deepened so quiet syllables read as a smaller mouth.
+ * Measured on real synthesized speech: 1.4 held the wide shape for 36-47% of the time
+ * (a gaping, shouting mouth); 3.5 keeps it to stressed syllables (about 8-9%).
+ */
+const CURVE = 3.5;
 
 export interface LevelNormalizer {
   (rms: number): number;

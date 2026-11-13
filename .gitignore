@@ -53,4 +53,7 @@ skills-lock.json
 
 # local agent skills and Python caches
 .agents/
+# local voice-cloning tool (models, venv) and browser-automation scratch
+/VoiceStudio/
+/.playwright-mcp/
 __pycache__/

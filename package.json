@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --ignore-pattern \"VoiceStudio/**\" --ignore-pattern \".playwright-mcp/**\"",
     "get-gmail-token": "node scripts/get-gmail-token.mjs",
     "setup-gmail-watch": "node scripts/setup-gmail-watch.mjs",
     "setup-dashboard": "node scripts/setup-sheet-dashboard.mjs",
@@ -41,7 +41,7 @@
     "test:ai-router": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-ai-router.ts",
     "check:ai-live": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/ai-live-check.ts",
     "test": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-all.ts",
-    "check": "tsc --noEmit && eslint && npm test",
+    "check": "tsc --noEmit && npm run lint && npm test",
     "prepare": "husky"
   },
   "dependencies": {

@@ -150,7 +150,8 @@ console.log("\n--- createLevelNormalizer ---");
   // Loud synthesized speech (RMS around 0.3) with syllable dips and a pause must still move the mouth.
   const norm = createLevelNormalizer();
   const shapes = new Set<string>();
-  const rms = [0.3, 0.28, 0.12, 0.3, 0.05, 0.29, 0.31, 0.015, 0.0, 0.3, 0.1, 0.3];
+  // Mid-level syllables (about 50-70% of the peak) are what read as small and open shapes.
+  const rms = [0.3, 0.28, 0.2, 0.3, 0.15, 0.29, 0.31, 0.015, 0.0, 0.3, 0.1, 0.3];
   let last = 0;
   for (let rep = 0; rep < 5; rep++) for (const r of rms) shapes.add(mouthForLevel((last = norm(r))));
   assert(shapes.has("closed") && shapes.has("small") && shapes.has("open"), "loud speech still varies the mouth", [...shapes]);
