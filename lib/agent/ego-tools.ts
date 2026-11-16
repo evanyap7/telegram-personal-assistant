@@ -1,6 +1,5 @@
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
-import { buildTennisTools } from "@/lib/agent/tennis-tools";
 import { intentSchemaByAction, type AssistantIntent } from "@/lib/assistant-intent";
 
 export type WorkoutDelegateKind = "session_message" | "start" | "log" | "view";
@@ -281,5 +280,5 @@ export function buildEgoTools(deps: EgoToolDeps): ToolSet {
     },
   });
 
-  return { ...tools, ...buildTennisTools() };
+  return tools;
 }
