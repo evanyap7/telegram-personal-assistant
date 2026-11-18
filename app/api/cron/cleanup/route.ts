@@ -3,6 +3,8 @@ import { isAuthorizedCronRequest } from "@/lib/security";
 import { pruneExpiredPendingActions } from "@/lib/pending-actions";
 import { pruneOldChatHistory } from "@/lib/chat-history";
 import { pruneUpdateLog } from "@/lib/finance";
+import { createDefaultGuestDeps } from "@/lib/guest";
+import { expireStaleBookings } from "@/lib/guest/owner-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +18,17 @@ export async function GET(req: NextRequest) {
     const pendingRes = await pruneExpiredPendingActions(24);
     const chatRes = await pruneOldChatHistory(30);
     const updateLogRes = await pruneUpdateLog(7);
+
+    // Guest booking expiry must never fail the rest of the cleanup.
+    let guestExpired = 0;
+    try {
+      guestExpired = await expireStaleBookings(createDefaultGuestDeps());
+    } catch (guestError) {
+      console.error(
+        "Guest booking expiry failed:",
+        guestError instanceof Error ? guestError.message : "unknown error"
+      );
+    }
 
     return NextResponse.json({
       ok: true,
@@ -32,6 +45,7 @@ export async function GET(req: NextRequest) {
         pruned: updateLogRes.prunedCount,
         remaining: updateLogRes.remainingCount,
       },
+      guestBookingsExpired: guestExpired,
     });
   } catch (error: unknown) {
     console.error("Cleanup cron failed:", error);

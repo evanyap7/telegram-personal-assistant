@@ -37,6 +37,9 @@ import { handleWorkoutSessionMessage } from "@/lib/workout/workout-session";
 import { isEgoEnabled } from "@/lib/agent/ego-flag";
 import type { InputMode } from "@/lib/agent/input-mode";
 import { handleEgoText } from "@/lib/telegram/ego-pipeline";
+import { classifySender, createDefaultGuestDeps } from "@/lib/guest";
+import { handleGuestUpdate } from "@/lib/guest/handler";
+import { handleOwnerCallback } from "@/lib/guest/owner-actions";
 
 // Worst case is the orchestrator's 10 model steps plus a delegate agent's 8: about 60-90 s.
 // 120 s leaves headroom and stops a runaway agent loop well before the platform default.
@@ -76,7 +79,8 @@ export async function POST(request: Request) {
     }
 
     const senderId = update.message?.from.id ?? update.callback_query?.from.id;
-    if (!senderId || senderId !== allowedUserId) {
+    const senderKind = classifySender(senderId, allowedUserId);
+    if (senderKind === "none") {
       log("telegram.webhook.forbidden", { updateId, senderId });
       return new Response("Forbidden", { status: 403 });
     }
@@ -91,6 +95,30 @@ export async function POST(request: Request) {
     }
 
     await markUpdateStarted(updateId);
+
+    // Non-owner senders go to guest mode and return before currentChatId is set,
+    // so the outer catch can never message a friend.
+    if (senderKind === "guest") {
+      await handleGuestUpdate(update, createDefaultGuestDeps());
+      await markUpdateCompleted(updateId, "guest");
+      return Response.json({ ok: true });
+    }
+
+    const guestCallback = update.callback_query;
+    if (guestCallback?.data?.startsWith("g:")) {
+      await handleOwnerCallback(
+        {
+          data: guestCallback.data,
+          userId: guestCallback.from.id,
+          callbackId: guestCallback.id,
+          chatId: guestCallback.message.chat.id,
+          messageId: guestCallback.message.message_id,
+        },
+        createDefaultGuestDeps()
+      );
+      await markUpdateCompleted(updateId, "guest_owner_callback");
+      return Response.json({ ok: true });
+    }
 
     // 1. Route Callback Queries
     if (update.callback_query?.data) {

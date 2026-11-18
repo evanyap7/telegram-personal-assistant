@@ -17,6 +17,7 @@ import { validateIntent, parseGuestMessage } from "../lib/guest/intent";
 import { fetchBusyIntervals, type BusyEvent } from "../lib/guest/busy";
 import { handleGuestUpdate, type GuestDeps } from "../lib/guest/handler";
 import { handleOwnerCallback, expireStaleBookings } from "../lib/guest/owner-actions";
+import { classifySender } from "../lib/guest";
 import type { GuestIntent } from "../lib/guest/intent";
 import type { InlineKeyboardMarkup } from "../lib/telegram";
 import type { TelegramUpdate } from "../lib/telegram-types";
@@ -683,6 +684,93 @@ async function runTests() {
         console.error = origErr;
       }
     }
+  }
+
+
+  // ---------- (l) routing and leak test ----------
+  console.log("\n--- (l) routing and leak test ---");
+  {
+    assert(classifySender(undefined, 1) === "none", "(l) classifySender: no sender -> none");
+    assert(classifySender(1, 1) === "owner", "(l) classifySender: owner");
+    assert(classifySender(2, 1) === "guest", "(l) classifySender: guest");
+
+    const SECRETS = ["SECRET-DENTIST", "SECRET-CLINIC", "SECRET-NOTES"];
+    const captured: string[] = [];
+    const orig = { log: console.log, error: console.error, warn: console.warn, info: console.info };
+    const grab = (...a: unknown[]) => {
+      captured.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" "));
+    };
+    const friendTexts: string[] = [];
+    const modelText: string[] = [];
+    let slotData = "";
+    let approved = false;
+    let eventTitle = "";
+    try {
+      console.log = grab;
+      console.error = grab;
+      console.warn = grab;
+      console.info = grab;
+      const OWNER_ID = 1;
+      const FRIEND = 600;
+      const store = createMemoryStore();
+      const nowMs = Date.parse("2026-11-19T09:00:00+08:00");
+      const deps: GuestDeps = {
+        store,
+        ownerId: OWNER_ID,
+        now: () => nowMs,
+        send: async (chatId, text, markup) => {
+          if (chatId === FRIEND) friendTexts.push(text);
+          const d = (markup?.inline_keyboard.flat() ?? []).map((b) => ("callback_data" in b ? b.callback_data : ""));
+          if (chatId === FRIEND) slotData = d.find((x) => x.startsWith("g:r:")) ?? slotData;
+        },
+        answerCallback: async () => {},
+        clearKeyboard: async () => {},
+        getBusy: (from, to) =>
+          fetchBusyIntervals(from, to, async () => [
+            {
+              start: "2026-11-20T19:00:00+08:00",
+              end: "2026-11-20T20:00:00+08:00",
+              isAllDay: false,
+              title: "SECRET-DENTIST",
+              location: "SECRET-CLINIC",
+              description: "SECRET-NOTES",
+            } as BusyEvent,
+          ]),
+        parse: (text, today) =>
+          parseGuestMessage(text, today, async (system, prompt) => {
+            modelText.push(system, prompt);
+            return JSON.stringify({ intent: "availability", dateFrom: "2026-11-20", dateTo: "2026-11-20", partOfDay: "evening", durationMin: 60 });
+          }),
+        createEvent: async (e) => {
+          approved = true;
+          eventTitle = e.title;
+        },
+      };
+      const upd = (id: number, text: string) =>
+        ({ update_id: id, message: { message_id: id, chat: { id: FRIEND }, from: { id: FRIEND, first_name: "Sam" }, text } }) as TelegramUpdate;
+      const tap = (id: number, data: string) =>
+        ({ update_id: id, callback_query: { id: `c${id}`, from: { id: FRIEND }, data, message: { message_id: 5, chat: { id: FRIEND } } } }) as TelegramUpdate;
+      const ownerCb = (data: string) =>
+        handleOwnerCallback({ data, userId: OWNER_ID, callbackId: "oc", chatId: OWNER_ID, messageId: 9 }, deps);
+
+      await handleGuestUpdate(upd(1, "hi"), deps);
+      await ownerCb(`g:allow:${FRIEND}`);
+      await handleGuestUpdate(upd(2, "free tomorrow evening?"), deps);
+      await handleGuestUpdate(tap(3, slotData), deps);
+      const booking = (await store.listOpenBookings(FRIEND))[0];
+      if (booking) await ownerCb(`g:ok:${booking.id}`);
+    } finally {
+      console.log = orig.log;
+      console.error = orig.error;
+      console.warn = orig.warn;
+      console.info = orig.info;
+    }
+    const hits = (texts: string[]) => texts.filter((t) => SECRETS.some((x) => t.includes(x)));
+    assert(friendTexts.length > 0 && slotData.startsWith("g:r:"), "(l) walk reached availability with a slot button");
+    assert(approved && !SECRETS.some((x) => eventTitle.includes(x)), "(l) walk reached approval; event title has no secrets");
+    assert(hits(friendTexts).length === 0, "(l) no event detail in any friend-bound text");
+    assert(modelText.length > 0 && hits(modelText).length === 0, "(l) no event detail in any model prompt");
+    assert(hits(captured).length === 0, "(l) no event detail in console output");
   }
 
   console.log(`\nResults: ${totalPassed} passed, ${totalFailed} failed.`);
