@@ -15,6 +15,10 @@ import {
 } from "../lib/guest/slots";
 import { validateIntent, parseGuestMessage } from "../lib/guest/intent";
 import { fetchBusyIntervals, type BusyEvent } from "../lib/guest/busy";
+import { handleGuestUpdate, type GuestDeps } from "../lib/guest/handler";
+import type { GuestIntent } from "../lib/guest/intent";
+import type { InlineKeyboardMarkup } from "../lib/telegram";
+import type { TelegramUpdate } from "../lib/telegram-types";
 
 let totalPassed = 0;
 let totalFailed = 0;
@@ -277,6 +281,226 @@ async function runTests() {
       return "{}";
     });
     assert(seenPrompt.includes("a".repeat(500)) && !seenPrompt.includes("a".repeat(501)), "(i) 2000-char message truncated to 500");
+  }
+
+
+  // ---------- (j) guest handler ----------
+  console.log("\n--- (j) guest handler ---");
+  {
+    const OWNER = 1;
+    const NOW0 = Date.parse("2026-11-19T09:00:00+08:00");
+    type Sent = { chatId: number; text: string; markup?: InlineKeyboardMarkup };
+    function mk(opts: { busy?: BusyInterval[]; intent?: GuestIntent; busyFails?: boolean } = {}) {
+      const sent: Sent[] = [];
+      const answered: Array<{ id: string; text?: string }> = [];
+      const state = { now: NOW0, parseCalls: 0, busyCalls: 0, intent: opts.intent ?? ({ intent: "other" } as GuestIntent) };
+      const store = createMemoryStore();
+      const deps: GuestDeps = {
+        store,
+        ownerId: OWNER,
+        now: () => state.now,
+        send: async (chatId, text, markup) => {
+          sent.push({ chatId, text, markup });
+        },
+        answerCallback: async (id, text) => {
+          answered.push({ id, text });
+        },
+        clearKeyboard: async () => {},
+        getBusy: async () => {
+          state.busyCalls++;
+          if (opts.busyFails) throw new Error("calendar exploded at /secret/stack.ts:12");
+          return opts.busy ?? [];
+        },
+        parse: async () => {
+          state.parseCalls++;
+          return state.intent;
+        },
+        createEvent: async () => {},
+      };
+      return { deps, sent, answered, state, store };
+    }
+    let uid = 0;
+    const msg = (from: number, text?: string, extra: Record<string, unknown> = {}): TelegramUpdate =>
+      ({
+        update_id: ++uid,
+        message: { message_id: uid, chat: { id: from }, from: { id: from, first_name: "Sam", username: "sam" }, ...(text !== undefined ? { text } : {}), ...extra },
+      }) as TelegramUpdate;
+    const cb = (from: number, data: string): TelegramUpdate =>
+      ({ update_id: ++uid, callback_query: { id: `cb${uid}`, from: { id: from }, data, message: { message_id: 5, chat: { id: from } } } }) as TelegramUpdate;
+    const toOwner = (sent: Sent[]) => sent.filter((m) => m.chatId === OWNER);
+    const toFriend = (sent: Sent[], id: number) => sent.filter((m) => m.chatId === id);
+
+    // stranger first message
+    {
+      const t = mk();
+      await handleGuestUpdate(msg(100, "hi"), t.deps);
+      const f = await t.store.getFriend(100);
+      assert(f?.status === "pending", "(j) stranger -> pending friend");
+      assert(toFriend(t.sent, 100).length === 1, "(j) stranger gets exactly one message");
+      const o = toOwner(t.sent);
+      const data = o[0]?.markup?.inline_keyboard.flat().map((b) => ("callback_data" in b ? b.callback_data : "")) ?? [];
+      assert(o.length === 1 && data.includes("g:allow:100") && data.includes("g:block:100"), "(j) owner pinged with Allow/Block");
+      assert(o[0].text.includes("Sam") && o[0].text.includes("@sam"), "(j) owner ping has name and username");
+      await handleGuestUpdate(msg(100, "hello?"), t.deps);
+      assert(toOwner(t.sent).length === 1, "(j) second message within 24h: no second owner ping");
+      assert(toFriend(t.sent, 100).length === 2, "(j) pending friend gets 'still waiting'");
+      t.state.now += 25 * 3_600_000;
+      await handleGuestUpdate(msg(100, "hello??"), t.deps);
+      assert(toOwner(t.sent).length === 2, "(j) re-ping after 24h");
+      assert(t.state.parseCalls === 0, "(j) pending friend never parsed");
+    }
+    // no username -> no (@...)
+    {
+      const t = mk();
+      const u = msg(101, "hi");
+      delete (u.message!.from as { username?: string }).username;
+      await handleGuestUpdate(u, t.deps);
+      assert(!toOwner(t.sent)[0].text.includes("@"), "(j) owner ping omits (@username) when none");
+    }
+    // 21st stranger
+    {
+      const t = mk();
+      for (let i = 0; i < 20; i++) await handleGuestUpdate(msg(200 + i, "hi"), t.deps);
+      const ownerBefore = toOwner(t.sent).length;
+      await handleGuestUpdate(msg(999, "hi"), t.deps);
+      assert(ownerBefore === 20 && toOwner(t.sent).length === 20, "(j) 21st stranger: no owner ping");
+      assert(toFriend(t.sent, 999).length === 1 && (await t.store.getFriend(999)) === null, "(j) 21st stranger: canned refusal, no row");
+    }
+    // blocked
+    {
+      const t = mk();
+      await t.store.createPendingFriend({ telegramUserId: 300, displayName: "B", username: null });
+      await t.store.setFriendStatus(300, "blocked");
+      await handleGuestUpdate(msg(300, "hi"), t.deps);
+      await handleGuestUpdate(msg(300, undefined, { sticker: {} }), t.deps);
+      await handleGuestUpdate(cb(300, "g:r:1:60"), t.deps);
+      assert(t.sent.length === 0, "(j) blocked friend: zero sends");
+      assert(t.answered.length === 1 && t.answered[0].text === undefined, "(j) blocked callback answered with no text");
+    }
+    // non-text from approved + stranger
+    {
+      const t = mk();
+      await t.store.createPendingFriend({ telegramUserId: 400, displayName: "A", username: null });
+      await t.store.setFriendStatus(400, "approved");
+      await handleGuestUpdate(msg(400, undefined, { photo: [{ file_id: "a", file_unique_id: "b", width: 1, height: 1 }] }), t.deps);
+      assert(toFriend(t.sent, 400).length === 1 && t.state.parseCalls === 0, "(j) photo: one canned reply, no parse");
+      await handleGuestUpdate(msg(401, undefined, { sticker: {} }), t.deps);
+      assert((await t.store.getFriend(401)) === null, "(j) non-text stranger: no friend row");
+      assert(toOwner(t.sent).length === 0, "(j) non-text stranger: no owner ping");
+    }
+    // availability
+    {
+      const busy: BusyInterval[] = [{ start: Date.parse("2026-11-19T12:00:00+08:00"), end: Date.parse("2026-11-19T13:00:00+08:00") }];
+      const t = mk({ busy, intent: { intent: "availability", dateFrom: "2026-11-19", dateTo: "2026-11-20", durationMin: 60 } });
+      await t.store.createPendingFriend({ telegramUserId: 500, displayName: "A", username: null });
+      await t.store.setFriendStatus(500, "approved");
+      await handleGuestUpdate(msg(500, "free?"), t.deps);
+      const r = toFriend(t.sent, 500)[0];
+      const btns = r.markup?.inline_keyboard.flat() ?? [];
+      const datas = btns.map((b) => ("callback_data" in b ? (b.callback_data as string) : ""));
+      assert(/PM|AM/.test(r.text) && r.text.includes("Thu 19 Nov"), "(j) availability reply lists window times");
+      assert(datas.length >= 1 && datas.every((d) => d.startsWith("g:r:") && Buffer.byteLength(d) <= 64), "(j) availability buttons g:r: and <=64 bytes");
+      assert(!/busy|event|meeting|calendar/i.test(r.text), "(j) availability reply leaks nothing about busy");
+    }
+    // nothing free day
+    {
+      const busy: BusyInterval[] = [{ start: Date.parse("2026-11-20T00:00:00+08:00"), end: Date.parse("2026-11-20T23:59:00+08:00") }];
+      const t = mk({ busy, intent: { intent: "availability", dateFrom: "2026-11-20", dateTo: "2026-11-20", durationMin: 60 } });
+      await t.store.createPendingFriend({ telegramUserId: 501, displayName: "A", username: null });
+      await t.store.setFriendStatus(501, "approved");
+      await handleGuestUpdate(msg(501, "free?"), t.deps);
+      assert(/nothing free/.test(toFriend(t.sent, 501)[0].text), "(j) empty day says 'nothing free'");
+    }
+    // request_slot not free
+    for (const [label, start] of [
+      ["23:00", "2026-11-20T23:00:00+08:00"],
+      ["past", "2026-11-18T15:00:00+08:00"],
+      ["today+20", "2026-12-09T15:00:00+08:00"],
+    ] as const) {
+      const t = mk({ intent: { intent: "request_slot", requestedStart: start, durationMin: 60, note: "" } });
+      await t.store.createPendingFriend({ telegramUserId: 600, displayName: "A", username: null });
+      await t.store.setFriendStatus(600, "approved");
+      await handleGuestUpdate(msg(600, "book"), t.deps);
+      const r = toFriend(t.sent, 600)[0];
+      const has = (r.markup?.inline_keyboard.flat() ?? []).some((b) => "callback_data" in b && (b.callback_data as string).startsWith("g:r:"));
+      assert((await t.store.listOpenBookings(600)).length === 0, `(j) request ${label}: no booking`);
+      assert(/isn't free/.test(r.text) && has, `(j) request ${label}: alternatives offered`);
+      assert(toOwner(t.sent).length === 0, `(j) request ${label}: owner not pinged`);
+    }
+    // free slot request + 4th refused + callback
+    {
+      const t = mk({ intent: { intent: "request_slot", requestedStart: "2026-11-20T15:00:00+08:00", durationMin: 60, note: "coffee" } });
+      await t.store.createPendingFriend({ telegramUserId: 700, displayName: "A", username: null });
+      await t.store.setFriendStatus(700, "approved");
+      await handleGuestUpdate(msg(700, "book"), t.deps);
+      const open = await t.store.listOpenBookings(700);
+      assert(open.length === 1 && open[0].status === "pending" && open[0].note === "coffee", "(j) free slot -> pending booking");
+      assert(toOwner(t.sent).length === 1, "(j) owner notified of booking");
+      assert(/Sent/.test(toFriend(t.sent, 700)[0].text), "(j) friend told request sent");
+      t.state.intent = { intent: "request_slot", requestedStart: "2026-11-20T17:00:00+08:00", durationMin: 60, note: "" };
+      await handleGuestUpdate(msg(700, "book 2"), t.deps);
+      t.state.intent = { intent: "request_slot", requestedStart: "2026-11-21T17:00:00+08:00", durationMin: 60, note: "" };
+      await handleGuestUpdate(msg(700, "book 3"), t.deps);
+      const before = toOwner(t.sent).length;
+      t.state.intent = { intent: "request_slot", requestedStart: "2026-11-22T17:00:00+08:00", durationMin: 60, note: "" };
+      await handleGuestUpdate(msg(700, "book 4"), t.deps);
+      assert((await t.store.listOpenBookings(700)).length === 3 && toOwner(t.sent).length === before, "(j) 4th open request refused");
+      // callbacks
+      const t2 = mk();
+      await t2.store.createPendingFriend({ telegramUserId: 701, displayName: "A", username: null });
+      await t2.store.setFriendStatus(701, "approved");
+      const sec = Date.parse("2026-11-20T15:00:00+08:00") / 1000;
+      await handleGuestUpdate(cb(701, `g:r:${sec}:60`), t2.deps);
+      assert((await t2.store.listOpenBookings(701)).length === 1 && t2.answered.length === 1, "(j) g:r: callback creates booking and answers");
+      await handleGuestUpdate(cb(701, `g:r:${sec}abc:60`), t2.deps);
+      await handleGuestUpdate(cb(701, `g:r:${sec}:5`), t2.deps);
+      await handleGuestUpdate(cb(701, `g:r:${sec}:999`), t2.deps);
+      await handleGuestUpdate(cb(701, `g:ok:abc`), t2.deps);
+      await handleGuestUpdate(cb(701, `g:allow:701`), t2.deps);
+      assert((await t2.store.listOpenBookings(701)).length === 1 && t2.answered.length === 6, "(j) malformed/owner callbacks: no booking, all answered");
+      const t3 = mk();
+      await t3.store.createPendingFriend({ telegramUserId: 702, displayName: "A", username: null });
+      await handleGuestUpdate(cb(702, `g:r:${sec}:60`), t3.deps);
+      assert((await t3.store.listOpenBookings(702)).length === 0 && t3.answered.length === 1, "(j) g:r: from non-approved ignored");
+    }
+    // rate limit
+    {
+      const t = mk();
+      await t.store.createPendingFriend({ telegramUserId: 800, displayName: "A", username: null });
+      await t.store.setFriendStatus(800, "approved");
+      for (let i = 0; i < 31; i++) await handleGuestUpdate(msg(800, "x"), t.deps);
+      assert(t.state.parseCalls === 30, "(j) 31st message in an hour: parse not called");
+      assert(/slow/i.test(toFriend(t.sent, 800)[30].text), "(j) 31st message: slow-down reply");
+    }
+    // errors
+    {
+      const t = mk({ busyFails: true, intent: { intent: "availability", dateFrom: "2026-11-19", dateTo: "2026-11-20", durationMin: 60 } });
+      await t.store.createPendingFriend({ telegramUserId: 900, displayName: "A", username: null });
+      await t.store.setFriendStatus(900, "approved");
+      await handleGuestUpdate(msg(900, "free?"), t.deps);
+      const r = toFriend(t.sent, 900);
+      assert(r.length === 1 && r[0].text === "Couldn't check right now, try again later", "(j) getBusy rejects -> canned retry text");
+      assert(!/Error|stack|exploded|\.ts/.test(r[0].text), "(j) retry text leaks no error detail");
+      const t2 = mk();
+      t2.deps.parse = async () => {
+        throw new Error("boom");
+      };
+      await t2.store.createPendingFriend({ telegramUserId: 901, displayName: "A", username: null });
+      await t2.store.setFriendStatus(901, "approved");
+      await handleGuestUpdate(msg(901, "x"), t2.deps);
+      assert(toFriend(t2.sent, 901)[0].text === "Couldn't check right now, try again later", "(j) parse rejects -> canned retry text");
+      await handleGuestUpdate({ update_id: 1 } as TelegramUpdate, t2.deps);
+      assert(true, "(j) update with no sender ignored without throwing");
+    }
+    // displayName sanitization + no duplicate pending rows
+    {
+      const t = mk();
+      const u = msg(1000, "hi");
+      (u.message!.from as { first_name?: string }).first_name = "  Ev\u0007il" + "x".repeat(100);
+      await handleGuestUpdate(u, t.deps);
+      const f = await t.store.getFriend(1000);
+      assert(!!f && f.displayName.length <= 64 && !/[\u0000-\u001f]/.test(f.displayName) && f.displayName.startsWith("Evil"), "(j) displayName trimmed, stripped, capped");
+    }
   }
 
   console.log(`\nResults: ${totalPassed} passed, ${totalFailed} failed.`);

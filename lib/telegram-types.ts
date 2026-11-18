@@ -13,6 +13,8 @@ export const telegramUpdateSchema = z.object({
       }),
       from: z.object({
         id: z.number(),
+        first_name: z.string().optional(),
+        username: z.string().optional(),
       }),
       text: z.string().optional(),
       caption: z.string().optional(),
@@ -72,6 +74,8 @@ export const telegramUpdateSchema = z.object({
       id: z.string(),
       from: z.object({
         id: z.number(),
+        first_name: z.string().optional(),
+        username: z.string().optional(),
       }),
       data: z.string().optional(),
       message: z.object({
