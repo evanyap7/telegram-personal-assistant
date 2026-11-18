@@ -595,6 +595,20 @@ async function runTests() {
           const ft = toFriend(t.sent, 50)[0].text;
           assert(ft === "Couldn't check right now, try again later" && !/SECRET|gcal|500/.test(ft), "(k) createEvent rejects: friend text has no error");
         }
+        // store error after the claim
+        {
+          const t = await setup();
+          t.store.getFriend = async () => {
+            throw new Error("sheets down SECRET_STORE");
+          };
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          assert((await t.store.getBooking(t.booking.id))?.status === "failed" && t.events.length === 0, "(k) getFriend throws after claim: booking failed, no event");
+          assert(toOwner(t.sent).length === 1 && !/SECRET/.test(toOwner(t.sent)[0].text), "(k) getFriend throws after claim: owner told");
+          const ft = toFriend(t.sent, 50);
+          assert(ft.length === 1 && ft[0].text === "Couldn't check right now, try again later", "(k) getFriend throws after claim: friend gets canned retry");
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          assert(lastAnswer(t) === "Already handled", "(k) failed booking is terminal");
+        }
         // decline
         {
           const t = await setup({}, "Sam", "my secret reason");

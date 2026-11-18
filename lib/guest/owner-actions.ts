@@ -61,37 +61,47 @@ async function approve(deps: GuestDeps, bookingId: string): Promise<string> {
   if (!booking) return ALREADY;
   if (!(await deps.store.transitionBooking(bookingId, "pending", "approved"))) return ALREADY;
 
-  const friend = await deps.store.getFriend(booking.friendId);
-  const name = friend?.displayName ?? "Friend";
-  const label = bookingLabel(booking);
+  // Claimed: every failure from here on must end in approved -> failed.
   const fail = async (ownerText: string, friendText: string): Promise<string> => {
-    await deps.store.transitionBooking(bookingId, "approved", "failed");
+    try {
+      await deps.store.transitionBooking(bookingId, "approved", "failed");
+    } catch (err) {
+      console.error("guest: failed-transition error:", err instanceof Error ? err.message : "unknown");
+    }
     await tell(deps, deps.ownerId, ownerText);
     await tell(deps, booking.friendId, friendText);
     return ownerText;
   };
 
-  const startMs = Date.parse(booking.start);
-  const endMs = Date.parse(booking.end);
-  const date = sgtDateOf(booking.start);
-  let free: boolean;
   try {
-    free = isSlotFree(await deps.getBusy(date, date), startMs, endMs, deps.now());
+    const friend = await deps.store.getFriend(booking.friendId);
+    const name = friend?.displayName ?? "Friend";
+    const label = bookingLabel(booking);
+    const startMs = Date.parse(booking.start);
+    const endMs = Date.parse(booking.end);
+    const date = sgtDateOf(booking.start);
+    let free: boolean;
+    try {
+      free = isSlotFree(await deps.getBusy(date, date), startMs, endMs, deps.now());
+    } catch (err) {
+      console.error("guest: busy check failed:", err instanceof Error ? err.message : "unknown");
+      return await fail("Couldn't check the calendar", COPY.retry);
+    }
+    if (!free) {
+      return await fail(`That slot for ${name} is no longer free.`, COPY.slotTaken);
+    }
+    try {
+      await deps.createEvent({ title: `Meet ${name}`, start: booking.start, end: booking.end });
+    } catch (err) {
+      console.error("guest: createEvent failed:", err instanceof Error ? err.message : "unknown");
+      return await fail("Couldn't add it to the calendar", COPY.retry);
+    }
+    await tell(deps, booking.friendId, confirmedText(label));
+    return "Approved";
   } catch (err) {
-    console.error("guest: busy check failed:", err instanceof Error ? err.message : "unknown");
-    return fail("Couldn't check the calendar", COPY.retry);
+    console.error("guest: approve failed:", err instanceof Error ? err.message : "unknown");
+    return fail("Couldn't approve that request", COPY.retry);
   }
-  if (!free) {
-    return fail(`That slot for ${name} is no longer free.`, COPY.slotTaken);
-  }
-  try {
-    await deps.createEvent({ title: `Meet ${name}`, start: booking.start, end: booking.end });
-  } catch (err) {
-    console.error("guest: createEvent failed:", err instanceof Error ? err.message : "unknown");
-    return fail("Couldn't add it to the calendar", COPY.retry);
-  }
-  await tell(deps, booking.friendId, confirmedText(label));
-  return "Approved";
 }
 
 async function decline(deps: GuestDeps, bookingId: string): Promise<string> {
