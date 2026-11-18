@@ -659,6 +659,44 @@ export type ScheduleEventItem = {
   htmlLink: string | null;
 };
 
+/**
+ * Title-free busy-time loader for guest mode. Pages through every event on
+ * both calendars (no truncation) and deliberately does NOT catch errors:
+ * any calendar failure rejects so callers fail closed.
+ */
+export async function listBusyEvents(
+  timeMin: string,
+  timeMax: string
+): Promise<Array<{ start: string; end: string; isAllDay: boolean }>> {
+  const calendar = getCalendarClient();
+  const out: Array<{ start: string; end: string; isAllDay: boolean }> = [];
+  for (const calName of ["personal", "work"] as const) {
+    const calendarId = getCalendarId(calName);
+    let pageToken: string | undefined;
+    do {
+      const response = await calendar.events.list({
+        calendarId,
+        timeMin,
+        timeMax,
+        singleEvents: true,
+        orderBy: "startTime",
+        maxResults: 250,
+        pageToken,
+      });
+      for (const event of response.data.items ?? []) {
+        if (event.status === "cancelled" || !event.start) continue;
+        out.push({
+          start: event.start.dateTime ?? event.start.date ?? "",
+          end: event.end?.dateTime ?? event.end?.date ?? "",
+          isAllDay: !event.start.dateTime && Boolean(event.start.date),
+        });
+      }
+      pageToken = response.data.nextPageToken ?? undefined;
+    } while (pageToken);
+  }
+  return out;
+}
+
 export async function getUpcomingSchedule(
   options: ScheduleQueryOptions = {}
 ): Promise<ScheduleEventItem[]> {

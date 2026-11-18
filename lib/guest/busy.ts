@@ -1,4 +1,4 @@
-import { getUpcomingSchedule } from "../calendar";
+import { listBusyEvents } from "../calendar";
 import type { BusyInterval } from "./slots";
 
 /** The only calendar data allowed into lib/guest: no title, location, etc. */
@@ -10,19 +10,8 @@ export interface BusyEvent {
 
 type LoadFn = (fromIso: string, toIso: string) => Promise<BusyEvent[]>;
 
-const defaultLoad: LoadFn = async (timeMin, timeMax) => {
-  const items = await getUpcomingSchedule({
-    timeMin,
-    timeMax,
-    calendarName: "all",
-    maxResults: 250,
-  });
-  return items.map((it) => ({
-    start: it.start,
-    end: it.end,
-    isAllDay: it.isAllDay,
-  }));
-};
+// Rejects on any calendar failure (fail closed); callers must not swallow it.
+const defaultLoad: LoadFn = (timeMin, timeMax) => listBusyEvents(timeMin, timeMax);
 
 export async function fetchBusyIntervals(
   fromDate: string,

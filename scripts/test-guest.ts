@@ -190,6 +190,17 @@ async function runTests() {
     assert(got.length === 1, "(h) all-day event yields no interval");
     assert(got.every((g) => Object.keys(g).sort().join() === "end,start"), "(h) intervals carry only start/end");
     assert(seen !== null && (seen as [string, string])[0] === `${T}T00:00:00+08:00`, "(h) load range uses SGT day bounds");
+    // listBusyEvents needs the network and is not tested offline.
+    let rejected = false;
+    let result: unknown = null;
+    try {
+      result = await fetchBusyIntervals(T, T, async () => {
+        throw new Error("calendar down");
+      });
+    } catch {
+      rejected = true;
+    }
+    assert(rejected && result === null, "(h) fetchBusyIntervals rejects when load rejects (fails closed, no empty array)");
   }
 
   console.log(`\nResults: ${totalPassed} passed, ${totalFailed} failed.`);
