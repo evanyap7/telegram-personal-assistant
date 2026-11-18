@@ -1,6 +1,7 @@
 import type { GuestDeps } from "./handler";
 import type { BookingRequest, Friend } from "./types";
 import { isSlotFree } from "./slots";
+import { clearBlocked, markBlocked } from "./throttle";
 import { COPY, confirmedText, expiredFriendText, expiredOwnerText, formatSlotLabel } from "./copy";
 
 const SGT_OFFSET_MS = 8 * 3_600_000;
@@ -49,6 +50,8 @@ async function setFriend(
   const friend = await deps.store.getFriend(userId);
   if (!friend || friend.status === target) return ALREADY;
   await deps.store.setFriendStatus(userId, target);
+  if (target === "blocked") markBlocked(userId, deps.now());
+  else clearBlocked(userId);
   if (target === "approved") {
     await tell(deps, userId, COPY.allowed);
     return "Allowed";
@@ -59,6 +62,21 @@ async function setFriend(
 async function approve(deps: GuestDeps, bookingId: string): Promise<string> {
   const booking = await deps.store.getBooking(bookingId);
   if (!booking) return ALREADY;
+
+  // The cleanup cron is daily, so a pending request can outlive its 24h window.
+  const nowMs = deps.now();
+  const createdMs = Date.parse(booking.createdAt);
+  if (
+    booking.status === "pending" &&
+    ((Number.isFinite(createdMs) && nowMs - createdMs > EXPIRY_MS) || Date.parse(booking.start) <= nowMs)
+  ) {
+    if (await deps.store.transitionBooking(bookingId, "pending", "expired")) {
+      const friend = await deps.store.getFriend(booking.friendId);
+      if (friend?.status !== "blocked") await tell(deps, booking.friendId, expiredFriendText(bookingLabel(booking)));
+    }
+    return ALREADY;
+  }
+
   if (!(await deps.store.transitionBooking(bookingId, "pending", "approved"))) return ALREADY;
 
   // Claimed: every failure from here on must end in approved -> failed.
@@ -107,7 +125,8 @@ async function approve(deps: GuestDeps, bookingId: string): Promise<string> {
 async function decline(deps: GuestDeps, bookingId: string): Promise<string> {
   const booking = await deps.store.getBooking(bookingId);
   if (!booking || !(await deps.store.transitionBooking(bookingId, "pending", "declined"))) return ALREADY;
-  await tell(deps, booking.friendId, COPY.declined);
+  const friend = await deps.store.getFriend(booking.friendId);
+  if (friend?.status !== "blocked") await tell(deps, booking.friendId, COPY.declined);
   return "Declined";
 }
 
@@ -134,8 +153,12 @@ export async function handleOwnerCallback(
         answer = await decline(deps, arg);
       }
     }
-    await deps.clearKeyboard(i.chatId, i.messageId);
     await deps.answerCallback(i.callbackId, answer);
+    try {
+      await deps.clearKeyboard(i.chatId, i.messageId);
+    } catch (err) {
+      console.error("guest: clearKeyboard failed:", err instanceof Error ? err.message : "unknown");
+    }
   } catch (err) {
     console.error("guest owner callback error:", err instanceof Error ? err.message : "unknown");
     try {
@@ -162,7 +185,7 @@ export async function expireStaleBookings(deps: GuestDeps): Promise<number> {
       count++;
       const label = bookingLabel(b);
       const friend = await deps.store.getFriend(b.friendId);
-      await tell(deps, b.friendId, expiredFriendText(label));
+      if (friend?.status !== "blocked") await tell(deps, b.friendId, expiredFriendText(label));
       await tell(deps, deps.ownerId, expiredOwnerText(friend?.displayName ?? "Friend", label));
     } catch (err) {
       console.error("guest: expiry failed:", err instanceof Error ? err.message : "unknown");

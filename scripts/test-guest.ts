@@ -684,6 +684,190 @@ async function runTests() {
         console.error = origErr;
       }
     }
+
+    // ---------- (m) final-review fixes ----------
+    console.log("\n--- (m) final-review fixes ---");
+    {
+      const origErr = console.error;
+      console.error = () => {};
+      try {
+        const ownerCb = (t: ReturnType<typeof mk>, data: string) =>
+          handleOwnerCallback({ data, userId: OWNER, callbackId: `m${++uid}`, chatId: OWNER, messageId: 9 }, t.deps);
+        const lastAnswer = (t: ReturnType<typeof mk>) => t.answered[t.answered.length - 1]?.text;
+        async function approvedFriend(t: ReturnType<typeof mk>, id: number, name = "Sam") {
+          await t.store.createPendingFriend({ telegramUserId: id, displayName: name, username: null });
+          await t.store.setFriendStatus(id, "approved");
+        }
+        const groupMsg = (from: number, text: string): TelegramUpdate =>
+          ({
+            update_id: ++uid,
+            message: { message_id: uid, chat: { id: -4000, type: "group" }, from: { id: from, first_name: "Sam" }, text },
+          }) as TelegramUpdate;
+        const groupCb = (from: number, data: string): TelegramUpdate =>
+          ({ update_id: ++uid, callback_query: { id: `gc${uid}`, from: { id: from }, data, message: { message_id: 5, chat: { id: -4000, type: "group" } } } }) as TelegramUpdate;
+
+        // A1 throttle
+        {
+          const th = await import("../lib/guest/throttle");
+          th.resetThrottle();
+          let n = 0;
+          for (let i = 0; i < 10; i++) if (!th.shedGuestUpdate(1, 1_000)) n++;
+          assert(n === 10, "(m) A1: first 10 updates from one sender pass");
+          assert(th.shedGuestUpdate(1, 1_000) === true, "(m) A1: 11th update from the same sender is shed");
+          assert(th.shedGuestUpdate(2, 1_000) === false, "(m) A1: another sender is unaffected");
+          assert(th.shedGuestUpdate(1, 1_000 + 61_000) === false, "(m) A1: sender window refills after 60s");
+          th.resetThrottle();
+          let passed = 0;
+          for (let i = 0; i < 60; i++) if (!th.shedGuestUpdate(1000 + i, 5_000)) passed++;
+          assert(passed === 60 && th.shedGuestUpdate(9999, 5_000) === true, "(m) A1: 61st update from distinct senders is shed (global budget)");
+          assert(th.shedGuestUpdate(9999, 5_000 + 61_000) === false, "(m) A1: global budget refills after 60s");
+          th.resetThrottle();
+          th.markBlocked(42, 0);
+          assert(th.shedGuestUpdate(42, 1_000) === true, "(m) A1: known-blocked id is shed");
+          assert(th.shedGuestUpdate(42, 9 * 60_000) === true, "(m) A1: blocked still shed inside 10 min TTL");
+          assert(th.shedGuestUpdate(42, 11 * 60_000) === false, "(m) A1: blocked entry expires after TTL");
+          th.markBlocked(43, 0);
+          th.clearBlocked(43);
+          assert(th.shedGuestUpdate(43, 1_000) === false, "(m) A1: allow clears blocked id");
+          th.resetThrottle();
+          // handler / owner actions feed the blocked set
+          const t = mk();
+          await t.store.createPendingFriend({ telegramUserId: 44, displayName: "B", username: null });
+          await t.store.setFriendStatus(44, "blocked");
+          await handleGuestUpdate(msg(44, "hi"), t.deps);
+          assert(th.shedGuestUpdate(44, t.state.now) === true, "(m) A1: handler records blocked friends");
+          await ownerCb(t, "g:allow:44");
+          assert(th.shedGuestUpdate(44, t.state.now) === false, "(m) A1: owner allow clears blocked");
+          await ownerCb(t, "g:block:44");
+          assert(th.shedGuestUpdate(44, t.state.now) === true, "(m) A1: owner block records id");
+          th.resetThrottle();
+        }
+
+        // A2 private chat only
+        {
+          const t = mk({ intent: { intent: "availability", dateFrom: "2026-11-20", dateTo: "2026-11-20", durationMin: 60 } });
+          await approvedFriend(t, 800);
+          await handleGuestUpdate(groupMsg(800, "free tomorrow?"), t.deps);
+          assert(t.sent.length === 0 && t.state.parseCalls === 0, "(m) A2: group message from approved friend: no sends, no parse");
+          const t2 = mk();
+          await handleGuestUpdate(groupMsg(801, "hi"), t2.deps);
+          assert((await t2.store.getFriend(801)) === null && t2.sent.length === 0, "(m) A2: group message from stranger: no friend row, no owner ping");
+          const t3 = mk();
+          await approvedFriend(t3, 802);
+          await handleGuestUpdate(groupCb(802, "g:r:1795000000:60"), t3.deps);
+          assert((await t3.store.listOpenBookings(802)).length === 0 && t3.sent.length === 0, "(m) A2: group slot callback: no booking");
+          assert(t3.answered.length === 1 && t3.answered[0].text === undefined, "(m) A2: group callback answered with no text");
+        }
+
+        // A3 fail closed
+        {
+          const { rowToFriend, rowToBooking } = await import("../lib/guest/store");
+          const fr = (s: string) => rowToFriend(["1", "N", "", s, "", ""]).status;
+          assert(fr("Blocked") === "blocked" && fr("blocked ") === "blocked", "(m) A3: Blocked / 'blocked ' -> blocked");
+          assert(fr(" approved ") === "approved" && fr("PENDING") === "pending", "(m) A3: ' approved ' -> approved, PENDING -> pending");
+          assert(fr("removed") === "blocked" && fr("") === "blocked", "(m) A3: unknown / empty status -> blocked");
+          const bs = (s: string) => rowToBooking(["id", "1", "a", "b", "", s, ""]).status;
+          assert(bs("weird") === "failed" && bs("") === "failed", "(m) A3: unknown booking status -> failed");
+          assert(bs(" Approved ") === "approved" && bs("pending") === "pending", "(m) A3: valid booking statuses normalised");
+          const t = mk({ intent: { intent: "other" } });
+          await t.store.createPendingFriend({ telegramUserId: 810, displayName: "W", username: null });
+          (await t.store.getFriend(810));
+          await t.store.setFriendStatus(810, "removed" as unknown as "blocked");
+          await handleGuestUpdate(msg(810, "hi"), t.deps);
+          await handleGuestUpdate(cb(810, "g:r:1795000000:60"), t.deps);
+          assert(t.sent.length === 0 && t.state.parseCalls === 0, "(m) A3: unknown status friend gets zero sends and no parse");
+        }
+
+        // A4 null in parser output
+        {
+          const r = validateIntent({ intent: "availability", dateFrom: null, dateTo: null, partOfDay: null, durationMin: null }, "2026-11-19");
+          assert(
+            r.intent === "availability" && r.dateFrom === "2026-11-19" && r.dateTo === "2026-11-25" && r.durationMin === 60 && r.partOfDay === undefined,
+            "(m) A4: availability with nulls -> default week"
+          );
+          const q = validateIntent({ intent: "request_slot", requestedStart: "2026-11-20T15:00:00+08:00", durationMin: null, note: null }, "2026-11-19");
+          assert(q.intent === "request_slot" && q.note === "", "(m) A4: request_slot with note null works");
+          assert(validateIntent({ intent: "request_slot", requestedStart: null }, "2026-11-19").intent === "other", "(m) A4: null requestedStart -> other");
+        }
+
+        // A5 cell coercion
+        {
+          const { coerceCells } = await import("../lib/guest/store");
+          const out = coerceCells([[123456789012, "x", null, undefined, true]]);
+          assert(out[0].join("|") === "123456789012|x|||true", "(m) A5: cells coerced to strings");
+        }
+
+        // B1 invisible characters
+        {
+          const t = mk();
+          const u = msg(820, "hi");
+          (u.message!.from as { first_name?: string }).first_name = "Ev‮il​x y";
+          await handleGuestUpdate(u, t.deps);
+          const f = await t.store.getFriend(820);
+          assert(f?.displayName === "Evilxy", "(m) B1: bidi/zero-width/line-sep stripped from display name");
+          assert(!/[‮​]/.test(toOwner(t.sent)[0].text), "(m) B1: owner Allow prompt has no invisible characters");
+          const q = validateIntent({ intent: "request_slot", requestedStart: "2026-11-20T15:00:00+08:00", note: "a‮b​c⁧d" }, "2026-11-19");
+          assert(q.intent === "request_slot" && q.note === "abcd", "(m) B1: invisible characters stripped from note");
+        }
+
+        // B2 clearKeyboard failure is not a retry
+        {
+          const t = mk();
+          await approvedFriend(t, 830);
+          t.deps.clearKeyboard = async () => {
+            throw new Error("edit failed");
+          };
+          const booking = await t.store.createBooking({ friendId: 830, start: "2026-11-20T15:00:00+08:00", end: "2026-11-20T16:00:00+08:00", note: "" });
+          await ownerCb(t, `g:ok:${booking.id}`);
+          assert(lastAnswer(t) === "Approved" && lastAnswer(t) !== "Couldn't check right now, try again later", "(m) B2: clearKeyboard failure still answers Approved");
+          assert((await t.store.getBooking(booking.id))?.status === "approved", "(m) B2: booking approved");
+        }
+
+        // B3 stale at approve time
+        {
+          const t = mk();
+          await approvedFriend(t, 840);
+          const events: unknown[] = [];
+          t.deps.createEvent = async (e) => {
+            events.push(e);
+          };
+          const booking = await t.store.createBooking({ friendId: 840, start: "2099-01-01T15:00:00+08:00", end: "2099-01-01T16:00:00+08:00", note: "" });
+          t.state.now = Date.now() + 25 * 3_600_000;
+          await ownerCb(t, `g:ok:${booking.id}`);
+          assert(events.length === 0 && (await t.store.getBooking(booking.id))?.status === "expired", "(m) B3: 25h-old pending approve -> expired, no event");
+          assert(lastAnswer(t) === "Already handled", "(m) B3: answered Already handled");
+          assert(toFriend(t.sent, 840).length === 1 && /expired/.test(toFriend(t.sent, 840)[0].text), "(m) B3: friend told it expired");
+          const t2 = mk();
+          await approvedFriend(t2, 841);
+          const events2: unknown[] = [];
+          t2.deps.createEvent = async (e) => {
+            events2.push(e);
+          };
+          const b2 = await t2.store.createBooking({ friendId: 841, start: "2026-11-18T15:00:00+08:00", end: "2026-11-18T16:00:00+08:00", note: "" });
+          await ownerCb(t2, `g:ok:${b2.id}`);
+          assert(events2.length === 0 && (await t2.store.getBooking(b2.id))?.status === "expired", "(m) B3: past slot approve -> expired, no event");
+        }
+
+        // B4 no message to blocked friends
+        {
+          const t = mk();
+          await approvedFriend(t, 850);
+          const b = await t.store.createBooking({ friendId: 850, start: "2026-11-20T15:00:00+08:00", end: "2026-11-20T16:00:00+08:00", note: "" });
+          await t.store.setFriendStatus(850, "blocked");
+          t.state.now = Date.now() + 25 * 3_600_000;
+          assert((await expireStaleBookings(t.deps)) === 1 && (await t.store.getBooking(b.id))?.status === "expired", "(m) B4: blocked friend's booking still expires");
+          assert(toFriend(t.sent, 850).length === 0, "(m) B4: expiry sends nothing to a blocked friend");
+          const t2 = mk();
+          await approvedFriend(t2, 851);
+          const b2 = await t2.store.createBooking({ friendId: 851, start: "2026-11-20T15:00:00+08:00", end: "2026-11-20T16:00:00+08:00", note: "" });
+          await t2.store.setFriendStatus(851, "blocked");
+          await ownerCb(t2, `g:no:${b2.id}`);
+          assert((await t2.store.getBooking(b2.id))?.status === "declined" && toFriend(t2.sent, 851).length === 0, "(m) B4: decline sends nothing to a blocked friend");
+        }
+      } finally {
+        console.error = origErr;
+      }
+    }
   }
 
 

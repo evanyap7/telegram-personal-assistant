@@ -12,6 +12,7 @@ import {
 } from "./slots";
 import type { GuestIntent } from "./intent";
 import { notifyOwnerOfBooking } from "./owner-actions";
+import { markBlocked } from "./throttle";
 import { COPY, formatDateLabel, formatSlotLabel, formatTimeRange, ownerPingText } from "./copy";
 
 export interface GuestDeps {
@@ -45,7 +46,7 @@ function toSgtIso(ms: number): string {
 }
 
 export function sanitizeDisplayName(firstName?: string, username?: string): string {
-  const clean = (v?: string) => (v ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().slice(0, 64).trim();
+  const clean = (v?: string) => (v ?? "").replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim().slice(0, 64).trim();
   return clean(firstName) || clean(username) || "Friend";
 }
 
@@ -182,8 +183,16 @@ async function handleBody(update: TelegramUpdate, deps: GuestDeps): Promise<void
   const userId = from.id;
   const chatId = cbq ? cbq.message.chat.id : m!.chat.id;
 
+  // Private chats only: in a group, replies would reach everyone in it.
+  if (chatId !== userId) {
+    if (cbq) await deps.answerCallback(cbq.id);
+    return;
+  }
+
   const friend = await deps.store.getFriend(userId);
-  if (friend?.status === "blocked") {
+  // Fail closed: only pending and approved friends are served.
+  if (friend && friend.status !== "approved" && friend.status !== "pending") {
+    if (friend.status === "blocked") markBlocked(userId, deps.now());
     if (cbq) await deps.answerCallback(cbq.id);
     return;
   }
@@ -218,7 +227,7 @@ async function handleBody(update: TelegramUpdate, deps: GuestDeps): Promise<void
     return;
   }
 
-  // approved
+  if (friend.status !== "approved") return;
   if (!(await deps.store.takeMessageSlot(userId, deps.now(), MESSAGES_PER_HOUR))) {
     await deps.send(chatId, COPY.slowDown);
     return;
@@ -245,7 +254,8 @@ export async function handleGuestUpdate(update: TelegramUpdate, deps: GuestDeps)
   } catch (err) {
     console.error("guest handler error:", err instanceof Error ? err.message : "unknown");
     const chatId = update.callback_query?.message.chat.id ?? update.message?.chat.id;
-    if (chatId === undefined) return;
+    const senderId = update.callback_query?.from.id ?? update.message?.from.id;
+    if (chatId === undefined || chatId !== senderId) return;
     try {
       await deps.send(chatId, COPY.retry);
     } catch {

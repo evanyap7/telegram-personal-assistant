@@ -12,11 +12,11 @@ const DAY_MS = 86_400_000;
 
 const rawSchema = z.object({
   intent: z.enum(["availability", "request_slot"]),
-  dateFrom: z.string().optional(),
-  dateTo: z.string().optional(),
+  dateFrom: z.string().nullish(),
+  dateTo: z.string().nullish(),
   partOfDay: z.unknown().optional(),
   durationMin: z.unknown().optional(),
-  requestedStart: z.string().optional(),
+  requestedStart: z.string().nullish(),
   note: z.unknown().optional(),
 });
 
@@ -41,8 +41,7 @@ function clampDuration(v: unknown): number {
 
 function cleanNote(v: unknown): string {
   if (typeof v !== "string") return "";
-  // eslint-disable-next-line no-control-regex
-  return v.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().slice(0, 200);
+  return v.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim().slice(0, 200);
 }
 
 /** Validates untrusted model output. Never throws; any failure yields `other`. */
@@ -59,12 +58,12 @@ export function validateIntent(raw: unknown, todayDate: string): GuestIntent {
     if (r.intent === "availability") {
       let from = today;
       let to: number | null = null;
-      if (r.dateFrom !== undefined) {
+      if (r.dateFrom != null) {
         const f = dateMs(r.dateFrom);
         if (f === null) return OTHER;
         from = f;
       }
-      if (r.dateTo !== undefined) {
+      if (r.dateTo != null) {
         to = dateMs(r.dateTo);
         if (to === null) return OTHER;
       } else {
@@ -80,7 +79,7 @@ export function validateIntent(raw: unknown, todayDate: string): GuestIntent {
       return out;
     }
 
-    if (r.requestedStart === undefined || !OFFSET_ISO_RE.test(r.requestedStart) || Number.isNaN(Date.parse(r.requestedStart))) {
+    if (r.requestedStart == null || !OFFSET_ISO_RE.test(r.requestedStart) || Number.isNaN(Date.parse(r.requestedStart))) {
       return OTHER;
     }
     return {

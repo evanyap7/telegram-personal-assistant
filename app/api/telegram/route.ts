@@ -40,6 +40,7 @@ import { handleEgoText } from "@/lib/telegram/ego-pipeline";
 import { classifySender, createDefaultGuestDeps } from "@/lib/guest";
 import { handleGuestUpdate } from "@/lib/guest/handler";
 import { handleOwnerCallback } from "@/lib/guest/owner-actions";
+import { shedGuestUpdate } from "@/lib/guest/throttle";
 
 // Worst case is the orchestrator's 10 model steps plus a delegate agent's 8: about 60-90 s.
 // 120 s leaves headroom and stops a runaway agent loop well before the platform default.
@@ -85,6 +86,11 @@ export async function POST(request: Request) {
       return new Response("Forbidden", { status: 403 });
     }
 
+    // Load-shed non-owner traffic before any Sheets call. 200 stops Telegram retries.
+    if (senderKind === "guest" && senderId !== undefined && shedGuestUpdate(senderId)) {
+      return Response.json({ ok: true });
+    }
+
     const alreadyProcessed = await hasProcessedUpdate(updateId);
     if (alreadyProcessed) {
       log("telegram.webhook.duplicate_skipped", {
@@ -104,15 +110,15 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    const guestCallback = update.callback_query;
-    if (guestCallback?.data?.startsWith("g:")) {
+    const ownerGuestCallback = update.callback_query;
+    if (ownerGuestCallback?.data?.startsWith("g:")) {
       await handleOwnerCallback(
         {
-          data: guestCallback.data,
-          userId: guestCallback.from.id,
-          callbackId: guestCallback.id,
-          chatId: guestCallback.message.chat.id,
-          messageId: guestCallback.message.message_id,
+          data: ownerGuestCallback.data,
+          userId: ownerGuestCallback.from.id,
+          callbackId: ownerGuestCallback.id,
+          chatId: ownerGuestCallback.message.chat.id,
+          messageId: ownerGuestCallback.message.message_id,
         },
         createDefaultGuestDeps()
       );

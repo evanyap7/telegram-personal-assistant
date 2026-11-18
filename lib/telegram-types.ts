@@ -10,6 +10,7 @@ export const telegramUpdateSchema = z.object({
       date: z.number().optional(),
       chat: z.object({
         id: z.number(),
+        type: z.string().optional(),
       }),
       from: z.object({
         id: z.number(),
@@ -83,6 +84,7 @@ export const telegramUpdateSchema = z.object({
         date: z.number().optional(),
         chat: z.object({
           id: z.number(),
+          type: z.string().optional(),
         }),
       }),
     })

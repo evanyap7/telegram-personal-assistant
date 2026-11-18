@@ -78,15 +78,21 @@ async function ensureTab(tab: string): Promise<void> {
   ensuredTabs.add(tab);
 }
 
+/** UNFORMATTED_VALUE may return numbers/booleans; the row mappers expect strings. */
+export function coerceCells(values: unknown[][]): string[][] {
+  return values.map((row) => row.map((c) => (c === null || c === undefined ? "" : String(c))));
+}
+
 async function readRows(tab: string): Promise<string[][]> {
   await ensureTab(tab);
   const response = await withExponentialBackoff(() =>
     getSheetsClient().spreadsheets.values.get({
       spreadsheetId: getSpreadsheetId(),
       range: `${tab}!A2:${LAST_COL[tab]}`,
+      valueRenderOption: "UNFORMATTED_VALUE",
     })
   );
-  return (response.data.values ?? []) as string[][];
+  return coerceCells((response.data.values ?? []) as unknown[][]);
 }
 
 async function appendRow(tab: string, row: (string | number)[]): Promise<void> {
@@ -127,12 +133,24 @@ function friendToRow(f: Friend): (string | number)[] {
   ];
 }
 
-function rowToFriend(row: string[]): Friend {
+/** Fail closed: anything unrecognised is blocked. */
+function normalizeFriendStatus(v: string | undefined): FriendStatus {
+  const s = (v ?? "").trim().toLowerCase();
+  return s === "pending" || s === "approved" || s === "blocked" ? s : "blocked";
+}
+
+/** Anything unrecognised becomes terminal and non-actionable. */
+function normalizeBookingStatus(v: string | undefined): BookingStatus {
+  const s = (v ?? "").trim().toLowerCase();
+  return s === "pending" || s === "approved" || s === "declined" || s === "expired" || s === "failed" ? s : "failed";
+}
+
+export function rowToFriend(row: string[]): Friend {
   return {
     telegramUserId: Number(row[0]),
     displayName: row[1] ?? "",
     username: row[2] ? row[2] : null,
-    status: (row[3] ?? "pending") as FriendStatus,
+    status: normalizeFriendStatus(row[3]),
     firstSeenAt: row[4] ?? "",
     lastOwnerPingAt: row[5] ? row[5] : null,
   };
@@ -142,14 +160,14 @@ function bookingToRow(b: BookingRequest): (string | number)[] {
   return [b.id, b.friendId, b.start, b.end, b.note, b.status, b.createdAt];
 }
 
-function rowToBooking(row: string[]): BookingRequest {
+export function rowToBooking(row: string[]): BookingRequest {
   return {
     id: row[0] ?? "",
     friendId: Number(row[1]),
     start: row[2] ?? "",
     end: row[3] ?? "",
     note: row[4] ?? "",
-    status: (row[5] ?? "pending") as BookingStatus,
+    status: normalizeBookingStatus(row[5]),
     createdAt: row[6] ?? "",
   };
 }
