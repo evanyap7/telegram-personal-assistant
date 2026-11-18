@@ -1,6 +1,6 @@
 import type { InlineKeyboardMarkup } from "../telegram";
 import type { TelegramUpdate } from "../telegram-types";
-import type { BookingRequest, Friend, GuestStore } from "./types";
+import type { Friend, GuestStore } from "./types";
 import {
   GUEST_RULES,
   computeGuestWindows,
@@ -11,6 +11,7 @@ import {
   type Slot,
 } from "./slots";
 import type { GuestIntent } from "./intent";
+import { notifyOwnerOfBooking } from "./owner-actions";
 import { COPY, formatDateLabel, formatSlotLabel, formatTimeRange, ownerPingText } from "./copy";
 
 export interface GuestDeps {
@@ -46,19 +47,6 @@ function toSgtIso(ms: number): string {
 export function sanitizeDisplayName(firstName?: string, username?: string): string {
   const clean = (v?: string) => (v ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim().slice(0, 64).trim();
   return clean(firstName) || clean(username) || "Friend";
-}
-
-/** Stub: Task 5 moves this to owner-actions.ts and adds Approve/Decline buttons. */
-export async function notifyOwnerOfBooking(
-  deps: GuestDeps,
-  friend: Friend,
-  booking: BookingRequest
-): Promise<void> {
-  const s = Date.parse(booking.start);
-  const e = Date.parse(booking.end);
-  const label = formatSlotLabel({ start: toSgtIso(s), end: toSgtIso(e) });
-  const note = booking.note ? ` Note: ${booking.note}` : "";
-  await deps.send(deps.ownerId, `${friend.displayName} requested ${label}.${note}`);
 }
 
 function windowsText(days: DayWindows[]): string {
@@ -135,6 +123,9 @@ async function requestSlot(
       await notifyOwnerOfBooking(deps, friend, booking);
     } catch (err) {
       console.error("guest: owner notify failed:", err instanceof Error ? err.message : "unknown");
+      await deps.store.transitionBooking(booking.id, "pending", "failed");
+      await deps.send(chatId, COPY.retry);
+      return;
     }
     await deps.send(chatId, COPY.sent);
     return;

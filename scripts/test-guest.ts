@@ -16,6 +16,7 @@ import {
 import { validateIntent, parseGuestMessage } from "../lib/guest/intent";
 import { fetchBusyIntervals, type BusyEvent } from "../lib/guest/busy";
 import { handleGuestUpdate, type GuestDeps } from "../lib/guest/handler";
+import { handleOwnerCallback, expireStaleBookings } from "../lib/guest/owner-actions";
 import type { GuestIntent } from "../lib/guest/intent";
 import type { InlineKeyboardMarkup } from "../lib/telegram";
 import type { TelegramUpdate } from "../lib/telegram-types";
@@ -500,6 +501,173 @@ async function runTests() {
       await handleGuestUpdate(u, t.deps);
       const f = await t.store.getFriend(1000);
       assert(!!f && f.displayName.length <= 64 && !/[\u0000-\u001f]/.test(f.displayName) && f.displayName.startsWith("Evil"), "(j) displayName trimmed, stripped, capped");
+    }
+
+    // ---------- (k) owner decisions and expiry ----------
+    console.log("\n--- (k) owner decisions and expiry ---");
+    {
+      const origErr = console.error;
+      console.error = () => {};
+      try {
+        const ownerCb = (t: ReturnType<typeof mk>, data: string, userId = OWNER) =>
+          handleOwnerCallback({ data, userId, callbackId: `o${++uid}`, chatId: OWNER, messageId: 9 }, t.deps);
+        const lastAnswer = (t: ReturnType<typeof mk>) => t.answered[t.answered.length - 1]?.text;
+        async function setup(opts: Parameters<typeof mk>[0] = {}, name = "Sam", note = "coffee") {
+          const t = mk(opts);
+          const cleared: number[] = [];
+          t.deps.clearKeyboard = async (_c, m) => {
+            cleared.push(m);
+          };
+          const events: Array<{ title: string; start: string; end: string }> = [];
+          t.deps.createEvent = async (e) => {
+            events.push(e);
+          };
+          await t.store.createPendingFriend({ telegramUserId: 50, displayName: name, username: null });
+          await t.store.setFriendStatus(50, "approved");
+          const booking = await t.store.createBooking({
+            friendId: 50,
+            start: "2026-11-20T15:00:00+08:00",
+            end: "2026-11-20T16:00:00+08:00",
+            note,
+          });
+          return { ...t, cleared, events, booking };
+        }
+
+        // non-owner
+        {
+          const t = await setup();
+          await ownerCb(t, `g:ok:${t.booking.id}`, 77);
+          assert(t.events.length === 0 && (await t.store.getBooking(t.booking.id))?.status === "pending", "(k) non-owner approve: no event, still pending");
+          assert(lastAnswer(t) === "Not allowed" && t.cleared.length === 0, "(k) non-owner: Not allowed, keyboard untouched");
+          await ownerCb(t, "g:block:50", 77);
+          assert((await t.store.getFriend(50))?.status === "approved", "(k) non-owner block: no state change");
+        }
+        // notify format
+        {
+          const t = await setup({}, "*bold* <b>x</b> _y_", "[link](http://x)");
+          const { notifyOwnerOfBooking } = await import("../lib/guest/owner-actions");
+          const f = (await t.store.getFriend(50))!;
+          await notifyOwnerOfBooking(t.deps, f, t.booking);
+          const m = toOwner(t.sent)[0];
+          assert(m.text.includes("*bold* <b>x</b> _y_") && m.text.includes("[link](http://x)"), "(k) owner message carries markup characters literally");
+          assert(m.text === "*bold* <b>x</b> _y_ wants Fri 20 Nov, 3:00–4:00 PM. Note: [link](http://x)", "(k) owner message exact format");
+          const data = (m.markup?.inline_keyboard.flat() ?? []).map((b) => ("callback_data" in b ? b.callback_data : ""));
+          assert(data.join() === `g:ok:${t.booking.id},g:no:${t.booking.id}`, "(k) owner message has Approve/Decline buttons");
+          const t2 = await setup({}, "Al", "");
+          await notifyOwnerOfBooking(t2.deps, (await t2.store.getFriend(50))!, t2.booking);
+          assert(!/Note/.test(toOwner(t2.sent)[0].text), "(k) empty note omitted");
+        }
+        // approve twice
+        {
+          const t = await setup();
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          assert(t.events.length === 1 && t.events[0].title === "Meet Sam", "(k) approve twice: createEvent once, title Meet {name}");
+          assert(lastAnswer(t) === "Already handled", "(k) second approve answers Already handled");
+          assert(toFriend(t.sent, 50).map((m) => m.text).join() === "Confirmed: Fri 20 Nov, 3:00–4:00 PM", "(k) friend told Confirmed once");
+          assert((await t.store.getBooking(t.booking.id))?.status === "approved" && t.cleared.length === 2, "(k) approved status, keyboard cleared on each tap");
+        }
+        // slot became busy
+        {
+          const busy = [{ start: Date.parse("2026-11-20T15:30:00+08:00"), end: Date.parse("2026-11-20T16:30:00+08:00") }];
+          const t = await setup({ busy });
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          assert(t.events.length === 0 && (await t.store.getBooking(t.booking.id))?.status === "failed", "(k) busy slot: no event, failed");
+          assert(toOwner(t.sent).length === 1 && /no longer free/.test(toOwner(t.sent)[0].text), "(k) busy slot: owner told");
+          assert(toFriend(t.sent, 50)[0].text === "Sorry, that slot just got taken, want to pick another?", "(k) busy slot: friend told");
+        }
+        // getBusy rejects
+        {
+          const t = await setup({ busyFails: true });
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          assert(t.events.length === 0 && (await t.store.getBooking(t.booking.id))?.status === "failed", "(k) getBusy rejects: failed, no event");
+          assert(toOwner(t.sent)[0].text === "Couldn't check the calendar" && !/exploded|secret/.test(toFriend(t.sent, 50)[0].text), "(k) getBusy rejects: owner told, friend text leaks nothing");
+        }
+        // createEvent rejects
+        {
+          const t = await setup();
+          t.deps.createEvent = async () => {
+            throw new Error("gcal 500 SECRET_DETAIL");
+          };
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          assert((await t.store.getBooking(t.booking.id))?.status === "failed", "(k) createEvent rejects: failed");
+          assert(toOwner(t.sent)[0].text === "Couldn't add it to the calendar", "(k) createEvent rejects: owner told");
+          const ft = toFriend(t.sent, 50)[0].text;
+          assert(ft === "Couldn't check right now, try again later" && !/SECRET|gcal|500/.test(ft), "(k) createEvent rejects: friend text has no error");
+        }
+        // decline
+        {
+          const t = await setup({}, "Sam", "my secret reason");
+          await ownerCb(t, `g:no:${t.booking.id}`);
+          const ft = toFriend(t.sent, 50);
+          assert(ft.length === 1 && ft[0].text === "That time doesn't work — want to try another?", "(k) decline: exact copy");
+          assert(!/secret|reason|coffee/.test(ft[0].text) && (await t.store.getBooking(t.booking.id))?.status === "declined", "(k) decline: no note leaked, declined");
+          await ownerCb(t, `g:no:${t.booking.id}`);
+          assert(lastAnswer(t) === "Already handled" && toFriend(t.sent, 50).length === 1, "(k) decline twice: Already handled, no second message");
+        }
+        // allow / block
+        {
+          const t = mk();
+          await t.store.createPendingFriend({ telegramUserId: 60, displayName: "Zed", username: null });
+          await ownerCb(t, "g:allow:60");
+          assert((await t.store.getFriend(60))?.status === "approved", "(k) allow flips to approved");
+          assert(toFriend(t.sent, 60)[0].text === "You're in — ask me when Evan is free", "(k) allow: friend told");
+          await ownerCb(t, "g:allow:60");
+          assert(lastAnswer(t) === "Already handled" && toFriend(t.sent, 60).length === 1, "(k) allow twice: Already handled, nothing sent");
+          await ownerCb(t, "g:block:60");
+          assert((await t.store.getFriend(60))?.status === "blocked" && toFriend(t.sent, 60).length === 1, "(k) block approved friend: blocked, friend told nothing");
+          await ownerCb(t, "g:block:60");
+          assert(lastAnswer(t) === "Already handled", "(k) block twice: Already handled");
+          await ownerCb(t, "g:allow:9999");
+          assert(lastAnswer(t) === "Already handled" && t.sent.length === 1, "(k) unknown friend: Already handled, nothing sent");
+          await t.store.createPendingFriend({ telegramUserId: 61, displayName: "Y", username: null });
+          await ownerCb(t, "g:block:61");
+          assert((await t.store.getFriend(61))?.status === "blocked", "(k) block pending friend");
+        }
+        // notify failure in the friend request flow
+        {
+          const t = mk({ intent: { intent: "request_slot", requestedStart: "2026-11-20T15:00:00+08:00", durationMin: 60, note: "" } });
+          await t.store.createPendingFriend({ telegramUserId: 70, displayName: "A", username: null });
+          await t.store.setFriendStatus(70, "approved");
+          const realSend = t.deps.send;
+          t.deps.send = async (c, text, mk2) => {
+            if (c === OWNER) throw new Error("owner unreachable");
+            return realSend(c, text, mk2);
+          };
+          await handleGuestUpdate(msg(70, "book"), t.deps);
+          const ft = toFriend(t.sent, 70);
+          assert(ft.length === 1 && ft[0].text === "Couldn't check right now, try again later", "(k) owner notify fails: friend gets retry, not Sent");
+          assert((await t.store.listOpenBookings(70)).length === 0, "(k) owner notify fails: booking no longer pending");
+        }
+        // expiry
+        {
+          const t = await setup();
+          const real = Date.now();
+          t.state.now = real + 3_600_000;
+          assert((await expireStaleBookings(t.deps)) === 0 && (await t.store.getBooking(t.booking.id))?.status === "pending", "(k) 1h-old booking left alone");
+          t.state.now = real + 25 * 3_600_000;
+          const n = await expireStaleBookings(t.deps);
+          assert(n === 1 && (await t.store.getBooking(t.booking.id))?.status === "expired", "(k) 25h-old booking expired, count 1");
+          assert(toFriend(t.sent, 50)[0].text === "Your request for Fri 20 Nov, 3:00–4:00 PM expired — want to pick another time?", "(k) expiry: friend told");
+          assert(toOwner(t.sent).length === 1 && toOwner(t.sent)[0].text === "Sam's request for Fri 20 Nov, 3:00–4:00 PM expired.", "(k) expiry: owner told once");
+          assert((await expireStaleBookings(t.deps)) === 0 && toOwner(t.sent).length === 1, "(k) expiry idempotent");
+          await ownerCb(t, `g:ok:${t.booking.id}`);
+          assert(lastAnswer(t) === "Already handled" && t.events.length === 0, "(k) approve on expired: Already handled, no event");
+          // one failure does not stop the rest
+          const t2 = await setup();
+          await t2.store.createBooking({ friendId: 50, start: "2026-11-21T15:00:00+08:00", end: "2026-11-21T16:00:00+08:00", note: "" });
+          t2.state.now = Date.now() + 25 * 3_600_000;
+          const realSend = t2.deps.send;
+          let calls = 0;
+          t2.deps.send = async (c, text, m2) => {
+            if (calls++ === 0) throw new Error("boom");
+            return realSend(c, text, m2);
+          };
+          assert((await expireStaleBookings(t2.deps)) === 2, "(k) one send failure does not stop the others");
+        }
+      } finally {
+        console.error = origErr;
+      }
     }
   }
 

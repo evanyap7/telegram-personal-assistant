@@ -15,6 +15,9 @@ export const COPY = {
   help: `I can show when ${OWNER_NAME} is free and send a request — try 'free Thursday evening?'`,
   nothingFree: "nothing free",
   noneToOffer: "Nothing free in that range.",
+  allowed: `You're in — ask me when ${OWNER_NAME} is free`,
+  declined: "That time doesn't work — want to try another?",
+  slotTaken: "Sorry, that slot just got taken, want to pick another?",
 } as const;
 
 const SGT_OFFSET_MS = 8 * 3_600_000;
@@ -58,4 +61,16 @@ export function formatDateLabel(date: string): string {
 
 export function ownerPingText(name: string, username: string | null): string {
   return `Allow ${name}${username ? ` (@${username})` : ""}?`;
+}
+
+export function confirmedText(label: string): string {
+  return `Confirmed: ${label}`;
+}
+
+export function expiredFriendText(label: string): string {
+  return `Your request for ${label} expired — want to pick another time?`;
+}
+
+export function expiredOwnerText(name: string, label: string): string {
+  return `${name}'s request for ${label} expired.`;
 }
