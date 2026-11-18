@@ -7,6 +7,13 @@
  */
 
 import { createMemoryStore } from "../lib/guest/memory-store";
+import {
+  computeGuestWindows,
+  pickCandidateSlots,
+  isSlotFree,
+  type BusyInterval,
+} from "../lib/guest/slots";
+import { fetchBusyIntervals, type BusyEvent } from "../lib/guest/busy";
 
 let totalPassed = 0;
 let totalFailed = 0;
@@ -98,6 +105,91 @@ async function runTests() {
     assert((await store.takeMessageSlot(7, t, 30)) === false, "31st message blocked");
     assert((await store.takeMessageSlot(8, t, 30)) === true, "other friend unaffected");
     assert((await store.takeMessageSlot(7, t + 61 * 60_000, 30)) === true, "allowed again 61 minutes later");
+  }
+
+  // Slot engine
+  {
+    const sgt = (d: string, hm: string) => Date.parse(`${d}T${hm}:00+08:00`);
+    const T = "2026-11-20";
+    const now = sgt("2026-11-19", "09:00");
+    const win = (busy: BusyInterval[], extra: object = {}) =>
+      computeGuestWindows({ busy, fromDate: T, toDate: T, durationMin: 60, nowMs: now, ...extra });
+
+    const a = win([]);
+    assert(
+      a.length === 1 && a[0].date === T && a[0].windows.length === 1 &&
+        a[0].windows[0].start === `${T}T10:00:00+08:00` && a[0].windows[0].end === `${T}T21:00:00+08:00`,
+      "(a) empty day gives one 10:00-21:00 window with +08:00 ISO"
+    );
+
+    const b = win([{ start: sgt(T, "13:00"), end: sgt(T, "14:00") }])[0].windows;
+    assert(
+      b.length === 2 && b[0].end === `${T}T12:45:00+08:00` && b[1].start === `${T}T14:15:00+08:00`,
+      "(b) busy 13-14 leaves windows ending 12:45 and starting 14:15"
+    );
+
+    const c = win([], { partOfDay: "evening" })[0].windows;
+    assert(
+      c.length === 1 && c[0].start === `${T}T17:00:00+08:00` && c[0].end === `${T}T21:00:00+08:00`,
+      "(c) evening windows within 17:00-21:00"
+    );
+    const cm = win([], { partOfDay: "morning" })[0].windows;
+    assert(cm[0].start === `${T}T10:00:00+08:00` && cm[0].end === `${T}T12:00:00+08:00`, "(c) morning is 10-12");
+
+    const d = win([{ start: sgt(T, "10:00"), end: sgt(T, "20:00") }])[0].windows;
+    assert(d.length === 0, "(d) window shorter than duration dropped (zero windows, day kept)");
+
+    const e = computeGuestWindows({
+      busy: [], fromDate: "2026-11-01", toDate: "2027-01-31", durationMin: 60, nowMs: now,
+    });
+    assert(
+      e[0].date === "2026-11-19" && e[e.length - 1].date === "2026-12-03" && e.length === 15,
+      "(e) from/to clamped to today..today+14"
+    );
+    assert(e[0].windows[0].start === "2026-11-19T10:00:00+08:00", "(e) today window starts at 10:00 when now is 09:00");
+    const lateNow = sgt("2026-11-19", "14:10");
+    const e2 = computeGuestWindows({ busy: [], fromDate: "2026-11-19", toDate: "2026-11-19", durationMin: 60, nowMs: lateNow });
+    assert(e2[0].windows[0].start === "2026-11-19T14:10:00+08:00", "(e) windows earlier than now are cut at now");
+    assert(
+      computeGuestWindows({ busy: [], fromDate: "2026-12-20", toDate: "2026-12-25", durationMin: 60, nowMs: now }).length === 0,
+      "(e) fully beyond horizon returns []"
+    );
+
+    const busy: BusyInterval[] = [{ start: sgt(T, "13:00"), end: sgt(T, "14:00") }];
+    assert(isSlotFree([], sgt(T, "23:00"), sgt(T, "23:30"), now) === false, "(f) 23:00 not free");
+    assert(isSlotFree([], sgt("2026-11-18", "15:00"), sgt("2026-11-18", "16:00"), now) === false, "(f) past not free");
+    assert(isSlotFree(busy, sgt(T, "14:05"), sgt(T, "15:00"), now) === false, "(f) overlapping padding not free");
+    assert(isSlotFree(busy, sgt(T, "11:00"), sgt(T, "12:00"), now) === true, "(f) clean gap free");
+    assert(isSlotFree(busy, sgt(T, "14:15"), sgt(T, "15:00"), now) === true, "(f) exactly at padding edge free");
+    assert(isSlotFree([], sgt(T, "09:30"), sgt(T, "10:30"), now) === false, "(f) before 10:00 not free");
+    assert(isSlotFree([], sgt(T, "20:30"), sgt(T, "21:30"), now) === false, "(f) past 21:00 not free");
+    assert(isSlotFree([], sgt(T, "15:00"), sgt(T, "15:00"), now) === false, "(f) end <= start not free");
+    assert(isSlotFree([], sgt("2026-12-09", "15:00"), sgt("2026-12-09", "16:00"), now) === false, "(R1) clean slot on today+20 not free");
+    assert(isSlotFree([], sgt("2026-12-03", "15:00"), sgt("2026-12-03", "16:00"), now) === true, "(R1) today+14 is free");
+
+    const many = computeGuestWindows({ busy: [], fromDate: "2026-11-19", toDate: "2026-12-03", durationMin: 60, nowMs: now });
+    const picks = pickCandidateSlots(many, 60);
+    const perDay: Record<string, number> = {};
+    for (const p of picks) perDay[p.start.slice(0, 10)] = (perDay[p.start.slice(0, 10)] ?? 0) + 1;
+    assert(picks.length === 8, "(g) at most 8 slots (exactly 8 here)");
+    assert(Object.values(perDay).every((n) => n <= 3), "(g) at most 3 per day");
+    assert(picks.every((p) => /T\d\d:(00|30):00\+08:00$/.test(p.start)), "(g) starts on :00 or :30");
+    const odd = pickCandidateSlots([{ date: T, windows: [{ start: `${T}T14:15:00+08:00`, end: `${T}T16:00:00+08:00` }] }], 60);
+    assert(odd.length === 2 && odd[0].start === `${T}T14:30:00+08:00` && odd[0].end === `${T}T15:30:00+08:00`, "(g) rounds up to :30 and fits window");
+
+    // (h) privacy: fake load, no network
+    const events: BusyEvent[] = [
+      { start: "2026-11-20", end: "2026-11-21", isAllDay: true },
+      { start: `${T}T13:00:00+08:00`, end: `${T}T14:00:00+08:00`, isAllDay: false },
+    ];
+    let seen: [string, string] | null = null;
+    const got = await fetchBusyIntervals(T, T, async (f, t) => {
+      seen = [f, t];
+      return events;
+    });
+    assert(got.length === 1, "(h) all-day event yields no interval");
+    assert(got.every((g) => Object.keys(g).sort().join() === "end,start"), "(h) intervals carry only start/end");
+    assert(seen !== null && (seen as [string, string])[0] === `${T}T00:00:00+08:00`, "(h) load range uses SGT day bounds");
   }
 
   console.log(`\nResults: ${totalPassed} passed, ${totalFailed} failed.`);
