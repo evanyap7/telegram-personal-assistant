@@ -26,6 +26,7 @@ const SUITES = [
   { name: "Bill Splitting & IOU Ledger", command: "npm run test:split" },
   { name: "Calendar Free Slots & Travel Buffers", command: "npm run test:calendar" },
   { name: "Calendar Batch Creation (rate-limit retry, tags)", command: "npm run test:calendar-batch" },
+  { name: "Friend Scheduling (guest mode)", command: "npm run test:guest" },
   { name: "Personal Memory & Contact Resolution", command: "npm run test:memory" },
   { name: "App Output Channel (Telegram diversion)", command: "npm run test:app-channel" },
   { name: "App Token Sign-In (session cookie, Origin check)", command: "npm run test:app-auth" },

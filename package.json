@@ -17,6 +17,7 @@
     "test:intents": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-intents.ts",
     "test:split": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-split.ts",
     "test:calendar": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-calendar-slots.ts",
+    "test:guest": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-guest.ts",
     "test:calendar-batch": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-calendar-batch.ts",
     "test:memory": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-memory.ts",
     "test:app-auth": "node --experimental-strip-types --import ./scripts/bench/register.mjs scripts/test-app-auth.ts",
