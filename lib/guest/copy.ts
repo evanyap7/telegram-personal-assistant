@@ -17,6 +17,9 @@ export const COPY = {
   noneToOffer: "Nothing free in that range.",
   allowed: `You're in — ask me when ${OWNER_NAME} is free`,
   declined: "That time doesn't work — want to try another?",
+  pickStart: "Pick a start time:",
+  pickLength: "How long?",
+  rangeGone: "That time just filled up, ask me again for fresh times.",
   slotTaken: "Sorry, that slot just got taken, want to pick another?",
 } as const;
 
@@ -38,6 +41,17 @@ function clock(ms: number): { h: number; m: number; ap: "AM" | "PM" } {
   const d = sgt(ms);
   const h24 = d.getUTCHours();
   return { h: h24 % 12 === 0 ? 12 : h24 % 12, m: d.getUTCMinutes(), ap: h24 < 12 ? "AM" : "PM" };
+}
+
+/** "2:30 PM", in SGT. */
+export function formatClock(ms: number): string {
+  const c = clock(ms);
+  return `${c.h}:${String(c.m).padStart(2, "0")} ${c.ap}`;
+}
+
+/** "30 min" | "1 hr" | "1.5 hr". */
+export function formatLength(min: number): string {
+  return min < 60 ? `${min} min` : `${min / 60} hr`;
 }
 
 /** "3:00–4:00 PM" (or "11:30 AM–12:30 PM" across noon), in SGT. */

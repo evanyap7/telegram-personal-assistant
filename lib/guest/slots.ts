@@ -88,33 +88,6 @@ export function computeGuestWindows(i: {
   return out;
 }
 
-export function pickCandidateSlots(
-  days: DayWindows[],
-  durationMin: number,
-  max = 8,
-  perDay = 3
-): Slot[] {
-  const step = 30 * MIN_MS;
-  const dur = durationMin * MIN_MS;
-  const picked: Slot[] = [];
-  for (const day of days) {
-    let count = 0;
-    for (const w of day.windows) {
-      const wStart = Date.parse(w.start);
-      const wEnd = Date.parse(w.end);
-      // SGT offset is a multiple of 30 min, so epoch rounding lands on :00/:30.
-      for (let s = Math.ceil(wStart / step) * step; s + dur <= wEnd; s += step) {
-        if (picked.length >= max) return picked;
-        if (count >= perDay) break;
-        picked.push({ start: toSgtIso(s), end: toSgtIso(s + dur) });
-        count++;
-      }
-      if (count >= perDay) break;
-    }
-  }
-  return picked;
-}
-
 export function isSlotFree(
   busy: BusyInterval[],
   startMs: number,

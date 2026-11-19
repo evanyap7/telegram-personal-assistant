@@ -5,15 +5,22 @@ import {
   GUEST_RULES,
   computeGuestWindows,
   isSlotFree,
-  pickCandidateSlots,
   type BusyInterval,
   type DayWindows,
-  type Slot,
 } from "./slots";
 import type { GuestIntent } from "./intent";
 import { notifyOwnerOfBooking } from "./owner-actions";
 import { markBlocked } from "./throttle";
-import { COPY, formatDateLabel, formatSlotLabel, formatTimeRange, ownerPingText } from "./copy";
+import {
+  COPY,
+  formatClock,
+  formatDateLabel,
+  formatDayLabel,
+  formatLength,
+  formatSlotLabel,
+  formatTimeRange,
+  ownerPingText,
+} from "./copy";
 
 export interface GuestDeps {
   store: GuestStore;
@@ -22,6 +29,7 @@ export interface GuestDeps {
   send: (chatId: number, text: string, markup?: InlineKeyboardMarkup) => Promise<void>;
   answerCallback: (callbackId: string, text?: string) => Promise<void>;
   clearKeyboard: (chatId: number, messageId: number) => Promise<void>;
+  edit: (chatId: number, messageId: number, text: string, markup?: InlineKeyboardMarkup) => Promise<void>;
   getBusy: (fromDate: string, toDate: string) => Promise<BusyInterval[]>;
   parse: (text: string, todayDate: string) => Promise<GuestIntent>;
   createEvent: (i: { title: string; start: string; end: string }) => Promise<void>;
@@ -33,6 +41,10 @@ const MAX_PENDING_FRIENDS = 20;
 const MAX_OPEN_BOOKINGS = 3;
 const MESSAGES_PER_HOUR = 30;
 const REPING_MS = 24 * 3_600_000;
+const MAX_RANGE_BUTTONS = 10;
+const MAX_PICK_SPAN_SEC = 11 * 3600;
+const STEP_MS = 30 * 60_000;
+const LENGTHS_MIN = [30, 60, 90, 120, 180, 240];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function sgtDate(ms: number): string {
@@ -59,13 +71,23 @@ function windowsText(days: DayWindows[]): string {
     .join("\n");
 }
 
-function slotButtons(slots: Slot[], durationMin: number): InlineKeyboardMarkup | undefined {
-  if (slots.length === 0) return undefined;
-  return {
-    inline_keyboard: slots.map((s) => [
-      { text: formatSlotLabel(s), callback_data: `g:r:${Math.floor(Date.parse(s.start) / 1000)}:${durationMin}` },
-    ]),
-  };
+function rangeButtons(days: DayWindows[]): InlineKeyboardMarkup | undefined {
+  const rows: Array<[{ text: string; callback_data: string }]> = [];
+  for (const d of days) {
+    for (const w of d.windows) {
+      if (rows.length >= MAX_RANGE_BUTTONS) break;
+      const a = Math.floor(Date.parse(w.start) / 1000);
+      const b = Math.floor(Date.parse(w.end) / 1000);
+      rows.push([{ text: formatSlotLabel(w), callback_data: `g:w:${a}:${b}` }]);
+    }
+  }
+  return rows.length ? { inline_keyboard: rows } : undefined;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const rows: T[][] = [];
+  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
+  return rows;
 }
 
 async function showAvailability(
@@ -84,9 +106,8 @@ async function showAvailability(
     durationMin: i.durationMin,
     nowMs,
   });
-  const slots = pickCandidateSlots(days, i.durationMin);
   const body = days.length ? windowsText(days) : COPY.noneToOffer;
-  await deps.send(chatId, prefix + body, slotButtons(slots, i.durationMin));
+  await deps.send(chatId, prefix + body, rangeButtons(days));
 }
 
 async function requestSlot(
@@ -133,9 +154,8 @@ async function requestSlot(
   }
 
   const days = computeGuestWindows({ busy, fromDate: from, toDate: to, durationMin, nowMs });
-  const slots = pickCandidateSlots(days, durationMin);
   const body = days.length ? windowsText(days) : COPY.noneToOffer;
-  await deps.send(chatId, `${COPY.notFree}\n${body}`, slotButtons(slots, durationMin));
+  await deps.send(chatId, `${COPY.notFree}\n${body}`, rangeButtons(days));
 }
 
 /** Strict `g:r:<startEpochSec>:<durMin>`; null if malformed. */
@@ -146,6 +166,64 @@ function parseSlotCallback(data: string): { startMs: number; durationMin: number
   const dur = Number(m[2]);
   if (!Number.isSafeInteger(sec) || !Number.isInteger(dur) || dur < 15 || dur > 240) return null;
   return { startMs: sec * 1000, durationMin: dur };
+}
+
+/** Strict `g:w|s:<startSec>:<endSec>`; end > start, span <= 11 h. */
+function parsePickCallback(data: string): { kind: "w" | "s"; startMs: number; endMs: number } | null {
+  const m = /^g:([ws]):(\d{1,12}):(\d{1,12})$/.exec(data);
+  if (!m) return null;
+  const a = Number(m[2]);
+  const b = Number(m[3]);
+  if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b) || b <= a || b - a > MAX_PICK_SPAN_SEC) return null;
+  return { kind: m[1] as "w" | "s", startMs: a * 1000, endMs: b * 1000 };
+}
+
+/** `g:w`: edit the message to a start-time picker for the tapped range. */
+async function handlePickRange(deps: GuestDeps, chatId: number, messageId: number, startMs: number, endMs: number): Promise<void> {
+  const nowMs = deps.now();
+  const busy = await deps.getBusy(sgtDate(startMs), sgtDate(endMs));
+  const starts: number[] = [];
+  for (let s = Math.ceil(startMs / STEP_MS) * STEP_MS; s + STEP_MS <= endMs; s += STEP_MS) {
+    if (isSlotFree(busy, s, s + STEP_MS, nowMs)) starts.push(s);
+  }
+  if (starts.length === 0) {
+    await deps.edit(chatId, messageId, COPY.rangeGone);
+    return;
+  }
+  const buttons = starts.map((s) => ({
+    text: formatClock(s),
+    callback_data: `g:s:${s / 1000}:${endMs / 1000}`,
+  }));
+  await deps.edit(
+    chatId,
+    messageId,
+    `${formatDayLabel(startMs)}, ${formatTimeRange(startMs, endMs)}\n${COPY.pickStart}`,
+    { inline_keyboard: chunk(buttons, 4) }
+  );
+}
+
+/** `g:s`: edit the message to a length picker for the tapped start. */
+async function handlePickStart(deps: GuestDeps, chatId: number, messageId: number, startMs: number, rangeEndMs: number): Promise<void> {
+  const nowMs = deps.now();
+  const busy = await deps.getBusy(sgtDate(startMs), sgtDate(rangeEndMs));
+  const lengths = LENGTHS_MIN.filter((min) => {
+    const end = startMs + min * 60_000;
+    return end <= rangeEndMs && isSlotFree(busy, startMs, end, nowMs);
+  });
+  if (lengths.length === 0) {
+    await deps.edit(chatId, messageId, COPY.rangeGone);
+    return;
+  }
+  const buttons = lengths.map((min) => ({
+    text: formatLength(min),
+    callback_data: `g:r:${startMs / 1000}:${min}`,
+  }));
+  await deps.edit(
+    chatId,
+    messageId,
+    `${formatDayLabel(startMs)}, from ${formatClock(startMs)}\n${COPY.pickLength}`,
+    { inline_keyboard: chunk(buttons, 3) }
+  );
 }
 
 async function handleStranger(deps: GuestDeps, chatId: number, userId: number, from: { first_name?: string; username?: string }): Promise<void> {
@@ -199,13 +277,27 @@ async function handleBody(update: TelegramUpdate, deps: GuestDeps): Promise<void
 
   if (cbq) {
     await deps.answerCallback(cbq.id);
-    const req = friend?.status === "approved" ? parseSlotCallback(cbq.data ?? "") : null;
-    if (!friend || !req) return;
+    if (!friend || friend.status !== "approved") return;
+    const data = cbq.data ?? "";
+    const req = parseSlotCallback(data);
+    const pick = req ? null : parsePickCallback(data);
+    if (!req && !pick) return;
     if (!(await deps.store.takeMessageSlot(userId, deps.now(), MESSAGES_PER_HOUR))) {
       await deps.send(chatId, COPY.slowDown);
       return;
     }
-    await requestSlot(deps, friend, chatId, req.startMs, req.durationMin, "");
+    const messageId = cbq.message.message_id;
+    if (pick) {
+      const step = pick.kind === "w" ? handlePickRange : handlePickStart;
+      await step(deps, chatId, messageId, pick.startMs, pick.endMs);
+      return;
+    }
+    try {
+      await deps.clearKeyboard(chatId, messageId);
+    } catch (err) {
+      console.error("guest: clearKeyboard failed:", err instanceof Error ? err.message : "unknown");
+    }
+    await requestSlot(deps, friend, chatId, req!.startMs, req!.durationMin, "");
     return;
   }
 

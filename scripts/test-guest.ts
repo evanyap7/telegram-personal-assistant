@@ -9,7 +9,6 @@
 import { createMemoryStore } from "../lib/guest/memory-store";
 import {
   computeGuestWindows,
-  pickCandidateSlots,
   isSlotFree,
   type BusyInterval,
 } from "../lib/guest/slots";
@@ -174,16 +173,6 @@ async function runTests() {
     assert(isSlotFree([], sgt("2026-12-09", "15:00"), sgt("2026-12-09", "16:00"), now) === false, "(R1) clean slot on today+20 not free");
     assert(isSlotFree([], sgt("2026-12-03", "15:00"), sgt("2026-12-03", "16:00"), now) === true, "(R1) today+14 is free");
 
-    const many = computeGuestWindows({ busy: [], fromDate: "2026-11-19", toDate: "2026-12-03", durationMin: 60, nowMs: now });
-    const picks = pickCandidateSlots(many, 60);
-    const perDay: Record<string, number> = {};
-    for (const p of picks) perDay[p.start.slice(0, 10)] = (perDay[p.start.slice(0, 10)] ?? 0) + 1;
-    assert(picks.length === 8, "(g) at most 8 slots (exactly 8 here)");
-    assert(Object.values(perDay).every((n) => n <= 3), "(g) at most 3 per day");
-    assert(picks.every((p) => /T\d\d:(00|30):00\+08:00$/.test(p.start)), "(g) starts on :00 or :30");
-    const odd = pickCandidateSlots([{ date: T, windows: [{ start: `${T}T14:15:00+08:00`, end: `${T}T16:00:00+08:00` }] }], 60);
-    assert(odd.length === 2 && odd[0].start === `${T}T14:30:00+08:00` && odd[0].end === `${T}T15:30:00+08:00`, "(g) rounds up to :30 and fits window");
-
     // (h) privacy: fake load, no network
     const events: BusyEvent[] = [
       { start: "2026-11-20", end: "2026-11-21", isAllDay: true },
@@ -292,9 +281,12 @@ async function runTests() {
     const OWNER = 1;
     const NOW0 = Date.parse("2026-11-19T09:00:00+08:00");
     type Sent = { chatId: number; text: string; markup?: InlineKeyboardMarkup };
+    type Edited = { chatId: number; messageId: number; text: string; markup?: InlineKeyboardMarkup };
     function mk(opts: { busy?: BusyInterval[]; intent?: GuestIntent; busyFails?: boolean } = {}) {
       const sent: Sent[] = [];
       const answered: Array<{ id: string; text?: string }> = [];
+      const edited: Edited[] = [];
+      const kbCleared: Array<{ chatId: number; messageId: number }> = [];
       const state = { now: NOW0, parseCalls: 0, busyCalls: 0, intent: opts.intent ?? ({ intent: "other" } as GuestIntent) };
       const store = createMemoryStore();
       const deps: GuestDeps = {
@@ -307,7 +299,12 @@ async function runTests() {
         answerCallback: async (id, text) => {
           answered.push({ id, text });
         },
-        clearKeyboard: async () => {},
+        clearKeyboard: async (chatId, messageId) => {
+          kbCleared.push({ chatId, messageId });
+        },
+        edit: async (chatId, messageId, text, markup) => {
+          edited.push({ chatId, messageId, text, markup });
+        },
         getBusy: async () => {
           state.busyCalls++;
           if (opts.busyFails) throw new Error("calendar exploded at /secret/stack.ts:12");
@@ -319,7 +316,7 @@ async function runTests() {
         },
         createEvent: async () => {},
       };
-      return { deps, sent, answered, state, store };
+      return { deps, sent, answered, edited, kbCleared, state, store };
     }
     let uid = 0;
     const msg = (from: number, text?: string, extra: Record<string, unknown> = {}): TelegramUpdate =>
@@ -401,7 +398,7 @@ async function runTests() {
       const btns = r.markup?.inline_keyboard.flat() ?? [];
       const datas = btns.map((b) => ("callback_data" in b ? (b.callback_data as string) : ""));
       assert(/PM|AM/.test(r.text) && r.text.includes("Thu 19 Nov"), "(j) availability reply lists window times");
-      assert(datas.length >= 1 && datas.every((d) => d.startsWith("g:r:") && Buffer.byteLength(d) <= 64), "(j) availability buttons g:r: and <=64 bytes");
+      assert(datas.length >= 1 && datas.every((d) => d.startsWith("g:w:") && Buffer.byteLength(d) <= 64), "(j) availability buttons g:w: and <=64 bytes");
       assert(!/busy|event|meeting|calendar/i.test(r.text), "(j) availability reply leaks nothing about busy");
     }
     // nothing free day
@@ -424,7 +421,7 @@ async function runTests() {
       await t.store.setFriendStatus(600, "approved");
       await handleGuestUpdate(msg(600, "book"), t.deps);
       const r = toFriend(t.sent, 600)[0];
-      const has = (r.markup?.inline_keyboard.flat() ?? []).some((b) => "callback_data" in b && (b.callback_data as string).startsWith("g:r:"));
+      const has = (r.markup?.inline_keyboard.flat() ?? []).some((b) => "callback_data" in b && (b.callback_data as string).startsWith("g:w:"));
       assert((await t.store.listOpenBookings(600)).length === 0, `(j) request ${label}: no booking`);
       assert(/isn't free/.test(r.text) && has, `(j) request ${label}: alternatives offered`);
       assert(toOwner(t.sent).length === 0, `(j) request ${label}: owner not pinged`);
@@ -464,6 +461,119 @@ async function runTests() {
       await t3.store.createPendingFriend({ telegramUserId: 702, displayName: "A", username: null });
       await handleGuestUpdate(cb(702, `g:r:${sec}:60`), t3.deps);
       assert((await t3.store.listOpenBookings(702)).length === 0 && t3.answered.length === 1, "(j) g:r: from non-approved ignored");
+    }
+    // ---------- (n) range -> start -> length picker ----------
+    {
+      const sec = (iso: string) => Date.parse(iso) / 1000;
+      const R0 = sec("2026-11-19T14:00:00+08:00");
+      const R1 = sec("2026-11-19T18:00:00+08:00");
+      const labelsOf = (m?: InlineKeyboardMarkup) => (m?.inline_keyboard.flat() ?? []).map((b) => b.text);
+      const datasOf = (m?: InlineKeyboardMarkup) => (m?.inline_keyboard.flat() ?? []).map((b) => ("callback_data" in b ? (b.callback_data as string) : ""));
+      const approved = async (t: ReturnType<typeof mk>, id: number) => {
+        await t.store.createPendingFriend({ telegramUserId: id, displayName: "A", username: null });
+        await t.store.setFriendStatus(id, "approved");
+      };
+
+      // availability reply: one g:w button per free window, <= 10
+      {
+        const busy: BusyInterval[] = [{ start: Date.parse("2026-11-19T12:00:00+08:00"), end: Date.parse("2026-11-19T13:00:00+08:00") }];
+        const t = mk({ busy, intent: { intent: "availability", dateFrom: "2026-11-19", dateTo: "2026-11-30", durationMin: 60 } });
+        await approved(t, 1000);
+        await handleGuestUpdate(msg(1000, "free?"), t.deps);
+        const d = datasOf(toFriend(t.sent, 1000)[0].markup);
+        assert(d.length === 10 && d.every((x) => /^g:w:\d+:\d+$/.test(x) && Buffer.byteLength(x) <= 64), "(n) availability: <=10 g:w buttons, <=64 bytes");
+        assert(labelsOf(toFriend(t.sent, 1000)[0].markup)[0] === "Thu 19 Nov, 10:00–11:45 AM", "(n) range button label has day and range");
+      }
+
+      // tap range, no busy
+      {
+        const t = mk();
+        await approved(t, 1001);
+        await handleGuestUpdate(cb(1001, `g:w:${R0}:${R1}`), t.deps);
+        const e = t.edited[0];
+        const labels = labelsOf(e?.markup);
+        assert(!!e && e.chatId === 1001 && e.messageId === 5 && t.sent.length === 0, "(n) g:w edits the tapped message in place");
+        assert(e.text.includes("Thu 19 Nov") && e.text.includes("Pick a start time:"), "(n) g:w edit text has day and prompt");
+        assert(
+          labels.length === 8 && labels[0] === "2:00 PM" && labels[7] === "5:30 PM" && datasOf(e.markup)[0] === `g:s:${R0}:${R1}`,
+          "(n) g:w offers 2:00 PM..5:30 PM as g:s buttons"
+        );
+        assert((e.markup?.inline_keyboard ?? []).every((row) => row.length <= 4), "(n) start rows have <=4 buttons");
+      }
+      // padding around busy 15:00-16:00
+      {
+        const busy: BusyInterval[] = [{ start: Date.parse("2026-11-19T15:00:00+08:00"), end: Date.parse("2026-11-19T16:00:00+08:00") }];
+        const t = mk({ busy });
+        await approved(t, 1002);
+        await handleGuestUpdate(cb(1002, `g:w:${R0}:${R1}`), t.deps);
+        const labels = labelsOf(t.edited[0]?.markup);
+        assert(labels.length > 0 && !labels.includes("3:00 PM") && !labels.includes("4:00 PM") && labels.includes("2:00 PM") && labels.includes("4:30 PM"), "(n) starts respect busy padding");
+      }
+      // tap start -> lengths
+      {
+        const S = sec("2026-11-19T14:30:00+08:00");
+        const t = mk();
+        await approved(t, 1003);
+        await handleGuestUpdate(cb(1003, `g:s:${S}:${R1}`), t.deps);
+        const e = t.edited[0];
+        assert(!!e && e.text.includes("Thu 19 Nov, from 2:30 PM") && e.text.includes("How long?"), "(n) g:s edit text");
+        assert(labelsOf(e.markup).join(",") === "30 min,1 hr,1.5 hr,2 hr,3 hr", "(n) lengths end by range end (no 4 hr)");
+        assert(datasOf(e.markup).join(",") === [30, 60, 90, 120, 180].map((m) => `g:r:${S}:${m}`).join(","), "(n) length buttons are g:r:<start>:<min>");
+        assert((e.markup?.inline_keyboard ?? []).every((row) => row.length <= 3), "(n) length rows have <=3 buttons");
+        // a length ending exactly at range end is allowed
+        const t2 = mk();
+        await approved(t2, 1004);
+        await handleGuestUpdate(cb(1004, `g:s:${R0}:${R1}`), t2.deps);
+        assert(labelsOf(t2.edited[0]?.markup).join(",") === "30 min,1 hr,1.5 hr,2 hr,3 hr,4 hr", "(n) length ending exactly at range end allowed");
+      }
+      // busy 15:30-16:00 limits lengths from 14:00
+      {
+        const busy: BusyInterval[] = [{ start: Date.parse("2026-11-19T15:30:00+08:00"), end: Date.parse("2026-11-19T16:00:00+08:00") }];
+        const t = mk({ busy });
+        await approved(t, 1005);
+        await handleGuestUpdate(cb(1005, `g:s:${R0}:${R1}`), t.deps);
+        assert(labelsOf(t.edited[0]?.markup).join(",") === "30 min,1 hr", "(n) lengths respect busy padding");
+      }
+      // filled up
+      {
+        const GONE = "That time just filled up, ask me again for fresh times.";
+        const full: BusyInterval[] = [{ start: Date.parse("2026-11-19T00:00:00+08:00"), end: Date.parse("2026-11-19T23:59:00+08:00") }];
+        const t = mk({ busy: full });
+        await approved(t, 1006);
+        await handleGuestUpdate(cb(1006, `g:w:${R0}:${R1}`), t.deps);
+        await handleGuestUpdate(cb(1006, `g:s:${R0}:${R1}`), t.deps);
+        assert(t.edited.length === 2 && t.edited.every((e) => e.text === GONE && !e.markup), "(n) fully busy range/start: filled-up edit, no buttons");
+        const t2 = mk();
+        await approved(t2, 1007);
+        await handleGuestUpdate(cb(1007, `g:w:${sec("2026-11-19T23:00:00+08:00")}:${sec("2026-11-19T23:59:00+08:00")}`), t2.deps);
+        await handleGuestUpdate(cb(1007, `g:w:${sec("2026-12-19T14:00:00+08:00")}:${sec("2026-12-19T18:00:00+08:00")}`), t2.deps);
+        assert(t2.edited.length === 2 && t2.edited.every((e) => e.text === GONE && !e.markup), "(n) forged late/far range: filled-up edit");
+        // malformed
+        const t3 = mk();
+        await approved(t3, 1008);
+        for (const d of ["g:w:1", "g:w:5:3", `g:w:${R0}:${R0 + 12 * 3600}`, "g:s:abc:1", `g:s:${R0}:${R0}`]) await handleGuestUpdate(cb(1008, d), t3.deps);
+        assert(t3.edited.length === 0 && t3.sent.length === 0 && t3.answered.length === 5, "(n) malformed picker callbacks: no edit, no send, answered");
+        // pending friend
+        const t4 = mk();
+        await t4.store.createPendingFriend({ telegramUserId: 1009, displayName: "A", username: null });
+        await handleGuestUpdate(cb(1009, `g:w:${R0}:${R1}`), t4.deps);
+        assert(t4.edited.length === 0 && t4.answered.length === 1, "(n) pending friend g:w: answered, no edit");
+      }
+      // g:r clears the picker keyboard and books
+      {
+        const t = mk();
+        await approved(t, 1010);
+        await handleGuestUpdate(cb(1010, `g:r:${R0}:60`), t.deps);
+        assert(t.kbCleared.length === 1 && t.kbCleared[0].chatId === 1010 && t.kbCleared[0].messageId === 5, "(n) g:r clears the picker keyboard");
+        assert((await t.store.listOpenBookings(1010)).length === 1, "(n) g:r creates one booking");
+        const t2 = mk();
+        await approved(t2, 1011);
+        t2.deps.clearKeyboard = async () => {
+          throw new Error("telegram down");
+        };
+        await handleGuestUpdate(cb(1011, `g:r:${R0}:60`), t2.deps);
+        assert((await t2.store.listOpenBookings(1011)).length === 1, "(n) clearKeyboard throw still creates the booking");
+      }
     }
     // rate limit
     {
@@ -905,10 +1015,15 @@ async function runTests() {
         send: async (chatId, text, markup) => {
           if (chatId === FRIEND) friendTexts.push(text);
           const d = (markup?.inline_keyboard.flat() ?? []).map((b) => ("callback_data" in b ? b.callback_data : ""));
-          if (chatId === FRIEND) slotData = d.find((x) => x.startsWith("g:r:")) ?? slotData;
+          if (chatId === FRIEND) slotData = d.find((x) => x.startsWith("g:w:")) ?? slotData;
         },
         answerCallback: async () => {},
         clearKeyboard: async () => {},
+        edit: async (_chatId, _messageId, text, markup) => {
+          friendTexts.push(text);
+          const d = (markup?.inline_keyboard.flat() ?? []).map((b) => ("callback_data" in b ? b.callback_data : ""));
+          slotData = d.find((x) => x.startsWith("g:s:") || x.startsWith("g:r:")) ?? slotData;
+        },
         getBusy: (from, to) =>
           fetchBusyIntervals(from, to, async () => [
             {
@@ -940,7 +1055,12 @@ async function runTests() {
       await handleGuestUpdate(upd(1, "hi"), deps);
       await ownerCb(`g:allow:${FRIEND}`);
       await handleGuestUpdate(upd(2, "free tomorrow evening?"), deps);
+      assert(slotData.startsWith("g:w:"), "(l) availability offered a range button");
       await handleGuestUpdate(tap(3, slotData), deps);
+      assert(slotData.startsWith("g:s:"), "(l) range tap offered start buttons");
+      await handleGuestUpdate(tap(4, slotData), deps);
+      assert(slotData.startsWith("g:r:"), "(l) start tap offered length buttons");
+      await handleGuestUpdate(tap(5, slotData), deps);
       const booking = (await store.listOpenBookings(FRIEND))[0];
       if (booking) await ownerCb(`g:ok:${booking.id}`);
     } finally {
@@ -950,7 +1070,7 @@ async function runTests() {
       console.info = orig.info;
     }
     const hits = (texts: string[]) => texts.filter((t) => SECRETS.some((x) => t.includes(x)));
-    assert(friendTexts.length > 0 && slotData.startsWith("g:r:"), "(l) walk reached availability with a slot button");
+    assert(friendTexts.length > 0 && slotData.startsWith("g:r:"), "(l) walk reached a length button");
     assert(approved && !SECRETS.some((x) => eventTitle.includes(x)), "(l) walk reached approval; event title has no secrets");
     assert(hits(friendTexts).length === 0, "(l) no event detail in any friend-bound text");
     assert(modelText.length > 0 && hits(modelText).length === 0, "(l) no event detail in any model prompt");

@@ -1,6 +1,7 @@
 import { createCalendarEvent } from "../calendar";
 import {
   answerTelegramCallback,
+  editTelegramMessage,
   removeTelegramInlineKeyboard,
   sendTelegramMessage,
 } from "../telegram";
@@ -28,6 +29,7 @@ export function createDefaultGuestDeps(): GuestDeps {
     send: (chatId, text, markup) => sendTelegramMessage(chatId, text, markup, null),
     answerCallback: answerTelegramCallback,
     clearKeyboard: removeTelegramInlineKeyboard,
+    edit: (chatId, messageId, text, markup) => editTelegramMessage(chatId, messageId, text, markup, null),
     getBusy: (fromDate, toDate) => fetchBusyIntervals(fromDate, toDate),
     parse: (text, todayDate) => parseGuestMessage(text, todayDate, defaultParserRun),
     createEvent: async ({ title, start, end }) => {
