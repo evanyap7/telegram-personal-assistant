@@ -24,6 +24,7 @@ flowchart LR
 | 💸 **Finance** | Apple Pay taps and DBS PayLah!/Grab emails auto-log and auto-categorise. 15+ currencies, bill splitting with an IOU ledger, budgets with pacing alerts, CSV export. |
 | 🏋️ **Workout coach** | Reads today's session from a 90-day powerlifting programme, walks me through it set by set, and starts a rest timer after every set. Log with `100 x 5`, or swap, add and drop exercises in plain language, for today or for good. |
 | 📅 **Calendar** | Routes events to personal or work, finds free slots, reschedules in plain language, turns a schedule screenshot into up to 30 events (optionally tagged, e.g. *"tag it as HACK 2026"*) and retries through Google's rate limits. |
+| 🤝 **Friend scheduling** | Approved friends message the bot to ask when I'm free, then tap a free range, a start time and a length. I approve or decline with one tap. They only ever see times, and the model reads their message but never my calendar. |
 | ⏰ **To-dos & briefs** | *"remind me to call John"* nags every 30 minutes until done. Morning agenda, evening recap, weekly spending report. |
 | 📬 **Email, memory, search** | Inbox triage and voice-drafted replies, encrypted notes, cited web answers. |
 
