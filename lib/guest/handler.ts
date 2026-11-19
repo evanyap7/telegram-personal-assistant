@@ -73,9 +73,9 @@ function windowsText(days: DayWindows[]): string {
 
 function rangeButtons(days: DayWindows[]): InlineKeyboardMarkup | undefined {
   const rows: Array<[{ text: string; callback_data: string }]> = [];
-  for (const d of days) {
+  outer: for (const d of days) {
     for (const w of d.windows) {
-      if (rows.length >= MAX_RANGE_BUTTONS) break;
+      if (rows.length >= MAX_RANGE_BUTTONS) break outer;
       const a = Math.floor(Date.parse(w.start) / 1000);
       const b = Math.floor(Date.parse(w.end) / 1000);
       rows.push([{ text: formatSlotLabel(w), callback_data: `g:w:${a}:${b}` }]);
@@ -178,9 +178,20 @@ function parsePickCallback(data: string): { kind: "w" | "s"; startMs: number; en
   return { kind: m[1] as "w" | "s", startMs: a * 1000, endMs: b * 1000 };
 }
 
+/** True when the SGT date of `ms` is today..today+horizon (guards forged callback bounds). */
+function inHorizon(ms: number, nowMs: number): boolean {
+  const date = sgtDate(ms);
+  const today = sgtDate(nowMs);
+  return DATE_RE.test(date) && date >= today && date <= addDays(today, GUEST_RULES.horizonDays);
+}
+
 /** `g:w`: edit the message to a start-time picker for the tapped range. */
 async function handlePickRange(deps: GuestDeps, chatId: number, messageId: number, startMs: number, endMs: number): Promise<void> {
   const nowMs = deps.now();
+  if (!inHorizon(startMs, nowMs)) {
+    await deps.edit(chatId, messageId, COPY.rangeGone);
+    return;
+  }
   const busy = await deps.getBusy(sgtDate(startMs), sgtDate(endMs));
   const starts: number[] = [];
   for (let s = Math.ceil(startMs / STEP_MS) * STEP_MS; s + STEP_MS <= endMs; s += STEP_MS) {
@@ -205,6 +216,10 @@ async function handlePickRange(deps: GuestDeps, chatId: number, messageId: numbe
 /** `g:s`: edit the message to a length picker for the tapped start. */
 async function handlePickStart(deps: GuestDeps, chatId: number, messageId: number, startMs: number, rangeEndMs: number): Promise<void> {
   const nowMs = deps.now();
+  if (!inHorizon(startMs, nowMs)) {
+    await deps.edit(chatId, messageId, COPY.rangeGone);
+    return;
+  }
   const busy = await deps.getBusy(sgtDate(startMs), sgtDate(rangeEndMs));
   const lengths = LENGTHS_MIN.filter((min) => {
     const end = startMs + min * 60_000;
@@ -297,7 +312,8 @@ async function handleBody(update: TelegramUpdate, deps: GuestDeps): Promise<void
     } catch (err) {
       console.error("guest: clearKeyboard failed:", err instanceof Error ? err.message : "unknown");
     }
-    await requestSlot(deps, friend, chatId, req!.startMs, req!.durationMin, "");
+    if (!req) return;
+    await requestSlot(deps, friend, chatId, req.startMs, req.durationMin, "");
     return;
   }
 

@@ -493,7 +493,7 @@ async function runTests() {
         const e = t.edited[0];
         const labels = labelsOf(e?.markup);
         assert(!!e && e.chatId === 1001 && e.messageId === 5 && t.sent.length === 0, "(n) g:w edits the tapped message in place");
-        assert(e.text.includes("Thu 19 Nov") && e.text.includes("Pick a start time:"), "(n) g:w edit text has day and prompt");
+        assert(e.text === "Thu 19 Nov, 2:00–6:00 PM\nPick a start time:", "(n) g:w edit text has exact header and prompt");
         assert(
           labels.length === 8 && labels[0] === "2:00 PM" && labels[7] === "5:30 PM" && datasOf(e.markup)[0] === `g:s:${R0}:${R1}`,
           "(n) g:w offers 2:00 PM..5:30 PM as g:s buttons"
@@ -558,6 +558,27 @@ async function runTests() {
         await t4.store.createPendingFriend({ telegramUserId: 1009, displayName: "A", username: null });
         await handleGuestUpdate(cb(1009, `g:w:${R0}:${R1}`), t4.deps);
         assert(t4.edited.length === 0 && t4.answered.length === 1, "(n) pending friend g:w: answered, no edit");
+      }
+      // forged out-of-horizon bounds: filled-up edit, busy never fetched
+      {
+        const t = mk();
+        await approved(t, 1012);
+        const far = sec("2026-12-19T14:00:00+08:00");
+        for (const d of ["g:w:999999999990:999999999999", "g:s:999999999990:999999999999", `g:w:${far}:${far + 3600}`, `g:s:${far}:${far + 3600}`]) {
+          await handleGuestUpdate(cb(1012, d), t.deps);
+        }
+        assert(
+          t.edited.length === 4 && t.edited.every((e) => e.text === "That time just filled up, ask me again for fresh times." && !e.markup) && t.state.busyCalls === 0 && t.sent.length === 0,
+          "(n) forged out-of-horizon g:w/g:s: filled-up edit, getBusy not called"
+        );
+      }
+      // rate limit applies to picker taps
+      {
+        const t = mk();
+        await approved(t, 1013);
+        for (let i = 0; i < 30; i++) await t.store.takeMessageSlot(1013, NOW0, 30);
+        await handleGuestUpdate(cb(1013, `g:w:${R0}:${R1}`), t.deps);
+        assert(t.edited.length === 0 && /slow/i.test(toFriend(t.sent, 1013)[0]?.text ?? ""), "(n) g:w over the hourly limit: slow-down, no edit");
       }
       // g:r clears the picker keyboard and books
       {
