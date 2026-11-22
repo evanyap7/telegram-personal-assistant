@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reportError } from "@/lib/report-error";
 import { isAuthorizedCronRequest } from "@/lib/security";
 import { pruneExpiredPendingActions } from "@/lib/pending-actions";
 import { pruneOldChatHistory } from "@/lib/chat-history";
@@ -49,6 +50,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error: unknown) {
     console.error("Cleanup cron failed:", error);
+    await reportError("cron.cleanup", error);
     const errMsg = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       {

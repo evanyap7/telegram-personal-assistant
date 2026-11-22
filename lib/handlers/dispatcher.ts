@@ -539,7 +539,8 @@ defaultRegistry
       const triage = await triageUnreadInbox(intent.limit ?? 5);
       await sendTelegramMessage(ctx.chatId, triage.formattedSummary);
       return { completionStatus: "inbox_triage" };
-    } catch {
+    } catch (error) {
+      console.error("inbox_triage failed:", error);
       await sendTelegramMessage(
         ctx.chatId,
         "⚠️ Could not check Gmail inbox. Ensure Gmail credentials are authorized."
@@ -553,7 +554,8 @@ defaultRegistry
       const res = await syncPayLahTransactions();
       await sendTelegramMessage(ctx.chatId, `✅ Synced ${res.logged} new transaction(s).`);
       return { completionStatus: "sync_transactions_success" };
-    } catch {
+    } catch (error) {
+      console.error("sync_transactions failed:", error);
       await sendTelegramMessage(ctx.chatId, "⚠️ Failed to sync transactions from Gmail.");
       return { completionStatus: "sync_transactions_failed" };
     }
@@ -571,7 +573,8 @@ defaultRegistry
         await sendMorningBrief(ctx.chatId);
       }
       return { completionStatus: "daily_briefing" };
-    } catch {
+    } catch (error) {
+      console.error("daily_briefing failed:", error);
       await sendTelegramMessage(ctx.chatId, "⚠️ Could not generate briefing at this time.");
       return { completionStatus: "daily_briefing_failed" };
     }

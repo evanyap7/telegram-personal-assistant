@@ -889,10 +889,17 @@ export async function recordConfirmedCalendarEvent(input: {
   if (!row) return;
 
   const sheets = getSheetsClient();
-  let payload: Record<string, unknown> = {};
+  let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(row.payloadJson);
-  } catch {}
+  } catch (error) {
+    // Writing {eventId} over an unreadable payload would destroy the stored confirmation data.
+    console.error("pending_actions.record_confirmed_unparseable", {
+      token: input.token,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
 
   payload.eventId = input.eventId;
 

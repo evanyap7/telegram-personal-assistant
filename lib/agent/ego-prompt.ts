@@ -6,9 +6,13 @@ import { SECURITY_SYSTEM_GUARDRAIL } from "@/lib/security";
 import { spokenInputNote, type InputMode } from "@/lib/agent/input-mode";
 import { NO_REPLY } from "@/lib/agent/ego-reply";
 
+/** `undefined` means the session store could not be read, which is not the same as "no session". */
 export function describeWorkoutContext(
-  state: { day: number; logged: unknown[] } | null
+  state: { day: number; logged: unknown[] } | null | undefined
 ): string {
+  if (state === undefined) {
+    return "The workout session status could not be read right now. Do not claim there is no session and do not start a new workout; if the user is talking about a workout, tell them the workout store is temporarily unavailable and to retry in a moment.";
+  }
   if (!state) return "There is no active workout session.";
   const sets = state.logged.length;
   return `A guided workout session is active (program day ${state.day}, ${sets} set${

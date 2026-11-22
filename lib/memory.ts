@@ -154,15 +154,10 @@ export async function saveMemory(input: SaveMemoryInput): Promise<MemoryRecord> 
   const spreadsheetId = getSpreadsheetId();
   const nowStr = formatSingaporeTimestamp(new Date());
 
-  const category = input.category || "note";
   const cleanKey = input.key.trim();
   const cleanVal = input.value.trim();
   const tags = (input.tags || []).map((t) => t.trim()).filter(Boolean);
   const tagsStr = tags.join(", ");
-
-  // Credentials are encrypted at rest when MEMORY_ENCRYPTION_KEY is set.
-  const storedVal =
-    category === "credential" ? encryptSecret(cleanVal) ?? cleanVal : cleanVal;
 
   const existing = await listAllMemories();
   const match = existing.find(
@@ -170,6 +165,24 @@ export async function saveMemory(input: SaveMemoryInput): Promise<MemoryRecord> 
       m.key.toLowerCase() === cleanKey.toLowerCase() &&
       (!input.category || m.category === input.category)
   );
+
+  // A re-save without a category keeps the existing row's category instead of resetting it to "note".
+  const category = input.category ?? match?.category ?? "note";
+  if (match?.category === "credential" && category !== "credential") {
+    throw new Error(`Refusing to move credential "${cleanKey}" out of the credential category.`);
+  }
+
+  // Credentials are always encrypted at rest; never fall back to plaintext.
+  let storedVal = cleanVal;
+  if (category === "credential") {
+    const encrypted = encryptSecret(cleanVal);
+    if (encrypted === null) {
+      throw new Error(
+        "MEMORY_ENCRYPTION_KEY is not set, so the credential was not saved (it would be stored as plaintext)."
+      );
+    }
+    storedVal = encrypted;
+  }
 
   if (match) {
     // Update existing row

@@ -1,4 +1,5 @@
 import { encodeSse, type AppEvent } from "./events";
+import { reportError } from "@/lib/report-error";
 import { ERROR_REPLY } from "./turn";
 
 // Request and response helpers shared by the app's streaming endpoints. Free of the EGO
@@ -132,6 +133,7 @@ export function sseResponse(
         .then(() => run(emit))
         .catch((err) => {
           log("app.sse.run_failed", { error: err instanceof Error ? err.message : String(err) });
+          void reportError("app.sse.run_failed", err);
           emit({ type: "error", message: ERROR_REPLY });
         })
         .finally(finish);

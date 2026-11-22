@@ -1,7 +1,8 @@
 import { telegramUpdateSchema } from "@/lib/telegram-types";
 import { safeCompare } from "@/lib/security";
 import {
-  hasProcessedUpdate,
+  getUpdateRecord,
+  isStaleProcessing,
   markUpdateCompleted,
   markUpdateFailed,
   markUpdateStarted,
@@ -38,6 +39,7 @@ import { isEgoEnabled } from "@/lib/agent/ego-flag";
 import type { InputMode } from "@/lib/agent/input-mode";
 import { handleEgoText } from "@/lib/telegram/ego-pipeline";
 import { classifySender, createDefaultGuestDeps } from "@/lib/guest";
+import { reportError } from "@/lib/report-error";
 import { handleGuestUpdate } from "@/lib/guest/handler";
 import { handleOwnerCallback } from "@/lib/guest/owner-actions";
 import { shedGuestUpdate } from "@/lib/guest/throttle";
@@ -91,12 +93,33 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    const alreadyProcessed = await hasProcessedUpdate(updateId);
-    if (alreadyProcessed) {
-      log("telegram.webhook.duplicate_skipped", {
-        updateId,
-        durationMs: Date.now() - startedAt,
-      });
+    const priorRecord = await getUpdateRecord(updateId);
+    if (priorRecord) {
+      // A row stuck in "processing" means the earlier attempt was killed (timeout/crash).
+      // Re-running could repeat side effects, so tell the owner instead of dropping it silently.
+      if (isStaleProcessing(priorRecord)) {
+        log("telegram.webhook.stale_processing", { updateId });
+        await markUpdateFailed(updateId, "timed out before completing");
+        const staleChatId = update.message?.chat.id;
+        if (senderKind === "owner" && staleChatId) {
+          try {
+            await sendTelegramMessage(
+              staleChatId,
+              "⏱️ That last message timed out before I finished. Check whether it went through, and resend it if not."
+            );
+          } catch (error) {
+            log("telegram.webhook.stale_notice_failed", {
+              updateId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      } else {
+        log("telegram.webhook.duplicate_skipped", {
+          updateId,
+          durationMs: Date.now() - startedAt,
+        });
+      }
       return Response.json({ ok: true });
     }
 
@@ -301,7 +324,7 @@ export async function POST(request: Request) {
       role: "user",
       text,
       actionType: message.voice || message.audio ? "voice_transcribed" : "incoming_text",
-    }).catch(() => {});
+    }).catch((error) => log("telegram.webhook.chat_log_failed", { updateId, error: errorText(error) }));
 
     // EGO orchestrator: one tool-calling agent replaces the regex fast-paths and the
     // intent classifier below. Set EGO_ORCHESTRATOR=off to fall back to the old pipeline.
@@ -506,8 +529,12 @@ export async function POST(request: Request) {
     if (updateId !== null) {
       try {
         await markUpdateFailed(updateId, message);
-      } catch {}
+      } catch (markError) {
+        log("telegram.webhook.mark_failed_error", { updateId, error: errorText(markError) });
+      }
     }
+
+    await reportError("telegram.webhook.failed", error, updateId !== null ? `update ${updateId}` : undefined);
 
     if (currentChatId) {
       try {

@@ -1210,14 +1210,58 @@ export async function hasProcessedUpdate(updateId: number): Promise<boolean> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${UPDATE_LOG_SHEET}!A2:A`,
-  });
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A2:A`,
+    })
+  );
 
   const existingIds = response.data.values ?? [];
 
   return existingIds.some((row) => row[0] === String(updateId));
+}
+
+export interface UpdateRecord {
+  status: string;
+  /** Epoch ms parsed from the started-at ISO column, or null if it was missing or malformed. */
+  startedAt: number | null;
+}
+
+/** A turn still "processing" after this long was almost certainly killed by the platform (maxDuration 120s). */
+export const STALE_PROCESSING_MS = 150_000;
+
+export function isStaleProcessing(
+  record: UpdateRecord,
+  now: number = Date.now()
+): boolean {
+  return (
+    record.status === "processing" &&
+    record.startedAt !== null &&
+    now - record.startedAt > STALE_PROCESSING_MS
+  );
+}
+
+/** Like hasProcessedUpdate, but returns the row's status so callers can tell a crashed turn from a finished one. */
+export async function getUpdateRecord(updateId: number): Promise<UpdateRecord | null> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A2:C`,
+    })
+  );
+
+  const row = (response.data.values ?? []).find((r) => r[0] === String(updateId));
+  if (!row) return null;
+
+  const startedMs = new Date(String(row[2] ?? "")).getTime();
+  return {
+    status: String(row[1] ?? ""),
+    startedAt: Number.isNaN(startedMs) ? null : startedMs,
+  };
 }
 
 export async function getProcessedExternalIds(): Promise<Set<string>> {
@@ -1364,23 +1408,25 @@ export async function markUpdateStarted(updateId: number): Promise<void> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${UPDATE_LOG_SHEET}!A:F`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [
-        [
-          String(updateId),
-          "processing",
-          new Date().toISOString(),
-          "",
-          "",
-          "",
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A:F`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [
+          [
+            String(updateId),
+            "processing",
+            new Date().toISOString(),
+            "",
+            "",
+            "",
+          ],
         ],
-      ],
-    },
-  });
+      },
+    })
+  );
 }
 
 async function updateLogRow(
@@ -1390,10 +1436,12 @@ async function updateLogRow(
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${UPDATE_LOG_SHEET}!A2:F`,
-  });
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A2:F`,
+    })
+  );
 
   const rows = response.data.values ?? [];
   const rowIndex = rows.findIndex((row) => row[0] === String(updateId));
@@ -1404,14 +1452,16 @@ async function updateLogRow(
 
   const rowNumber = rowIndex + 2;
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${UPDATE_LOG_SHEET}!B${rowNumber}:F${rowNumber}`,
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: [values],
-    },
-  });
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!B${rowNumber}:F${rowNumber}`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [values],
+      },
+    })
+  );
 }
 
 export async function markUpdateCompleted(

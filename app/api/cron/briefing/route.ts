@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reportError } from "@/lib/report-error";
 import { isAuthorizedCronRequest } from "@/lib/security";
 import {
   sendMorningBrief,
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error: unknown) {
     console.error(`Proactive ${type} briefing failed:`, error);
+    await reportError(`cron.briefing.${type}`, error);
     const errMsg = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
       {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reportError } from "@/lib/report-error";
 import { fireDueRestTimer } from "@/lib/workout/rest-timer";
 import { isAuthorizedCronRequest } from "@/lib/security";
 
@@ -15,6 +16,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, timestamp: new Date().toISOString(), result });
   } catch (error) {
     console.error("Cron rest timer failed:", error);
+    await reportError("cron.rest_timer", error);
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }

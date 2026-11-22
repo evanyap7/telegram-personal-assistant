@@ -51,7 +51,11 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
   const tracker = createReplyTracker();
   const toolsUsed: string[] = [];
 
-  const workoutState = await loadSession().catch(() => null);
+  // undefined = unreadable (a Sheets error), which must not be presented as "no session".
+  const workoutState = await loadSession().catch((error: unknown) => {
+    console.error("ego.workout_session_read_failed", error);
+    return undefined;
+  });
 
   const intentContext: IntentContext = {
     chatId,
@@ -150,8 +154,10 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
           providerOptions: handle.providerOptions,
           ...handle.sampling(0),
         });
+        // A hung provider call must fail fast so the model fallback can run inside maxDuration.
         const generated = await agent.generate({
           messages: toConversationMessages(input.history, text),
+          abortSignal: AbortSignal.timeout(60_000),
         });
         await recordModelUsage(handle, generated.totalUsage);
         return generated;
@@ -161,7 +167,7 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
   } catch (error) {
     // A tool may already have changed something and messaged the user; a generic
     // "try again" from the route would invite a duplicate.
-    const partial = resolveFailureReply(tracker.notified);
+    const partial = resolveFailureReply(tracker.notified || toolsUsed.length > 0);
     if (!partial) throw error;
     console.error("EGO run failed after tools already ran:", error);
     await sendTelegramMessage(chatId, partial, undefined, null);

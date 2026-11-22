@@ -297,7 +297,8 @@ export async function runFinanceAgent(params: {
         providerOptions: handle.providerOptions,
         ...handle.sampling(0),
       });
-      const generated = await agent.generate({ messages });
+      // A hung provider call must fail fast so the model fallback can run inside maxDuration.
+      const generated = await agent.generate({ messages, abortSignal: AbortSignal.timeout(60_000) });
       await recordModelUsage(handle, generated.totalUsage);
       return generated;
     },

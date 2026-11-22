@@ -40,6 +40,7 @@ const SUITES = [
   { name: "App Web Push (fan-out, route guards, service worker)", command: "npm run test:app-push" },
   { name: "Currency Conversion & CSV Export", command: "npm run test:currency-export" },
   { name: "Cron Endpoint Request Authorization", command: "npm run test:cron-auth" },
+  { name: "Reliability (stale updates, error reports, Telegram limits)", command: "npm run test:reliability" },
   { name: "Workout Progressive Overload Engine", command: "npm run test:workout" },
   { name: "Guided PH3 Workout Session", command: "npm run test:workout-session" },
   { name: "Multi-Item To-Do Batch Logging", command: "npm run test:todos-batch" },

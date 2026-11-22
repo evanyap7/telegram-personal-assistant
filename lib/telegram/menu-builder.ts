@@ -1,4 +1,4 @@
-import { InlineKeyboardMarkup } from "../telegram";
+import type { InlineKeyboardMarkup } from "../telegram";
 
 export const BOT_COMMANDS: Array<{ command: string; description: string }> = [
   { command: "menu", description: "Open control panel" },

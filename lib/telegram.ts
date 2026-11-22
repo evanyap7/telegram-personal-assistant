@@ -55,6 +55,9 @@ function splitIntoTelegramChunks(text: string, maxLength = TELEGRAM_MAX_LENGTH):
   return chunks.filter((c) => c.length > 0);
 }
 
+const TELEGRAM_TIMEOUT_MS = 10_000;
+const MAX_RETRY_AFTER_SEC = 5;
+
 async function callTelegram(
   method: string,
   body: Record<string, unknown>,
@@ -70,21 +73,25 @@ async function callTelegram(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS),
     }
   );
 
   if (!response.ok) {
     const responseText = await response.text();
 
-    // 1. Handle Rate Limit 429
+    // 1. Handle Rate Limit 429 (only short waits: a long sleep would burn the function's time budget)
     if (response.status === 429 && attempt < 2) {
+      let retryAfterSec: number | null = null;
       try {
         const json = JSON.parse(responseText);
-        const retryAfterSec = json.parameters?.retry_after || 1;
+        retryAfterSec = Number(json.parameters?.retry_after) || 1;
+      } catch {
+        // Unparseable body: fall through to the error below.
+      }
+      if (retryAfterSec !== null && retryAfterSec <= MAX_RETRY_AFTER_SEC) {
         await new Promise((r) => setTimeout(r, retryAfterSec * 1000));
         return callTelegram(method, body, attempt + 1);
-      } catch {
-        // Fall through to error
       }
     }
 
@@ -254,6 +261,7 @@ export async function sendTelegramDocument(
   const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: "POST",
     body: formData,
+    signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS * 3),
   });
 
   if (!res.ok) {

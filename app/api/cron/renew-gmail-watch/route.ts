@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reportError } from "@/lib/report-error";
 import { getGmailClient } from "@/lib/google";
 import { isAuthorizedCronRequest } from "@/lib/security";
 import { sendTelegramMessage } from "@/lib/telegram";
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
         ).catch(() => {});
       }
     }
+    await reportError("cron.renew_gmail_watch", error);
     return NextResponse.json(
       {
         ok: false,

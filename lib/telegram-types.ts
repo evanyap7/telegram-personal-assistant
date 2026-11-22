@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { InlineKeyboardMarkup } from "./telegram";
-import { AssistantIntent } from "./assistant-intent";
+import type { InlineKeyboardMarkup } from "./telegram";
+import type { AssistantIntent } from "./assistant-intent";
 
 export const telegramUpdateSchema = z.object({
   update_id: z.number(),

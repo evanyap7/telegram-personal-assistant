@@ -103,6 +103,14 @@ export function clearChatHistoryMemoryCache(userId?: number): void {
   }
 }
 
+const CREDENTIAL_HINT =
+  /\b(password|passcode|passphrase|pin|otp|cvv|secret|api[\s_-]?key|token|credential)s?\b/i;
+
+/** Messages that look like they carry a credential are not written to the Sheet (30-day plaintext). */
+export function redactForPersistence(text: string): string {
+  return CREDENTIAL_HINT.test(text) ? "[redacted: possible credential]" : text;
+}
+
 export async function logChatMessage(entry: ChatHistoryEntry): Promise<void> {
   const timestamp = entry.timestamp || formatSingaporeTimestamp(new Date());
 
@@ -129,7 +137,8 @@ export async function logChatMessage(entry: ChatHistoryEntry): Promise<void> {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${CHAT_HISTORY_SHEET}!A:G`,
-      valueInputOption: "USER_ENTERED",
+      // RAW so text starting with "=", "+" or digits like "1/2" stays text, not a formula or date.
+      valueInputOption: "RAW",
       requestBody: {
         values: [
           [
@@ -137,7 +146,7 @@ export async function logChatMessage(entry: ChatHistoryEntry): Promise<void> {
             timestamp,
             String(entry.userId),
             entry.role,
-            entry.text,
+            redactForPersistence(entry.text),
             entry.photoFileId ?? "",
             entry.actionType ?? "",
           ],

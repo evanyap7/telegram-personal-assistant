@@ -387,8 +387,12 @@ export async function loadSession(): Promise<WorkoutSessionState | null> {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as WorkoutSessionState;
-    return typeof parsed.day === "number" ? parsed : null;
-  } catch {
+    if (typeof parsed.day === "number") return parsed;
+    console.error("workout.session_invalid_shape");
+    return null;
+  } catch (error) {
+    // Unparseable stored state: log it so a vanished session is traceable, then treat as none.
+    console.error("workout.session_unparseable", error);
     return null;
   }
 }

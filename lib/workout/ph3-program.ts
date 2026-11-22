@@ -213,18 +213,22 @@ const MEMORY_PROGRESS_KEY = "ph3_workout_progress";
  * copy could be stale after another instance advances the day.
  */
 export async function getUserPH3Progress(): Promise<PH3UserProgress> {
-  try {
-    const memoryRecord = await getMemoryByKey(MEMORY_PROGRESS_KEY, "preference");
-    if (memoryRecord?.value) {
+  // A Sheets/transport error must propagate: falling back to Day 1 here would be saved
+  // back over the real progress by setUserPH3Day / setActiveExercise / markExerciseCompleted.
+  const memoryRecord = await getMemoryByKey(MEMORY_PROGRESS_KEY, "preference");
+  if (memoryRecord?.value) {
+    try {
       const parsed = JSON.parse(memoryRecord.value) as PH3UserProgress;
       if (parsed.currentDay >= 1 && parsed.currentDay <= 90) {
         return parsed;
       }
+      console.error("ph3.progress_invalid_day", { currentDay: parsed.currentDay });
+    } catch (error) {
+      console.error("ph3.progress_unparseable", error);
     }
-  } catch {
-    // If not found or invalid JSON, initialize default
   }
 
+  // No record yet (first run), or the stored one is unusable and already logged above.
   return {
     currentWeek: 1,
     currentDay: 1,

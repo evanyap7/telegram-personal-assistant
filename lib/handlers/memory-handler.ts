@@ -47,9 +47,15 @@ export async function handleMemorySaveAction(params: {
     await sendTelegramMessage(chatId, lines.join("\n"));
   } catch (err) {
     console.error("Failed to save memory:", err);
+    const message = err instanceof Error ? err.message : "";
+    const refusal = /MEMORY_ENCRYPTION_KEY|Refusing to move credential/.test(message) ? message : null;
     await sendTelegramMessage(
       chatId,
-      "⚠️ Could not save note to Google Sheets memory. Make sure Google Sheets is configured."
+      refusal
+        ? `⚠️ ${refusal}`
+        : "⚠️ Could not save note to Google Sheets memory. Make sure Google Sheets is configured.",
+      undefined,
+      refusal ? null : "Markdown"
     );
   }
 }

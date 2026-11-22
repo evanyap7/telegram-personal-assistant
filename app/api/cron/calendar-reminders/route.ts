@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reportError } from "@/lib/report-error";
 import { checkAndSendEventReminders } from "@/lib/calendar";
 import { checkAndSendTodoReminders } from "@/lib/todos";
 import { checkAndSendLeaveNowAlerts } from "@/lib/travel";
@@ -27,6 +28,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     console.error("Cron calendar reminders check failed:", error);
+    await reportError("cron.calendar_reminders", error);
     return NextResponse.json(
       {
         ok: false,
