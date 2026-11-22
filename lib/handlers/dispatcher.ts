@@ -53,7 +53,7 @@ import {
   handleWorkoutLogAction,
   handleWorkoutViewAction,
 } from "../workout/workout-handler";
-import { startPH3Workout } from "../workout/workout-session";
+import { handleStrictSetShortcut, startPH3Workout } from "../workout/workout-session";
 import { executeUndo, executeLatestUndo } from "../undo";
 import { triageUnreadInbox } from "../inbox-triage";
 import { syncPayLahTransactions } from "../paylah-sync";
@@ -511,6 +511,10 @@ defaultRegistry
     return { completionStatus: "workout_start" };
   })
   .registerIntent("workout_log", async (ctx, intent) => {
+    // A guided session owns plain sets; never let the legacy gym log swallow one.
+    if (await handleStrictSetShortcut({ chatId: ctx.chatId, text: intent.text })) {
+      return { completionStatus: "workout_set_shortcut" };
+    }
     await handleWorkoutLogAction({
       chatId: ctx.chatId,
       userId: ctx.userId,

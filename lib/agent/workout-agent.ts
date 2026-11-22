@@ -150,6 +150,7 @@ ${JSON.stringify(snapshot(plan, state))}
 ${spoken ? `${spoken}\n\n` : ""}How to work:
 - The program is the default plan, but the user's words override it. They can skip sets or exercises, do exercises in a different order, redo a set, or add an extra set.
 - Weights are in kg. "bw" means bodyweight (weightKg 0).
+- If the user gives a weight in pounds ("lb", "lbs", "pounds"), convert to kg before calling any tool: multiply by 0.4536 and round to the nearest 0.25 (210 lbs = 95.25 kg). Never pass pounds as weightKg.
 - "Skip" means they won't do it. "Delete" or "remove" on a set that is already logged means erase the entry: if they also say they'll redo it, use redo: true, otherwise it is skipped. "Delete" on a set not yet done means skip it.
 - Exercises can be referred to by number ("exercise 2") or name ("bench"). Sets are referred to by setNumber.
 - "That" or "the last one" means the most recently logged set, or the cursor set if nothing is logged yet.

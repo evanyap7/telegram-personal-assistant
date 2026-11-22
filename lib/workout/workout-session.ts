@@ -110,25 +110,48 @@ export function findNextPending(
 // ---------------------------------------------------------------------------
 
 /**
+ * Lowercases a command and smooths over how it was typed: iPhone smart quotes ("let’s"),
+ * a leading greeting or "ego" ("hi ego let's workout"), and trailing punctuation.
+ */
+function normalizeCommand(text: string, stripQuestion = false): string {
+  // A trailing "?" is kept for start/end phrases so "gym?" stays a question, not a command.
+  const trailing = stripQuestion ? /[.!?]+$/ : /[.!]+$/;
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(trailing, "")
+    .replace(/^(?:(?:hi|hey|hello|yo)\b[\s,!]*)?(?:ego\b[\s,!:-]*)?/, "")
+    .trim();
+}
+
+const LB_TO_KG = 0.45359237;
+
+/**
  * Parses a single set reply such as "100 x 5", "100x5", "100 5", "100kg 5 reps",
- * "100 for 5", "100*5" or "bw x 10". Returns null when it isn't clearly weight + reps.
+ * "100 for 5", "100*5", "210lbs x 9" or "bw x 10". Pounds are converted to kg (nearest
+ * 0.25kg) because the program and the sheet are in kg. Returns null when it isn't clearly
+ * weight + reps.
  */
 export function parseSetInput(text: string): { weightKg: number; reps: number } | null {
-  const cleaned = text.trim().toLowerCase().replace(/,/g, ".");
+  const cleaned = text.trim().toLowerCase().replace(/,/g, ".").replace(/[.!]+$/, "");
   const match = cleaned.match(
-    /^(bw|bodyweight|\d+(?:\.\d+)?)\s*(?:kgs?)?(?:\s*(?:x|×|\*|for|by)\s*|\s+)(\d{1,3})\s*(?:reps?)?$/
+    /^(bw|bodyweight|\d+(?:\.\d+)?)\s*(kgs?|lbs?|pounds?)?(?:\s*(?:x|×|\*|for|by)\s*|\s+)(\d{1,3})\s*(?:reps?)?$/
   );
   if (!match) return null;
 
-  const weightKg = /^[a-z]/.test(match[1]) ? 0 : parseFloat(match[1]);
-  const reps = parseInt(match[2], 10);
-  if (!Number.isFinite(weightKg) || weightKg > 1000) return null;
+  const isPounds = match[2]?.startsWith("l") || match[2]?.startsWith("p");
+  const rawWeight = /^[a-z]/.test(match[1]) ? 0 : parseFloat(match[1]);
+  const weightKg = isPounds ? Math.round((rawWeight * LB_TO_KG) / 0.25) * 0.25 : rawWeight;
+  const reps = parseInt(match[3], 10);
+  // Cap after conversion so a typo like "2000 lb" isn't logged as ~907kg.
+  if (!Number.isFinite(weightKg) || weightKg > (isPounds ? 500 : 1000)) return null;
   if (reps < 1 || reps > 100) return null;
   return { weightKg, reps };
 }
 
 export function isEndWorkoutCommand(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!]+$/, "");
+  const t = normalizeCommand(text);
   return (
     t === "/endworkout" ||
     t === "/end" ||
@@ -138,15 +161,16 @@ export function isEndWorkoutCommand(text: string): boolean {
 }
 
 export function isWorkoutStartPhrase(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!]+$/, "");
+  const t = normalizeCommand(text);
+  if (t.endsWith("?")) return false;
   return (
     t === "/gym" ||
     t === "/workout" ||
     t === "gym" ||
-    t === "workout" ||
     t === "gym time" ||
-    /^(i\s*(wanna|want to|will|'?m going to|am going to|'?m gonna|gonna)\s+)(work\s*out|workout|train|lift)\b/.test(t) ||
-    /^(let'?s|time to|lets)\s+(work\s*out|workout|train|lift)\b/.test(t) ||
+    /^work\s*out+$/.test(t) ||
+    /^(i\s*(wanna|want to|will|'?m going to|am going to|'?m gonna|gonna)\s+)(work\s*out+|train|lift)\b/.test(t) ||
+    /^(let'?s|time to|lets)\s+(work\s*out+|train|lift)\b/.test(t) ||
     /^start\s+(my\s+|the\s+)?(workout|training|gym)\b/.test(t)
   );
 }
@@ -156,7 +180,7 @@ export type WorkoutDayCommand =
   | { kind: "next"; startImmediately: boolean; fromDay?: number };
 
 export function parseWorkoutDayCommand(text: string): WorkoutDayCommand | null {
-  const t = text.trim().toLowerCase().replace(/[.!?]+$/, "");
+  const t = normalizeCommand(text, true);
 
   // 1. "lets skip day 1 and start day 2", "skip day 1 and do day 2", "skip today and start day 2"
   const skipAndStartMatch = t.match(
@@ -204,11 +228,16 @@ export function parseWorkoutDayCommand(text: string): WorkoutDayCommand | null {
   }
 
   // 5b. Statements of position: "today is day 12", "it's day 12", "i'm on workout day 12"
-  const statedDayMatch = t.match(
-    /^(?:today\s+is|today'?s|it'?s|its|i'?m\s+on|im\s+on|i\s+am\s+on|we'?re\s+on|we\s+are\s+on)\s+(?:workout\s+)?day\s*(\d{1,2})$/
+  //     Also with a week ("today is week 3 day 1") and as a correction ("no today is day 9").
+  const statedPosition = t.match(
+    /^(?:(?:no|nope|nah)[,\s]+)?(?:today\s+is|today'?s|it'?s|its|i'?m\s+on|im\s+on|i\s+am\s+on|we'?re\s+on|we\s+are\s+on)\s+(?:workout\s+)?(?:week\s*(\d{1,2})\s*[,:-]?\s*(?:day|d)\s*(\d)|day\s*(\d{1,2}))$/
   );
-  if (statedDayMatch) {
-    return { kind: "set", day: parseInt(statedDayMatch[1], 10), startImmediately: false };
+  if (statedPosition) {
+    const day = statedPosition[3]
+      ? parseInt(statedPosition[3], 10)
+      : programDayFromWeekDay(parseInt(statedPosition[1], 10), parseInt(statedPosition[2], 10));
+    if (day === null) return null;
+    return { kind: "set", day, startImmediately: false };
   }
 
   // 6. Next workout day commands: "/nextworkoutday", "next workout day", "next day", "skip to next day"
@@ -257,24 +286,56 @@ export function parseWorkoutDayCommand(text: string): WorkoutDayCommand | null {
   return null;
 }
 
+const SKIP_POLITE = "(?:(?:please|ok|okay)\\s+|(?:can|could)\\s+(?:we|you)\\s+|let'?s\\s+)?";
+
 export function isSkipExerciseCommand(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!?]+$/, "");
-  return (
-    /^(?:skip|next)\s+(?:this\s+)?exercise$/.test(t) ||
-    t === "skip exercise" ||
-    t === "skip this exercise" ||
-    t === "next exercise"
-  );
+  const t = normalizeCommand(text, true);
+  return new RegExp(`^${SKIP_POLITE}(?:skip|next)\\s+(?:this\\s+|the\\s+)?exercise(?:\\s+please)?$`).test(t);
 }
 
 export function isSkipSetCommand(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!?]+$/, "");
+  const t = normalizeCommand(text, true);
   return (
-    /^(?:skip|next)\s+(?:this\s+)?set$/.test(t) ||
-    t === "skip set" ||
-    t === "skip this set" ||
-    t === "next set"
+    new RegExp(`^${SKIP_POLITE}(?:skip|next)\\s+(?:this\\s+|the\\s+)?set(?:\\s+please)?$`).test(t) ||
+    // Bare "skip" / "skip it" / "skip this one" mean the current set.
+    new RegExp(`^${SKIP_POLITE}skip(?:\\s+(?:it|this|this one|that))?(?:\\s+please)?$`).test(t)
   );
+}
+
+/** Lowercased words of an exercise name, minus the "(AMRAP Final Set)" suffix and filler. */
+function exerciseTokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .replace(/\(.*?\)/g, " ")
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w && !["barbell", "dumbbell", "machine", "cable", "db", "bb", "the"].includes(w))
+    .map((w) => w.replace(/s$/, ""));
+}
+
+/**
+ * "skip to bench press first", "go to bench", "do squats next": the named exercise's plan
+ * index, "ambiguous" when several match, or null when this isn't a jump request. Every typed
+ * word must start a word of the exercise name, so "bench" matches "Bench Press".
+ */
+export function parseGotoExercise(
+  text: string,
+  exercises: Array<{ exercise: string }>
+): { exIdx: number } | "ambiguous" | null {
+  const t = normalizeCommand(text, true);
+  const m = t.match(
+    /^(?:(?:can|could)\s+(?:we|you)\s+|please\s+|let'?s\s+)*(?:(?:skip|go|jump|move|switch|head)\s+(?:on\s+)?to|do|start|hit|go\s+with)\s+(?:the\s+)?(.+?)(?:\s+(?:next|first|now|instead|please|real\s+quick))*$/
+  );
+  if (!m || /\b(day|set|exercise|workout)\b|\d/.test(m[1])) return null;
+
+  const typed = exerciseTokens(m[1]);
+  if (typed.length === 0) return null;
+  const hits: number[] = [];
+  exercises.forEach((ex, i) => {
+    const words = exerciseTokens(ex.exercise);
+    if (typed.every((tw) => words.some((w) => w.startsWith(tw)))) hits.push(i);
+  });
+  if (hits.length === 1) return { exIdx: hits[0] };
+  return hits.length > 1 ? "ambiguous" : null;
 }
 
 function stripDayPrefix(title: string): string {
@@ -814,6 +875,33 @@ export async function handleWorkoutSessionMessage(params: {
 
   if (isSkipSetCommand(trimmed)) {
     await skipSet(chatId, state);
+    return true;
+  }
+
+  // "skip to bench press first": move the pointer, keep everything already logged.
+  const plan = await getSessionPlan(state);
+  const goto = parseGotoExercise(trimmed, plan.exercises);
+  if (goto) {
+    if (goto === "ambiguous") {
+      await sendTelegramMessage(
+        chatId,
+        `Which exercise? ${plan.exercises.map((e, i) => `${i + 1}. ${e.exercise}`).join("\n")}\n\nTry "go to <name>" with a bit more of the name.`
+      );
+      return true;
+    }
+    const target = findNextPending(plan, state, goto.exIdx, 0);
+    if (target && target.exIdx === goto.exIdx) {
+      state.exIdx = target.exIdx;
+      state.setIdx = target.setIdx;
+      await saveSession(state);
+      await sendTelegramMessage(
+        chatId,
+        [`Jumping to *${plan.exercises[goto.exIdx].exercise}*.`, "", buildSetPrompt(plan, state.exIdx, state.setIdx)].join("\n"),
+        buildWorkoutActiveInlineKeyboard()
+      );
+      return true;
+    }
+    await sendTelegramMessage(chatId, `You've already finished ${plan.exercises[goto.exIdx].exercise}.`);
     return true;
   }
 

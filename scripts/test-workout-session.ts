@@ -7,6 +7,7 @@ import {
   isSkipExerciseCommand,
   isSkipSetCommand,
   isWorkoutStartPhrase,
+  parseGotoExercise,
   parseSetInput,
   parseWorkoutDayCommand,
 } from "../lib/workout/workout-session";
@@ -43,6 +44,12 @@ function run() {
     ["bw x 10", 0, 10],
     ["Bodyweight 12", 0, 12],
     ["97,5 x 4", 97.5, 4],
+    // Pounds are converted to kg (rounded to 0.25kg); the program and sheet are in kg.
+    ["210lbs x 9", 95.25, 9],
+    ["110lbs x 10", 50, 10],
+    ["140 lbs x 10", 63.5, 10],
+    ["225 lb 3", 102, 3],
+    ["135 pounds x 5", 61.25, 5],
   ];
   for (const [input, w, r] of accepted) {
     assert.deepEqual(parseSetInput(input), { weightKg: w, reps: r }, `parse "${input}"`);
@@ -62,9 +69,19 @@ function run() {
   for (const t of ["workout", "/gym", "i wanna work out", "I want to workout", "let's lift", "gym time", "start my workout"]) {
     assert.ok(isWorkoutStartPhrase(t), `start: ${t}`);
   }
+  // iPhone smart apostrophes, stretched words and a greeting must not defeat the shortcut.
+  for (const t of ["let’s workout", "Let’s workout!", "let’s workouttttt", "workouttt", "ego lets workout", "hi ego let’s workout", "hey ego, workout", "hi ego let's workout"]) {
+    assert.ok(isWorkoutStartPhrase(t), `start: ${t}`);
+  }
   for (const t of ["add workout to calendar", "100 x 5", "how was my workout stats"]) {
     assert.ok(!isWorkoutStartPhrase(t), `not start: ${t}`);
   }
+  assert.ok(isEndWorkoutCommand("I’m done"), "end with smart apostrophe");
+  assert.deepEqual(parseWorkoutDayCommand("let’s workout week 3 day 2"), { kind: "set", day: 16, startImmediately: true });
+  assert.deepEqual(parseWorkoutDayCommand("today is week 3 day 1"), { kind: "set", day: 15, startImmediately: false });
+  assert.deepEqual(parseWorkoutDayCommand("no today is day 9"), { kind: "set", day: 9, startImmediately: false });
+  assert.deepEqual(parseWorkoutDayCommand("hi ego today is day 19"), { kind: "set", day: 19, startImmediately: false });
+  assert.equal(parseWorkoutDayCommand("today is a good day"), null, "chatter is not a day command");
   console.log("  ✅ start / end phrases");
 
   // Day commands & skip / switch syntax
@@ -191,7 +208,55 @@ function run() {
   }
   assert.ok(!isSkipExerciseCommand("100 x 5"));
   assert.ok(!isSkipSetCommand("100 x 5"));
+  for (const t of ["let’s skip this set", "hey ego skip set", "please skip", "skip", "skip it", "can we skip this set"]) {
+    assert.ok(isSkipSetCommand(t), `polite skip set: ${t}`);
+  }
+  assert.ok(isSkipExerciseCommand("let’s skip this exercise"));
+  assert.ok(!isSkipSetCommand("skip to bench press"));
   console.log("  ✅ skip exercise / set commands");
+
+  // Jump to a named exercise (the "let’s skip to bench press first" bug)
+  const day19 = [
+    "Deadlift (AMRAP Final Set)",
+    "Bench Press (AMRAP Final Set)",
+    "Pec-Deck Fly/Cable Crossover (3RIR)",
+    "Cable/Machine Lat Pull-Down (2RIR)",
+    "Dumbbell/Machine Row (2RIR)",
+    "Lateral Raise (2RIR)",
+  ].map((exercise) => ({ exercise }));
+  for (const t of [
+    "let’s skip to bench press first",
+    "skip to bench press",
+    "go to bench",
+    "do bench next",
+    "Jump to the bench press!",
+    "switch to deadlifts",
+  ]) {
+    const hit = parseGotoExercise(t, day19);
+    assert.ok(hit && hit !== "ambiguous", `goto: ${t}`);
+  }
+  assert.deepEqual(parseGotoExercise("skip to bench press first", day19), { exIdx: 1 });
+  assert.deepEqual(parseGotoExercise("go to deadlift", day19), { exIdx: 0 });
+  assert.equal(
+    parseGotoExercise("go to bench", [...day19, { exercise: "Incline Bench Press (2RIR)" }]),
+    "ambiguous"
+  );
+  assert.equal(parseGotoExercise("go to squats", day19), null);
+  for (const t of ["skip to day 3", "skip to next day", "next set", "135 x 4", "do 3 sets", "go to the gym"]) {
+    assert.equal(parseGotoExercise(t, day19), null, `not a goto: ${t}`);
+  }
+  console.log("  ✅ jump to named exercise");
+
+  // Review findings: questions aren't commands, absurd pound weights are rejected
+  for (const t of ["gym?", "workout?", "start workout?", "is the gym open?"]) {
+    assert.ok(!isWorkoutStartPhrase(t), `question is not a start: ${t}`);
+  }
+  assert.ok(!isEndWorkoutCommand("done?"));
+  assert.equal(parseSetInput("2000 lb 5"), null);
+  assert.deepEqual(parseSetInput("135 x 4."), { weightKg: 135, reps: 4 });
+  assert.deepEqual(parseSetInput("135x4!"), { weightKg: 135, reps: 4 });
+  assert.equal(parseWorkoutDayCommand("next day?")?.kind, "next");
+  console.log("  ✅ question marks, pound cap, trailing punctuation");
 
   // Target formatting
   assert.equal(describeTarget({ setNumber: 1, weight: "  95.0 ".trim(), reps: "x9", weightCell: "C10", repsCell: "D10" }), "95kg × 9");
