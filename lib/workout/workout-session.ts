@@ -294,12 +294,49 @@ export function isSkipExerciseCommand(text: string): boolean {
 }
 
 export function isSkipSetCommand(text: string): boolean {
+  if (isSkipExerciseCommand(text) || parseWorkoutDayCommand(text) !== null) return false;
   const t = normalizeCommand(text, true);
   return (
     new RegExp(`^${SKIP_POLITE}(?:skip|next)\\s+(?:this\\s+|the\\s+)?set(?:\\s+please)?$`).test(t) ||
-    // Bare "skip" / "skip it" / "skip this one" mean the current set.
-    new RegExp(`^${SKIP_POLITE}skip(?:\\s+(?:it|this|this one|that))?(?:\\s+please)?$`).test(t)
+    // Bare "skip" / "skip it" / "skip this one" / "skip that" mean the current set.
+    new RegExp(`^${SKIP_POLITE}skip(?:\\s+(?:it|this|this one|that))?(?:\\s+please)?$`).test(t) ||
+    // Bare "next" / "next one" / "on to next" mean the current set.
+    new RegExp(`^${SKIP_POLITE}(?:(?:go\\s+)?on\\s+to\\s+)?next(?:\\s+(?:one|it|this))?(?:\\s+please)?$`).test(t)
   );
+}
+
+export interface RedoCommand {
+  weightKg?: number;
+  reps?: number;
+}
+
+export function parseRedoCommand(text: string): RedoCommand | null {
+  const t = normalizeCommand(text, true);
+  const m = t.match(
+    /^(?:(?:can|could)\s+(?:we|you)\s+|please\s+|let'?s\s+)?(?:redo|fix|edit|change)\s*(?:(?:my\s+)?(?:last\s+set|last\s+one|that\s+set|this\s+set|that|this|it|set))?(?:\s*(?:at|to|with)\s*|\s+)?(.*)$/
+  );
+  if (!m) return null;
+
+  const rest = m[1]?.trim() ?? "";
+  if (!rest) {
+    return {};
+  }
+
+  const setParsed = parseSetInput(rest);
+  if (setParsed) {
+    return { weightKg: setParsed.weightKg, reps: setParsed.reps };
+  }
+
+  const weightOnly = rest.match(/^(bw|bodyweight|\d+(?:\.\d+)?)\s*(kgs?|lbs?|pounds?)?$/);
+  if (weightOnly) {
+    const isPounds = weightOnly[2]?.startsWith("l") || weightOnly[2]?.startsWith("p");
+    const rawWeight = /^[a-z]/.test(weightOnly[1]) ? 0 : parseFloat(weightOnly[1]);
+    const weightKg = isPounds ? Math.round((rawWeight * LB_TO_KG) / 0.25) * 0.25 : rawWeight;
+    if (!Number.isFinite(weightKg) || weightKg > (isPounds ? 500 : 1000)) return null;
+    return { weightKg };
+  }
+
+  return null;
 }
 
 /** Lowercased words of an exercise name, minus the "(AMRAP Final Set)" suffix and filler. */
@@ -846,7 +883,7 @@ export async function handleWorkoutSessionMessage(params: {
       targetDay = state.day >= 90 ? 1 : state.day + 1;
     }
 
-    const flushed = await flushFallbackSets(state);
+    await flushFallbackSets(state);
     await clearPH3Session();
 
     const savedNotice =
@@ -880,6 +917,11 @@ export async function handleWorkoutSessionMessage(params: {
   if (isSkipSetCommand(trimmed)) {
     await skipSet(chatId, state);
     return true;
+  }
+
+  const redoCmd = parseRedoCommand(trimmed);
+  if (redoCmd) {
+    return handleRedoCommand(chatId, state, redoCmd);
   }
 
   // "skip to bench press first": move the pointer, keep everything already logged.
@@ -957,15 +999,98 @@ export function strictSetEntry(
  * Records a plain "weight x reps" message straight into the active session, skipping
  * the orchestrator (the most frequent message in a workout). Returns true if consumed.
  */
-export async function handleStrictSetShortcut(params: {
+export async function handleRedoCommand(
+  chatId: number,
+  state: WorkoutSessionState,
+  cmd: RedoCommand
+): Promise<boolean> {
+  if (!state.logged.length) {
+    await sendTelegramMessage(chatId, "No sets have been logged yet to redo.");
+    return true;
+  }
+  const plan = await getSessionPlan(state);
+  const lastLogged = state.logged[state.logged.length - 1];
+  const exIdx = plan.exercises.findIndex((e) => e.exercise === lastLogged.exercise);
+  if (exIdx === -1) return false;
+  const setIdx = plan.exercises[exIdx].sets.findIndex((s) => s.setNumber === lastLogged.setNumber);
+  if (setIdx === -1) return false;
+
+  if (cmd.weightKg !== undefined) {
+    const nextReps = cmd.reps ?? lastLogged.reps;
+    await editLoggedSet(state, plan, exIdx, setIdx, { weightKg: cmd.weightKg, reps: nextReps });
+    await saveSession(state);
+    const updated = `${cmd.weightKg > 0 ? `${cmd.weightKg}kg` : "BW"} × ${nextReps}`;
+    const prompt = buildSetPrompt(plan, state.exIdx, state.setIdx);
+    await sendTelegramMessage(
+      chatId,
+      `Updated *${lastLogged.exercise}* set ${lastLogged.setNumber} to *${updated}*.\n\n${prompt}`,
+      buildWorkoutActiveInlineKeyboard()
+    );
+    return true;
+  } else {
+    await removeLoggedSet(state, plan, exIdx, setIdx);
+    state.exIdx = exIdx;
+    state.setIdx = setIdx;
+    await saveSession(state);
+    const prompt = buildSetPrompt(plan, state.exIdx, state.setIdx);
+    await sendTelegramMessage(
+      chatId,
+      `Removed *${lastLogged.exercise}* set ${lastLogged.setNumber}. Ready to redo:\n\n${prompt}`,
+      buildWorkoutActiveInlineKeyboard()
+    );
+    return true;
+  }
+}
+
+/**
+ * Fast-path handler for deterministic workout commands:
+ * - Set logs: "100 x 5", "bw x 10"
+ * - Skips: "skip", "skip set", "next", "next set", "next one", "skip exercise", "next exercise"
+ * - Redo/corrections: "redo that at 100", "redo last set at 100", "redo that", "redo"
+ * - Ending the workout: "end workout", "finish workout"
+ *
+ * If the message matches any of these and an active session exists, it executes without
+ * calling an LLM. Returns true if consumed, false to allow LLM routing.
+ */
+export async function handleWorkoutFastPath(params: {
   chatId: number;
   text: string;
 }): Promise<boolean> {
-  // Cheap check first: most messages are not sets, so don't load the session for them.
-  if (!parseSetInput(params.text.trim())) return false;
+  const trimmed = params.text.trim();
+  const setEntry = parseSetInput(trimmed);
+  const isSkipSet = isSkipSetCommand(trimmed);
+  const isSkipEx = isSkipExerciseCommand(trimmed);
+  const redoCmd = parseRedoCommand(trimmed);
+  const isEnd = isEndWorkoutCommand(trimmed);
+
+  if (!setEntry && !isSkipSet && !isSkipEx && !redoCmd && !isEnd) {
+    return false;
+  }
+
   const state = await loadSession();
-  const entry = strictSetEntry(params.text, state);
-  if (!state || !entry) return false;
-  await handleLoggedSet(params.chatId, state, entry);
-  return true;
+  if (!state) return false;
+
+  if (setEntry) {
+    await handleLoggedSet(params.chatId, state, setEntry);
+    return true;
+  }
+  if (isSkipEx) {
+    await skipExercise(params.chatId, state);
+    return true;
+  }
+  if (isSkipSet) {
+    await skipSet(params.chatId, state);
+    return true;
+  }
+  if (redoCmd) {
+    return handleRedoCommand(params.chatId, state, redoCmd);
+  }
+  if (isEnd) {
+    await endSession(params.chatId, state);
+    return true;
+  }
+
+  return false;
 }
+
+export const handleStrictSetShortcut = handleWorkoutFastPath;

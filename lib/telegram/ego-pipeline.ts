@@ -7,8 +7,9 @@ import { getLatestPendingImage, getLatestUserCalendarContext } from "@/lib/pendi
 import { dispatchCommand } from "@/lib/telegram/command-router";
 import { egoTurnFromMessage, type EgoTurn } from "@/lib/telegram/ego-turn";
 import type { TelegramUpdate } from "@/lib/telegram-types";
+import { timeStage } from "@/lib/timing";
 import {
-  handleStrictSetShortcut,
+  handleWorkoutFastPath,
   handleWorkoutSessionMessage,
   parseWorkoutDayCommand,
 } from "@/lib/workout/workout-session";
@@ -50,19 +51,24 @@ export async function handleEgoTurn(turn: EgoTurn): Promise<{ completionStatus?:
     return { completionStatus: commandResult.completionStatus };
   }
 
-  // The most frequent message in a workout skips the model entirely.
-  if (await handleStrictSetShortcut({ chatId, text })) {
-    return { completionStatus: "workout_set_shortcut" };
+  // Deterministic workout fast path: sets, skips ("skip", "next"), redos, and ending a session skip the model entirely.
+  if (await handleWorkoutFastPath({ chatId, text })) {
+    return { completionStatus: "workout_fast_path" };
   }
 
   const replyPhotos = replyTo?.photo;
-  const [history, userCalendarContext, latestTxn, repliedTxn, pendingImage] = await Promise.all([
-    getRecentChatHistory(userId, 8),
-    getLatestUserCalendarContext(userId),
-    getLatestTransaction(),
-    replyTo ? resolveRepliedTransaction(replyTo) : Promise.resolve(null),
-    replyPhotos?.length ? Promise.resolve(null) : getLatestPendingImage(userId),
-  ]);
+  const [history, userCalendarContext, latestTxn, repliedTxn, pendingImage] = await timeStage(
+    "history",
+    () =>
+      Promise.all([
+        getRecentChatHistory(userId, 8),
+        getLatestUserCalendarContext(userId),
+        getLatestTransaction(),
+        replyTo ? resolveRepliedTransaction(replyTo) : Promise.resolve(null),
+        replyPhotos?.length ? Promise.resolve(null) : getLatestPendingImage(userId),
+      ]),
+    { userId }
+  );
 
   const result = await runEgo({
     chatId,

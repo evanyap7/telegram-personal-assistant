@@ -1,15 +1,14 @@
 import { telegramUpdateSchema } from "@/lib/telegram-types";
 import { safeCompare } from "@/lib/security";
 import {
-  getUpdateRecord,
-  isStaleProcessing,
+  hasProcessedUpdate,
   markUpdateCompleted,
   markUpdateFailed,
-  markUpdateStarted,
   parseSwipeReplyTransactionUpdate,
   updateTransaction,
   getLatestTransaction,
 } from "@/lib/finance";
+import { timeStage } from "@/lib/timing";
 import {
   sendTelegramChatAction,
   sendTelegramMessage,
@@ -51,6 +50,8 @@ export const maxDuration = 120;
 const FINANCE_HINT =
   /\$|\b(transaction|expense|income|spent|spend|paid|budget|category|amount|paylah|wrong|mistake|typo|record(ed)?|cost)\b/i;
 
+const inFlightTelegramUpdateIds = new Set<number>();
+
 function log(event: string, values: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ event, timestamp: new Date().toISOString(), ...values }));
 }
@@ -74,7 +75,8 @@ export async function POST(request: Request) {
 
   try {
     const update = telegramUpdateSchema.parse(await request.json());
-    updateId = update.update_id;
+    const currentUpdateId = update.update_id;
+    updateId = currentUpdateId;
 
     const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
     if (!allowedUserId) {
@@ -84,7 +86,7 @@ export async function POST(request: Request) {
     const senderId = update.message?.from.id ?? update.callback_query?.from.id;
     const senderKind = classifySender(senderId, allowedUserId);
     if (senderKind === "none") {
-      log("telegram.webhook.forbidden", { updateId, senderId });
+      log("telegram.webhook.forbidden", { updateId: currentUpdateId, senderId });
       return new Response("Forbidden", { status: 403 });
     }
 
@@ -93,37 +95,29 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
 
-    const priorRecord = await getUpdateRecord(updateId);
-    if (priorRecord) {
-      // A row stuck in "processing" means the earlier attempt was killed (timeout/crash).
-      // Re-running could repeat side effects, so tell the owner instead of dropping it silently.
-      if (isStaleProcessing(priorRecord)) {
-        log("telegram.webhook.stale_processing", { updateId });
-        await markUpdateFailed(updateId, "timed out before completing");
-        const staleChatId = update.message?.chat.id;
-        if (senderKind === "owner" && staleChatId) {
-          try {
-            await sendTelegramMessage(
-              staleChatId,
-              "⏱️ That last message timed out before I finished. Check whether it went through, and resend it if not."
-            );
-          } catch (error) {
-            log("telegram.webhook.stale_notice_failed", {
-              updateId,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-      } else {
-        log("telegram.webhook.duplicate_skipped", {
-          updateId,
-          durationMs: Date.now() - startedAt,
-        });
-      }
+    if (inFlightTelegramUpdateIds.has(currentUpdateId)) {
+      log("telegram.webhook.duplicate_skipped", {
+        updateId: currentUpdateId,
+        inFlight: true,
+        durationMs: Date.now() - startedAt,
+      });
       return Response.json({ ok: true });
     }
 
-    await markUpdateStarted(updateId);
+    const isDuplicate = await timeStage(
+      "dedupe",
+      () => hasProcessedUpdate(currentUpdateId),
+      { updateId: currentUpdateId }
+    );
+    if (isDuplicate) {
+      log("telegram.webhook.duplicate_skipped", {
+        updateId: currentUpdateId,
+        durationMs: Date.now() - startedAt,
+      });
+      return Response.json({ ok: true });
+    }
+
+    inFlightTelegramUpdateIds.add(currentUpdateId);
 
     // Non-owner senders go to guest mode and return before currentChatId is set,
     // so the outer catch can never message a friend.
@@ -546,5 +540,9 @@ export async function POST(request: Request) {
     }
 
     return Response.json({ ok: false, error: message }, { status: 200 });
+  } finally {
+    if (updateId !== null) {
+      inFlightTelegramUpdateIds.delete(updateId);
+    }
   }
 }

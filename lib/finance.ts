@@ -4,6 +4,7 @@ import { maskSensitiveFinancialData } from "./security";
 import { parseSingaporeDate } from "./date-parser";
 import { getMonthlyBudgetStatus, type MonthlyBudgetStatus } from "./budget";
 import { isShortLivedUpdateId } from "./update-log-ids";
+import { timeStage } from "./timing";
 
 export { getMonthlyBudgetStatus, type MonthlyBudgetStatus };
 
@@ -1206,6 +1207,36 @@ export async function updateTransaction(
   return updated;
 }
 
+export const UPDATE_LOG_CAP = 500;
+
+export async function capUpdateLogSheet(
+  maxRows: number = UPDATE_LOG_CAP
+): Promise<number> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  const response = await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A2:A`,
+    })
+  );
+
+  const rows = response.data.values ?? [];
+  if (rows.length <= maxRows) return 0;
+
+  const excess = rows.length - maxRows;
+  const rowNumbers = Array.from({ length: excess }, (_, i) => i + 2);
+
+  await deleteSheetRows({
+    spreadsheetId,
+    sheetTitle: UPDATE_LOG_SHEET,
+    rowNumbers,
+  });
+
+  return excess;
+}
+
 export async function hasProcessedUpdate(updateId: number): Promise<boolean> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -1218,6 +1249,10 @@ export async function hasProcessedUpdate(updateId: number): Promise<boolean> {
   );
 
   const existingIds = response.data.values ?? [];
+
+  if (existingIds.length > UPDATE_LOG_CAP + 100) {
+    void capUpdateLogSheet(UPDATE_LOG_CAP).catch(() => {});
+  }
 
   return existingIds.some((row) => row[0] === String(updateId));
 }
@@ -1404,7 +1439,10 @@ export async function markExternalIdProcessed(
   }
 }
 
+const inFlightStartedUpdateIds = new Set<number>();
+
 export async function markUpdateStarted(updateId: number): Promise<void> {
+  inFlightStartedUpdateIds.add(updateId);
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
@@ -1464,13 +1502,41 @@ async function updateLogRow(
   );
 }
 
+async function recordUpdateLog(
+  updateId: number,
+  values: [string, string, string, string, string]
+): Promise<void> {
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  if (inFlightStartedUpdateIds.has(updateId)) {
+    inFlightStartedUpdateIds.delete(updateId);
+    await updateLogRow(updateId, values);
+    return;
+  }
+
+  await withExponentialBackoff(() =>
+    sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `${UPDATE_LOG_SHEET}!A:F`,
+      valueInputOption: "USER_ENTERED",
+      requestBody: {
+        values: [[String(updateId), ...values]],
+      },
+    })
+  );
+}
+
 export async function markUpdateCompleted(
   updateId: number,
   action: string
 ): Promise<void> {
   const now = new Date().toISOString();
-
-  await updateLogRow(updateId, ["completed", now, now, action, ""]);
+  await timeStage(
+    "sheets_write",
+    () => recordUpdateLog(updateId, ["completed", now, now, action, ""]),
+    { operation: "markUpdateCompleted", updateId }
+  );
 }
 
 export async function markUpdateFailed(
@@ -1478,14 +1544,11 @@ export async function markUpdateFailed(
   errorMessage: string
 ): Promise<void> {
   const now = new Date().toISOString();
-
-  await updateLogRow(updateId, [
-    "failed",
-    now,
-    now,
-    "",
-    errorMessage.slice(0, 500),
-  ]);
+  await timeStage(
+    "sheets_write",
+    () => recordUpdateLog(updateId, ["failed", now, now, "", errorMessage.slice(0, 500)]),
+    { operation: "markUpdateFailed", updateId }
+  );
 }
 
 /**
@@ -1495,7 +1558,8 @@ export async function markUpdateFailed(
  * kept forever because they prevent old receipts from being imported twice.
  */
 export async function pruneUpdateLog(
-  daysToKeep = 7
+  daysToKeep = 7,
+  maxRows = UPDATE_LOG_CAP
 ): Promise<{ prunedCount: number; remainingCount: number }> {
   const sheets = getSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -1509,26 +1573,39 @@ export async function pruneUpdateLog(
 
   const rows = response.data.values ?? [];
   const cutoffMs = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
-  const pruneRowNumbers: number[] = [];
+  const pruneRowNumbers = new Set<number>();
 
   rows.forEach((row, index) => {
     const id = String(row[0] ?? "");
     const isShortLived = isShortLivedUpdateId(id) || id.startsWith("leave_now:");
     const startedMs = new Date(row[2]).getTime();
     if (isShortLived && !Number.isNaN(startedMs) && startedMs < cutoffMs) {
-      pruneRowNumbers.push(index + 2);
+      pruneRowNumbers.add(index + 2);
     }
   });
+
+  const remainingCount = rows.length - pruneRowNumbers.size;
+  if (remainingCount > maxRows) {
+    const excess = remainingCount - maxRows;
+    let added = 0;
+    for (let i = 0; i < rows.length && added < excess; i++) {
+      const rowNum = i + 2;
+      if (!pruneRowNumbers.has(rowNum)) {
+        pruneRowNumbers.add(rowNum);
+        added++;
+      }
+    }
+  }
 
   await deleteSheetRows({
     spreadsheetId,
     sheetTitle: UPDATE_LOG_SHEET,
-    rowNumbers: pruneRowNumbers,
+    rowNumbers: Array.from(pruneRowNumbers),
   });
 
   return {
-    prunedCount: pruneRowNumbers.length,
-    remainingCount: rows.length - pruneRowNumbers.length,
+    prunedCount: pruneRowNumbers.size,
+    remainingCount: rows.length - pruneRowNumbers.size,
   };
 }
 

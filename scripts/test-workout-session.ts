@@ -8,6 +8,7 @@ import {
   isSkipSetCommand,
   isWorkoutStartPhrase,
   parseGotoExercise,
+  parseRedoCommand,
   parseSetInput,
   parseWorkoutDayCommand,
 } from "../lib/workout/workout-session";
@@ -213,7 +214,37 @@ function run() {
   }
   assert.ok(isSkipExerciseCommand("let’s skip this exercise"));
   assert.ok(!isSkipSetCommand("skip to bench press"));
-  console.log("  ✅ skip exercise / set commands");
+
+  // Widened skip and next commands
+  for (const t of ["next", "Next!", "next please", "next one", "on to next", "please next", "skip that"]) {
+    assert.ok(isSkipSetCommand(t), `widened skip/next set: ${t}`);
+  }
+  assert.ok(!isSkipSetCommand("next exercise"), "next exercise is not a set skip");
+  assert.ok(!isSkipSetCommand("next day"), "next day is not a set skip");
+  assert.ok(!isSkipSetCommand("skip to next day"), "skip to next day is not a set skip");
+
+  // Redo / correction commands
+  assert.deepEqual(parseRedoCommand("redo that at 100"), { weightKg: 100 });
+  assert.deepEqual(parseRedoCommand("redo that at 100 x 5"), { weightKg: 100, reps: 5 });
+  assert.deepEqual(parseRedoCommand("redo that at 100kg x 5"), { weightKg: 100, reps: 5 });
+  assert.deepEqual(parseRedoCommand("redo last set at 100"), { weightKg: 100 });
+  assert.deepEqual(parseRedoCommand("redo my last set at 100"), { weightKg: 100 });
+  assert.deepEqual(parseRedoCommand("redo at 100"), { weightKg: 100 });
+  assert.deepEqual(parseRedoCommand("redo that with 100"), { weightKg: 100 });
+  assert.deepEqual(parseRedoCommand("redo that with 100 x 5"), { weightKg: 100, reps: 5 });
+  assert.deepEqual(parseRedoCommand("redo that at 210 lbs"), { weightKg: 95.25 });
+  assert.deepEqual(parseRedoCommand("redo that at 210 lbs x 5"), { weightKg: 95.25, reps: 5 });
+  assert.deepEqual(parseRedoCommand("redo that"), {});
+  assert.deepEqual(parseRedoCommand("redo that set"), {});
+  assert.deepEqual(parseRedoCommand("redo last set"), {});
+  assert.deepEqual(parseRedoCommand("redo"), {});
+  assert.deepEqual(parseRedoCommand("change that to 100"), { weightKg: 100 });
+  assert.deepEqual(parseRedoCommand("fix last set to 100"), { weightKg: 100 });
+  assert.equal(parseRedoCommand("redo that tomorrow"), null);
+  assert.equal(parseRedoCommand("change to preacher curls"), null);
+  assert.equal(parseRedoCommand("what is the weather"), null);
+  assert.equal(parseRedoCommand("100 x 5"), null);
+  console.log("  ✅ skip exercise / set commands & redo commands");
 
   // Jump to a named exercise (the "let’s skip to bench press first" bug)
   const day19 = [

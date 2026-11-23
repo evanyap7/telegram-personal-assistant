@@ -2,6 +2,7 @@ import { getSheetsClient } from "../google";
 import { deleteMemory, getMemoryByKey, saveMemory } from "../memory";
 import { applyEdits } from "./plan-edits";
 import { loadPlanEdits } from "./plan-edits-store";
+import { timeStage } from "../timing";
 
 export interface PH3ExerciseSet {
   setNumber: number;
@@ -424,10 +425,15 @@ export async function writeSetToSheet(params: {
     data.push({ range: cellRange(plan, set.repsCell), values: [[formatSheetReps(reps)]] });
   }
   if (data.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId,
-      requestBody: { valueInputOption: "RAW", data },
-    });
+    await timeStage(
+      "sheets_write",
+      () =>
+        sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: { valueInputOption: "RAW", data },
+        }),
+      { operation: "writeSetToSheet", day: plan.day }
+    );
     // The cached plan no longer reflects these cells.
     planCache.delete(plan.day);
   }
@@ -455,10 +461,15 @@ export async function overwriteSetCell(params: {
     data.push({ range: cellRange(plan, set.repsCell), values: [[formatSheetReps(reps)]] });
   }
   if (data.length === 0) return;
-  await getSheetsClient().spreadsheets.values.batchUpdate({
-    spreadsheetId: getSpreadsheetId(),
-    requestBody: { valueInputOption: "RAW", data },
-  });
+  await timeStage(
+    "sheets_write",
+    () =>
+      getSheetsClient().spreadsheets.values.batchUpdate({
+        spreadsheetId: getSpreadsheetId(),
+        requestBody: { valueInputOption: "RAW", data },
+      }),
+    { operation: "overwriteSetCell", day: plan.day }
+  );
   planCache.delete(plan.day);
 }
 

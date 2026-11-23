@@ -27,7 +27,7 @@ import {
 } from "@/lib/pending-actions";
 import { answerWithSearch } from "@/lib/search";
 import { sendTelegramMessage } from "@/lib/telegram";
-import { loadSession } from "@/lib/workout/workout-session";
+import { getSessionPlan, loadSession } from "@/lib/workout/workout-session";
 
 export interface EgoRunInput {
   chatId: number;
@@ -57,6 +57,13 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
     return undefined;
   });
 
+  const workoutPlan = workoutState
+    ? await getSessionPlan(workoutState).catch((error: unknown) => {
+        console.error("ego.workout_plan_read_failed", error);
+        return undefined;
+      })
+    : undefined;
+
   const intentContext: IntentContext = {
     chatId,
     userId,
@@ -85,7 +92,13 @@ export async function runEgo(input: EgoRunInput): Promise<{ completionStatus: st
     },
     askWorkout: async ({ kind, request, location }) => {
       if (kind === "session_message") {
-        const result = await runWorkoutAgent({ chatId, text: request, inputMode });
+        const result = await runWorkoutAgent({
+          chatId,
+          text: request,
+          inputMode,
+          session: workoutState ?? undefined,
+          plan: workoutPlan,
+        });
         return result.handled;
       }
       const intent =

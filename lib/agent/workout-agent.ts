@@ -179,11 +179,13 @@ export async function runWorkoutAgent(params: {
   chatId: number;
   text: string;
   inputMode?: InputMode;
+  session?: WorkoutSessionState;
+  plan?: PH3DayPlan;
 }): Promise<WorkoutAgentResult> {
   const { chatId, text, inputMode } = params;
-  const state = await loadSession();
+  const state = params.session ?? (await loadSession());
   if (!state) return { handled: false };
-  let plan = await getSessionPlan(state);
+  let plan = params.plan ?? (await getSessionPlan(state));
 
   let mutated = false;
   /** Exercise of the set most recently logged through logSet; its rest timer starts with the reply. */

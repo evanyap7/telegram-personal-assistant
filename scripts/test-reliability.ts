@@ -11,7 +11,8 @@
 import assert from "node:assert/strict";
 import { describeWorkoutContext } from "../lib/agent/ego-prompt";
 import { resolveFailureReply } from "../lib/agent/ego-reply";
-import { STALE_PROCESSING_MS, isStaleProcessing } from "../lib/finance";
+import { STALE_PROCESSING_MS, UPDATE_LOG_CAP, isStaleProcessing } from "../lib/finance";
+import { timeStage } from "../lib/timing";
 import {
   REPORT_COOLDOWN_MS,
   formatErrorReport,
@@ -97,6 +98,17 @@ async function main() {
     assert.equal(isStaleProcessing({ status: "completed", startedAt: old }, now), false);
     assert.equal(isStaleProcessing({ status: "failed", startedAt: old }, now), false);
     assert.equal(isStaleProcessing({ status: "processing", startedAt: null }, now), false);
+  });
+
+  // --- Timing logger and dedupe cap ---
+  await test("UPDATE_LOG_CAP is positive and bounded", () => {
+    assert.ok(UPDATE_LOG_CAP >= 100 && UPDATE_LOG_CAP <= 2000);
+  });
+  await test("timeStage measures duration and returns result", async () => {
+    const res = await timeStage("dedupe", async () => {
+      return 42;
+    });
+    assert.equal(res, 42);
   });
 
   // --- Error reporting ---

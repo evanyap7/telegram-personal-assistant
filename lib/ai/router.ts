@@ -7,6 +7,7 @@ import { createLedger, type Ledger } from "./ledger";
 import { candidatesFor, classifyError, type Candidate, type Provider, type Role } from "./mode";
 import { costUsd } from "./pricing";
 import { createSheetsLedgerStore } from "./sheets-store";
+import { timeStage } from "../timing";
 
 type GenerateTextParams = Parameters<typeof generateText>[0];
 export type RoutedParams = Omit<GenerateTextParams, "model">;
@@ -154,7 +155,12 @@ export function createRouter(deps: RouterDeps) {
       if (skipped.has(candidate.provider)) continue;
       const handle = buildHandle(candidate, role, deps.makeModel);
       try {
-        return { result: await attempt(handle), handle };
+        const result = await timeStage(
+          "model_call",
+          () => attempt(handle),
+          { role, provider: candidate.provider, modelId: candidate.modelId }
+        );
+        return { result, handle };
       } catch (error) {
         lastError = error;
         if (classifyError(error) === "depleted") {
