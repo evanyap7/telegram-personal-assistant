@@ -6,6 +6,7 @@ import { pruneOldChatHistory } from "@/lib/chat-history";
 import { pruneUpdateLog } from "@/lib/finance";
 import { createDefaultGuestDeps } from "@/lib/guest";
 import { expireStaleBookings } from "@/lib/guest/owner-actions";
+import { createDefaultDraftDeps, runDraftExpiryPass } from "@/lib/handlers/portfolio-draft";
 
 export const dynamic = "force-dynamic";
 
@@ -31,8 +32,20 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Portfolio drafts: re-ping at 6 days, expire at 7. Must never fail the rest of the cleanup.
+    let portfolioDrafts = { repinged: 0, expired: 0 };
+    try {
+      portfolioDrafts = await runDraftExpiryPass(createDefaultDraftDeps());
+    } catch (draftError) {
+      console.error(
+        "Portfolio draft expiry failed:",
+        draftError instanceof Error ? draftError.message : "unknown error"
+      );
+    }
+
     return NextResponse.json({
       ok: true,
+      portfolioDrafts,
       cleanedAt: new Date().toISOString(),
       pendingActions: {
         pruned: pendingRes.prunedCount,

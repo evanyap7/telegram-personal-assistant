@@ -170,6 +170,46 @@ export async function sendTelegramMessage(
   }
 }
 
+export type UrlKeyboardButton = {
+  text: string;
+  url: string;
+};
+
+/** Reply markup that may carry URL buttons or force_reply (InlineKeyboardMarkup stays callback-only). */
+export type RichReplyMarkup =
+  | { inline_keyboard: Array<Array<InlineKeyboardButton | UrlKeyboardButton>> }
+  | { force_reply: true; input_field_placeholder?: string };
+
+/**
+ * Sends one plain-text message (no parse mode, so untrusted text is shown literally) with
+ * URL buttons or a force_reply prompt. Text must fit one message (callers keep it short).
+ */
+export async function sendTelegramPlainMessage(
+  chatId: number,
+  text: string,
+  replyMarkup?: RichReplyMarkup
+): Promise<void> {
+  const channel = currentChannel();
+  if (channel) {
+    // The app channel renders callback buttons only.
+    const callbackOnly =
+      replyMarkup && "inline_keyboard" in replyMarkup
+        ? {
+            inline_keyboard: replyMarkup.inline_keyboard
+              .map((row) => row.filter((b): b is InlineKeyboardButton => "callback_data" in b))
+              .filter((row) => row.length > 0),
+          }
+        : undefined;
+    channel.send(text, callbackOnly, null);
+    return;
+  }
+  await callTelegram("sendMessage", {
+    chat_id: chatId,
+    text: text.slice(0, TELEGRAM_MAX_LENGTH),
+    reply_markup: replyMarkup,
+  });
+}
+
 export async function answerTelegramCallback(
   callbackQueryId: string,
   text?: string

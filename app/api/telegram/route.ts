@@ -41,6 +41,12 @@ import { classifySender, createDefaultGuestDeps } from "@/lib/guest";
 import { reportError } from "@/lib/report-error";
 import { handleGuestUpdate } from "@/lib/guest/handler";
 import { handleOwnerCallback } from "@/lib/guest/owner-actions";
+import {
+  createDefaultDraftDeps,
+  handleDraftNote,
+  handlePortfolioDraftCallback,
+  parseNotePromptId,
+} from "@/lib/handlers/portfolio-draft";
 import { shedGuestUpdate } from "@/lib/guest/throttle";
 
 // Worst case is the orchestrator's 10 model steps plus a delegate agent's 8: about 60-90 s.
@@ -140,6 +146,23 @@ export async function POST(request: Request) {
         createDefaultGuestDeps()
       );
       await markUpdateCompleted(updateId, "guest_owner_callback");
+      return Response.json({ ok: true });
+    }
+
+    // Portfolio draft buttons (Approve / Reject / Edit). Owner-only inside the handler too.
+    const draftCallback = update.callback_query;
+    if (draftCallback?.data?.startsWith("pd:")) {
+      await handlePortfolioDraftCallback(
+        {
+          data: draftCallback.data,
+          userId: draftCallback.from.id,
+          callbackId: draftCallback.id,
+          chatId: draftCallback.message.chat.id,
+          messageId: draftCallback.message.message_id,
+        },
+        createDefaultDraftDeps()
+      );
+      await markUpdateCompleted(updateId, "portfolio_draft_callback");
       return Response.json({ ok: true });
     }
 
@@ -309,6 +332,17 @@ export async function POST(request: Request) {
 
     if (!text) {
       await markUpdateCompleted(updateId, "ignored_no_text");
+      return Response.json({ ok: true });
+    }
+
+    // A reply to a portfolio draft's Edit prompt is the regeneration note, not a chat turn.
+    const draftNoteId = parseNotePromptId(message.reply_to_message?.text);
+    if (draftNoteId) {
+      await handleDraftNote(
+        { draftId: draftNoteId, text, userId: message.from.id, chatId },
+        createDefaultDraftDeps()
+      );
+      await markUpdateCompleted(updateId, "portfolio_draft_note");
       return Response.json({ ok: true });
     }
 
