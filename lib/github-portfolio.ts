@@ -146,9 +146,28 @@ export async function mergePrWithReason(prUrl: string, deps: GithubDeps = {}): P
   const res = await gh(cfg, "PUT", mergePath, { merge_method: "squash", sha: pr.head.sha });
   if (res.status === 200) return { result: "merged" };
   if (res.status === 405 || res.status === 409 || res.status === 422) {
+    // A simultaneous tap may have merged it a moment ago: look again before calling it unmergeable.
+    try {
+      const again = await gh(cfg, "GET", `/repos/${cfg.repo}/pulls/${number}`);
+      if (again.status === 200 && again.json.merged === true) return { result: "already" };
+    } catch {
+      // Could not re-read; report what the merge call said.
+    }
     return { result: "refused", reason: "not-mergeable" };
   }
   throw fail("PUT", mergePath, res.status);
+}
+
+/** True when the updater's PR on the configured repo is merged. Not configured or another repo: false. */
+export async function isPrMerged(prUrl: string, deps: GithubDeps = {}): Promise<boolean> {
+  const cfg = config(deps);
+  if (!cfg) return false;
+  const number = prNumber(prUrl, cfg.repo);
+  if (number === null) return false;
+  const path = `/repos/${cfg.repo}/pulls/${number}`;
+  const res = await gh(cfg, "GET", path);
+  if (res.status !== 200) throw fail("GET", path, res.status);
+  return res.json.merged === true;
 }
 
 export async function mergePr(prUrl: string, deps: GithubDeps = {}): Promise<MergeResult> {

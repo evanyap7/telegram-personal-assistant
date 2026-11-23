@@ -40,6 +40,8 @@ export type Draft = {
   notifiedAt: string | null;
   awaitingNote: boolean;
   lockedAt: string | null;
+  /** The project's own repo name (no owner), sent back in repository_dispatch payloads. */
+  sourceRepo: string;
 };
 
 export interface DraftStore {
@@ -94,6 +96,7 @@ const COLUMNS = [
   "notifiedAt",
   "awaitingNote",
   "lockedAt",
+  "sourceRepo",
 ];
 
 export function draftToRow(d: Draft): (string | number)[] {
@@ -115,6 +118,7 @@ export function draftToRow(d: Draft): (string | number)[] {
     d.notifiedAt ?? "",
     d.awaitingNote ? "1" : "",
     d.lockedAt ?? "",
+    d.sourceRepo,
   ];
 }
 
@@ -143,6 +147,7 @@ export function rowToDraft(row: string[]): Draft {
     notifiedAt: row[14] || null,
     awaitingNote: row[15] === "1",
     lockedAt: row[16] || null,
+    sourceRepo: row[17] ?? "",
   };
 }
 
@@ -179,7 +184,7 @@ export function createMemoryDraftStore(): DraftStore {
 // The memory store above is the tested reference for these semantics.
 
 const TAB = "PortfolioDrafts";
-const LAST_COL = "Q";
+const LAST_COL = "R";
 let tabEnsured = false;
 
 async function sheets() {
@@ -302,7 +307,8 @@ export async function getDraft(id: string, s?: DraftStore): Promise<Draft | null
 
 const RESOLVE_FROM: Record<"approved" | "rejected" | "expired", DraftStatus[]> = {
   approved: ["pending", "merging"],
-  rejected: ["pending"],
+  // A regeneration that never arrives can still be rejected.
+  rejected: ["pending", "regenerating"],
   expired: ["pending"],
 };
 

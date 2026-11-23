@@ -23,6 +23,7 @@ import {
 import {
   closePr,
   dispatchWorkflow,
+  isPrMerged,
   mergePr,
   mergePrWithReason,
   type MergeOutcome,
@@ -70,6 +71,8 @@ const NOW_S = Math.floor(NOW / 1000);
 const DAY = 86_400_000;
 const ID = `chaperone-${NOW_S}`;
 const PR_URL = `https://github.com/${REPO}/pull/42`;
+/** The project repo the draft is about (name only), sent back in dispatch payloads. */
+const SOURCE = "chaperone";
 
 function payload(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -83,6 +86,7 @@ function payload(over: Record<string, unknown> = {}): Record<string, unknown> {
     model: "claude-sonnet-4-5",
     claims: ["Handles 120 requests per second (from README, unverified)"],
     regen: 0,
+    sourceRepo: SOURCE,
     ...over,
   };
 }
@@ -111,6 +115,8 @@ function makeDeps(over: Partial<DraftDeps> = {}) {
   let mergeResult: MergeOutcome | Error = { result: "merged" };
   let closeError: Error | null = null;
   let dispatchError: Error | null = null;
+  let prMerged: boolean | Error = false;
+  const prChecks: string[] = [];
   const store = createMemoryDraftStore();
   const deps: DraftDeps = {
     store,
@@ -139,6 +145,11 @@ function makeDeps(over: Partial<DraftDeps> = {}) {
       dispatches.push({ event, payload: p as Record<string, unknown> });
       if (dispatchError) throw dispatchError;
     },
+    isPrMerged: async (prUrl) => {
+      prChecks.push(prUrl);
+      if (prMerged instanceof Error) throw prMerged;
+      return prMerged;
+    },
     ...over,
   };
   return {
@@ -150,6 +161,10 @@ function makeDeps(over: Partial<DraftDeps> = {}) {
     merges,
     closes,
     dispatches,
+    prChecks,
+    setPrMerged: (v: boolean | Error) => {
+      prMerged = v;
+    },
     setNow: (ms: number) => {
       clock = ms;
     },
@@ -184,6 +199,7 @@ function storedDraft(over: Partial<Draft> = {}): Draft {
     notifiedAt: new Date(NOW).toISOString(),
     awaitingNote: false,
     lockedAt: null,
+    sourceRepo: SOURCE,
     ...over,
   };
 }
@@ -308,6 +324,16 @@ async function intakeTests() {
     assert(!labels.includes("Open preview"), "Open preview omitted when previewUrl is null", labels);
   });
 
+  await test("source repo stored", async () => {
+    const t = makeDeps();
+    const raw = JSON.stringify(payload({ sourceRepo: "Chaperone.app_v2-x" }));
+    const res = await handleDraftIntake(intakeRequest(raw), { ...t.deps, secret: SECRET });
+    assert(res.status === 200, "sourceRepo with dots, underscores, capitals accepted", res.status);
+    const d = await t.store.get(ID);
+    assert(d?.sourceRepo === "Chaperone.app_v2-x" && d.repo === REPO, "sourceRepo persisted; repo stays the portfolio repo", d);
+    assert((t.sent[0]?.text ?? "").includes("Chaperone.app_v2-x"), "message names the source repo");
+  });
+
   await test("duplicate delivery", async () => {
     const t = makeDeps();
     const raw = JSON.stringify(payload());
@@ -393,6 +419,13 @@ async function intakeTests() {
       ["claims too many", JSON.stringify(payload({ claims: Array.from({ length: 21 }, (_, i) => `c${i}`) }))],
       ["claim too long", JSON.stringify(payload({ claims: ["x".repeat(301)] }))],
       ["unknown extra field", JSON.stringify(payload({ mergeNow: true }))],
+      ["sourceRepo missing", JSON.stringify(payload({ sourceRepo: undefined }))],
+      ["sourceRepo empty", JSON.stringify(payload({ sourceRepo: "" }))],
+      ["sourceRepo with owner/slash", JSON.stringify(payload({ sourceRepo: "evanyap7/chaperone" }))],
+      ["sourceRepo with space", JSON.stringify(payload({ sourceRepo: "my repo" }))],
+      ["sourceRepo dot-dot", JSON.stringify(payload({ sourceRepo: ".." }))],
+      ["sourceRepo number", JSON.stringify(payload({ sourceRepo: 7 }))],
+      ["sourceRepo too long", JSON.stringify(payload({ sourceRepo: "r".repeat(101) }))],
     ];
     for (const [name, raw] of bad) {
       const t = makeDeps();
@@ -529,6 +562,106 @@ async function callbackTests() {
     assert((await stale.store.get(ID))?.status === "approved", "retry after a stale lock marks approved");
   });
 
+  await test("approve on an expired draft with a stale merge lock", async () => {
+    // A crashed merge left the draft "merging"; 8 days later the lock is stale and the draft expired.
+    const late = NOW + 8 * DAY;
+    const t = await seeded({ status: "merging", lockedAt: new Date(late - MERGE_LOCK_MS - 1000).toISOString() });
+    t.setNow(late);
+    await handlePortfolioDraftCallback(cb(`pd:a:${ID}`), t.deps);
+    assert(t.merges.length === 0, "expired + stale lock: no merge", t.merges.length);
+    assert(lastText(t.sent).includes("expired, pr still open"), "expired + stale lock: reply 'expired, PR still open'", lastText(t.sent));
+    assert((await t.store.get(ID))?.status === "expired", "expired + stale lock: draft marked expired");
+
+    const fresh = await seeded({ status: "merging", lockedAt: new Date(late - 1000).toISOString() });
+    fresh.setNow(late);
+    await handlePortfolioDraftCallback(cb(`pd:a:${ID}`), fresh.deps);
+    assert(fresh.merges.length === 0 && /in progress/.test(lastText(fresh.sent)), "expired + fresh lock: in-flight merge left alone");
+  });
+
+  await test("refused merge when GitHub shows the PR merged", async () => {
+    const t = await seeded();
+    t.setMerge({ result: "refused", reason: "not-mergeable" });
+    t.setPrMerged(true);
+    await handlePortfolioDraftCallback(cb(`pd:a:${ID}`), t.deps);
+    assert((await t.store.get(ID))?.status === "approved", "refused but PR merged: draft approved, not back to pending");
+    assert(!/not merged|nothing merged/.test(lastText(t.sent)), "refused but PR merged: no 'Not merged' reply", lastText(t.sent));
+    assert(/already merged/.test(lastText(t.sent)), "refused but PR merged: reply says it is merged", lastText(t.sent));
+  });
+
+  for (const loser of [
+    { result: "refused", reason: "not-mergeable" },
+    { result: "already" },
+  ] as MergeOutcome[]) {
+    await test(`two simultaneous Approve taps (second merge call -> ${loser.result})`, async () => {
+      const t = await seeded();
+      // Sheets-like store: read, yield, then compare and write, so both taps can claim the lock.
+      const inner = t.store;
+      t.deps.store = {
+        get: (id) => inner.get(id),
+        save: (d) => inner.save(d),
+        list: () => inner.list(),
+        async update(id, when, patch, guard) {
+          const d = await inner.get(id);
+          await new Promise((r) => setTimeout(r, 0));
+          if (!d || !when.includes(d.status) || (guard && !guard(d))) return null;
+          const next = { ...d, ...patch, id: d.id };
+          await inner.save(next);
+          return next;
+        },
+      };
+      // Fake GitHub: the first merge call merges; later calls see an already-merged PR.
+      let githubMerged = false;
+      t.deps.mergePr = async (prUrl) => {
+        t.merges.push(prUrl);
+        await new Promise((r) => setTimeout(r, 0));
+        if (!githubMerged) {
+          githubMerged = true;
+          return { result: "merged" };
+        }
+        return loser;
+      };
+      t.deps.isPrMerged = async () => githubMerged;
+
+      await Promise.all([
+        handlePortfolioDraftCallback(cb(`pd:a:${ID}`), t.deps),
+        handlePortfolioDraftCallback(cb(`pd:a:${ID}`), t.deps),
+      ]);
+      const replies = t.sent.map((m) => m.text.toLowerCase());
+      assert(t.merges.length === 2, "the racy store really let both taps reach mergePr", t.merges.length);
+      assert(replies.filter((r) => r.includes("approved and merged")).length <= 1, "at most one merge reply", replies);
+      assert(!replies.some((r) => /not merged|nothing merged/.test(r)), "no 'Not merged' reply after a merge", replies);
+      assert((await inner.get(ID))?.status === "approved", "final status approved", (await inner.get(ID))?.status);
+
+      t.deps.store = inner;
+      t.setNow(NOW + 8 * DAY);
+      const r = await runDraftExpiryPass(t.deps);
+      assert(r.expired === 0 && r.repinged === 0, "cron later leaves the merged draft alone (no 'PR still open')", r);
+    });
+  }
+
+  await test("reject a regenerating draft", async () => {
+    const t = await seeded({ status: "regenerating", regen: 1 });
+    await handlePortfolioDraftCallback(cb(`pd:r:${ID}`), t.deps);
+    assert(t.closes.length === 1 && t.closes[0] === PR_URL, "Reject on regenerating closes the PR", t.closes);
+    assert(
+      t.dispatches.length === 1 &&
+        t.dispatches[0].event === "draft-rejected" &&
+        JSON.stringify(t.dispatches[0].payload) === JSON.stringify({ id: ID, repo: SOURCE }),
+      "Reject on regenerating dispatches draft-rejected {id, repo: sourceRepo}",
+      t.dispatches
+    );
+    assert((await t.store.get(ID))?.status === "rejected", "regenerating draft marked rejected");
+
+    const failing = await seeded({ status: "regenerating", regen: 1 });
+    failing.setCloseError(new Error("GitHub 500"));
+    await handlePortfolioDraftCallback(cb(`pd:r:${ID}`), failing.deps);
+    assert((await failing.store.get(ID))?.status === "regenerating", "close failed: draft back to regenerating");
+
+    const approveIt = await seeded({ status: "regenerating", regen: 1 });
+    await handlePortfolioDraftCallback(cb(`pd:a:${ID}`), approveIt.deps);
+    assert(approveIt.merges.length === 0, "Approve on regenerating still makes no merge");
+  });
+
   await test("reject", async () => {
     const t = await seeded();
     await handlePortfolioDraftCallback(cb(`pd:r:${ID}`), t.deps);
@@ -536,8 +669,8 @@ async function callbackTests() {
     assert(
       t.dispatches.length === 1 &&
         t.dispatches[0].event === "draft-rejected" &&
-        JSON.stringify(t.dispatches[0].payload) === JSON.stringify({ id: ID, repo: REPO }),
-      "Reject dispatches draft-rejected {id, repo}",
+        JSON.stringify(t.dispatches[0].payload) === JSON.stringify({ id: ID, repo: SOURCE }),
+      "Reject dispatches draft-rejected {id, repo: sourceRepo}",
       t.dispatches
     );
     assert((await t.store.get(ID))?.status === "rejected", "draft marked rejected");
@@ -572,8 +705,8 @@ async function callbackTests() {
     assert(
       t.dispatches.length === 1 &&
         t.dispatches[0].event === "draft-regenerate" &&
-        JSON.stringify(t.dispatches[0].payload) === JSON.stringify({ id: ID, repo: REPO, note: "make it blue" }),
-      "note dispatches draft-regenerate {id, repo, note} (trimmed)",
+        JSON.stringify(t.dispatches[0].payload) === JSON.stringify({ id: ID, repo: SOURCE, note: "make it blue" }),
+      "note dispatches draft-regenerate {id, repo: sourceRepo, note} (trimmed)",
       t.dispatches
     );
     const d = await t.store.get(ID);
@@ -667,8 +800,11 @@ async function callbackTests() {
 
 type Call = { url: string; method: string; body?: unknown; auth?: string | null };
 
-function fakeFetch(routes: Record<string, { status: number; body?: unknown }>) {
+type Route = { status: number; body?: unknown };
+
+function fakeFetch(routes: Record<string, Route | Route[]>) {
   const calls: Call[] = [];
+  const seen = new Map<string, number>();
   const fn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -680,7 +816,10 @@ function fakeFetch(routes: Record<string, { status: number; body?: unknown }>) {
       auth: headers.get("authorization"),
     });
     const key = `${method} ${url.replace("https://api.github.com", "")}`;
-    const hit = routes[key];
+    const route = routes[key];
+    // An array is a sequence of responses; the last one repeats.
+    const hit = Array.isArray(route) ? route[Math.min(seen.get(key) ?? 0, route.length - 1)] : route;
+    seen.set(key, (seen.get(key) ?? 0) + 1);
     if (!hit) return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
     return new Response(hit.body === undefined ? null : JSON.stringify(hit.body), { status: hit.status });
   }) as typeof fetch;
@@ -700,7 +839,7 @@ function prBody(over: Record<string, unknown> = {}) {
   };
 }
 
-function ghRoutes(over: Record<string, { status: number; body?: unknown }> = {}) {
+function ghRoutes(over: Record<string, Route | Route[]> = {}) {
   return {
     [`GET /repos/${REPO}`]: { status: 200, body: { full_name: REPO, private: false, default_branch: "main" } },
     [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody() },
@@ -729,7 +868,7 @@ async function githubTests() {
   });
 
   await test("merge refusals", async () => {
-    const cases: Array<[string, Record<string, { status: number; body?: unknown }>, string]> = [
+    const cases: Array<[string, Record<string, Route | Route[]>, string]> = [
       ["PR closed", { [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ state: "closed" }) } }, "pr-closed"],
       ["PR is a draft", { [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ draft: true }) } }, "pr-draft"],
       [
@@ -767,6 +906,51 @@ async function githubTests() {
     }
     const r = await mergePr(PR_URL, { fetch: fakeFetch(ghRoutes({ [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ state: "closed" }) } })).fn, token: TOKEN, repo: REPO });
     assert(r === "refused", "mergePr returns the bare 'refused'", r);
+  });
+
+  await test("merge call rejected because another tap merged first", async () => {
+    for (const status of [405, 409, 422]) {
+      const f = fakeFetch(
+        ghRoutes({
+          [`GET /repos/${REPO}/pulls/42`]: [
+            { status: 200, body: prBody() },
+            { status: 200, body: prBody({ state: "closed", merged: true }) },
+          ],
+          [`PUT /repos/${REPO}/pulls/42/merge`]: { status, body: { message: "Pull Request is not mergeable" } },
+        })
+      );
+      const r = await mergePrWithReason(PR_URL, { fetch: f.fn, token: TOKEN, repo: REPO });
+      assert(r.result === "already", `PUT ${status} then PR shows merged -> already`, r);
+      assert(f.calls.filter((c) => c.method === "GET" && c.url.endsWith("/pulls/42")).length === 2, `PUT ${status}: PR re-read once`);
+    }
+    const reGetFails = fakeFetch(
+      ghRoutes({
+        [`GET /repos/${REPO}/pulls/42`]: [{ status: 200, body: prBody() }, { status: 500 }],
+        [`PUT /repos/${REPO}/pulls/42/merge`]: { status: 405 },
+      })
+    );
+    const r = await mergePrWithReason(PR_URL, { fetch: reGetFails.fn, token: TOKEN, repo: REPO });
+    assert(r.result === "refused" && r.reason === "not-mergeable", "PUT 405 and the re-read fails -> not-mergeable", r);
+  });
+
+  await test("isPrMerged", async () => {
+    const merged = fakeFetch(ghRoutes({ [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ state: "closed", merged: true }) } }));
+    assert((await isPrMerged(PR_URL, { fetch: merged.fn, token: TOKEN, repo: REPO })) === true, "merged PR -> true");
+    const open = fakeFetch(ghRoutes());
+    assert((await isPrMerged(PR_URL, { fetch: open.fn, token: TOKEN, repo: REPO })) === false, "open PR -> false");
+    const other = fakeFetch(ghRoutes());
+    assert(
+      (await isPrMerged("https://github.com/someone/else/pull/1", { fetch: other.fn, token: TOKEN, repo: REPO })) === false &&
+        other.calls.length === 0,
+      "PR on another repo -> false, no request"
+    );
+    let threw = false;
+    try {
+      await isPrMerged(PR_URL, { fetch: fakeFetch(ghRoutes({ [`GET /repos/${REPO}/pulls/42`]: { status: 500 } })).fn, token: TOKEN, repo: REPO });
+    } catch (err) {
+      threw = !(err instanceof Error && err.message.includes(TOKEN));
+    }
+    assert(threw, "GitHub 500 throws (without the token)");
   });
 
   await test("merge already merged", async () => {
@@ -914,8 +1098,33 @@ async function cronTests() {
     assert(r.expired === 1 && r.repinged === 0, "cron missed day 6: expires without a late re-ping", r);
   });
 
+  await test("regenerating draft: re-ping at 6 days, expire at 7", async () => {
+    const t = await seeded({ status: "regenerating", regen: 1 });
+    t.setNow(NOW + 3 * DAY);
+    let r = await runDraftExpiryPass(t.deps);
+    assert(r.repinged === 0 && r.expired === 0 && t.sent.length === 0, "regenerating day 3: nothing", r);
+
+    t.setNow(NOW + 6 * DAY + 3600_000);
+    r = await runDraftExpiryPass(t.deps);
+    assert(r.repinged === 1 && t.sent.length === 1, "regenerating day 6: one re-ping", r);
+    const ping = t.sent[0];
+    assert(/regenerat/.test(ping?.text.toLowerCase() ?? ""), "re-ping says the regeneration has not arrived", ping?.text);
+    const buttons = flatButtons(ping?.markup);
+    assert(buttons.some((b) => b.callback_data === `pd:r:${ID}`), "re-ping offers Reject", buttons);
+    assert(!buttons.some((b) => b.callback_data === `pd:a:${ID}`), "re-ping offers no Approve for a regenerating draft", buttons);
+    r = await runDraftExpiryPass(t.deps);
+    assert(r.repinged === 0 && t.sent.length === 1, "regenerating: no second re-ping", r);
+
+    t.setNow(NOW + 7 * DAY + 60_000);
+    r = await runDraftExpiryPass(t.deps);
+    assert(r.expired === 1 && (await t.store.get(ID))?.status === "expired", "regenerating day 7: expired", r);
+    const notice = lastText(t.sent);
+    assert(notice.includes("pr is still open") && /regenerat/.test(notice), "expiry notice: regeneration never arrived, PR still open", notice);
+    assert(t.merges.length === 0 && t.closes.length === 0, "regenerating expiry neither merges nor closes");
+  });
+
   await test("resolved drafts are left alone", async () => {
-    for (const status of ["approved", "rejected", "regenerating", "expired"] as const) {
+    for (const status of ["approved", "rejected", "expired"] as const) {
       const t = await seeded({ status });
       t.setNow(NOW + 6 * DAY + 3600_000);
       let r = await runDraftExpiryPass(t.deps);
