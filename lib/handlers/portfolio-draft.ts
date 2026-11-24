@@ -71,6 +71,8 @@ const MAX_CLAIMS = 20;
 const MAX_CLAIM_LENGTH = 300;
 const MAX_URL_LENGTH = 500;
 const MAX_NOTE_LENGTH = 500;
+/** Telegram rejects a message over 4096 characters; stay well under it, as lib/telegram.ts does. */
+const MAX_MESSAGE_LENGTH = 4000;
 
 const ID = /^[a-z0-9-]+-\d+$/;
 const REPO = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -241,8 +243,12 @@ function draftKeyboard(d: Draft): DraftMarkup {
   };
 }
 
-function draftText(d: Draft): string {
-  const lines = [
+/**
+ * The draft message, at most `budget` characters. Claims that do not fit are left out with a
+ * count, so the closing line (nothing goes live until Approve) is never cut off.
+ */
+function draftText(d: Draft, budget = MAX_MESSAGE_LENGTH): string {
+  const head = [
     d.kind === "new" ? "New project draft ready for review" : "Project update draft ready for review",
     "",
     `ID: ${d.id}`,
@@ -254,15 +260,28 @@ function draftText(d: Draft): string {
     `Model: ${d.model}`,
     `Regenerations: ${d.regen} of ${MAX_REGENERATIONS}`,
     "",
-  ];
-  if (d.claims.length) {
-    lines.push("Unverified claims (from README, check each before approving):");
-    for (const c of d.claims) lines.push(`- ${cleanText(c)}`);
-  } else {
-    lines.push("Unverified claims: none listed.");
+  ].join("\n");
+  const tail = `\n\nExpires ${d.expiresAt.slice(0, 10)} (7 days). Nothing goes live until you tap Approve.`;
+  if (!d.claims.length) return clip(`${head}\nUnverified claims: none listed.${tail}`, budget);
+
+  let body = "Unverified claims (from README, check each before approving):";
+  const claims = d.claims.map((c) => `\n- ${cleanText(c)}`);
+  for (let i = 0; i < claims.length; i++) {
+    const rest = claims.length - i - 1;
+    // Room for this claim plus, if any are still to come, the "and N more" line.
+    const more = rest ? `\n- ...and ${rest} more (see the PR description)` : "";
+    if (head.length + body.length + claims[i].length + more.length + tail.length > budget) {
+      body += `\n- ...and ${claims.length - i} more (see the PR description)`;
+      break;
+    }
+    body += claims[i];
   }
-  lines.push("", `Expires ${d.expiresAt.slice(0, 10)} (7 days). Nothing goes live until you tap Approve.`);
-  return lines.join("\n");
+  return clip(`${head}\n${body}${tail}`, budget);
+}
+
+/** Last guard: never hand Telegram more than `budget` characters. */
+function clip(text: string, budget: number): string {
+  return text.length <= budget ? text : `${text.slice(0, Math.max(0, budget - 1))}\u2026`;
 }
 
 const REASON_TEXT: Record<RefusalReason, string> = {
@@ -645,9 +664,10 @@ export async function runDraftExpiryPass(deps: DraftDeps): Promise<{ repinged: n
             regeneratingKeyboard(claimed)
           );
         } else {
+          const prefix = "Reminder: this draft expires in about a day. If you do nothing, the PR stays open.\n\n";
           await deps.send(
             deps.ownerId,
-            `Reminder: this draft expires in about a day. If you do nothing, the PR stays open.\n\n${draftText(claimed)}`,
+            `${prefix}${draftText(claimed, MAX_MESSAGE_LENGTH - prefix.length)}`,
             draftKeyboard(claimed)
           );
         }

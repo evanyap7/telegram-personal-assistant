@@ -1124,6 +1124,33 @@ async function cronTests() {
     assert(r.repinged === 0 && t.sent.length === 1, "second pass on day 6: no second re-ping", r);
   });
 
+  await test("largest draft fits one Telegram message", async () => {
+    const claims = Array.from({ length: 20 }, (_, i) => `Claim ${String(i + 1).padStart(2, "0")} ${"x".repeat(291)}`);
+    const big = payload({
+      claims,
+      model: "m".repeat(100),
+      previewUrl: `https://${"p".repeat(60)}.vercel.app/${"q".repeat(420)}`,
+      screenshotUrl: `https://raw.githubusercontent.com/${"s".repeat(460)}.png`,
+    });
+    const t = makeDeps();
+    const res = await handleDraftIntake(intakeRequest(JSON.stringify(big)), { ...t.deps, secret: SECRET });
+    assert(res.status === 200, "maximum-size payload accepted", res.status);
+    const text = t.sent[0]?.text ?? "";
+    assert(text.length <= 4000, "draft message is at most 4000 characters (under Telegram's 4096)", text.length);
+    assert(text.includes("Claim 01"), "the first claims are listed", text.slice(0, 200));
+    const shown = claims.filter((c) => text.includes(c)).length;
+    assert(shown < 20 && text.includes(`and ${20 - shown} more`), "the cut is stated with the number left out", text.slice(-400));
+    assert(/see the pr/i.test(text), "the cut points at the PR for the rest");
+    assert(text.includes("Nothing goes live until you tap Approve"), "the closing line survives the cut", text.slice(-200));
+
+    t.setNow(NOW + 6 * DAY + 3600_000);
+    const r = await runDraftExpiryPass(t.deps);
+    const ping = t.sent[1]?.text ?? "";
+    assert(r.repinged === 1 && ping.startsWith("Reminder:"), "re-ping sent", r);
+    assert(ping.length <= 4000, "re-ping of the largest draft is at most 4000 characters", ping.length);
+    assert(ping.includes("Nothing goes live until you tap Approve"), "re-ping keeps the closing line", ping.slice(-200));
+  });
+
   await test("re-ping failure is retried", async () => {
     const t = await seeded();
     let fail = true;
