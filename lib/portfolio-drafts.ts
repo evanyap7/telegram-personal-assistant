@@ -4,8 +4,8 @@
  * Separate from lib/pending-actions.ts (5-minute expiry): a draft lives 7 days in its own
  * `PortfolioDrafts` tab. The memory store is the tested reference; the Sheets store mirrors it
  * and, like lib/guest/store.ts, is read-compare-write (not atomic). GitHub is the final guard
- * against a double merge: the merge is pinned to the inspected head sha and an already-merged
- * PR returns "already".
+ * against a double merge: the merge is pinned to the head sha the draft message described, and an
+ * already-merged PR returns "already".
  *
  * Statuses: pending -> merging (in-flight lock while the merge call runs) -> approved;
  * pending -> rejected | expired | regenerating. A failed or refused merge goes merging -> pending,
@@ -42,6 +42,8 @@ export type Draft = {
   lockedAt: string | null;
   /** The project's own repo name (no owner), sent back in repository_dispatch payloads. */
   sourceRepo: string;
+  /** The PR head commit the draft message describes; Approve merges exactly this sha. "" = unknown. */
+  headSha: string;
 };
 
 export interface DraftStore {
@@ -97,6 +99,7 @@ const COLUMNS = [
   "awaitingNote",
   "lockedAt",
   "sourceRepo",
+  "headSha",
 ];
 
 export function draftToRow(d: Draft): (string | number)[] {
@@ -119,6 +122,7 @@ export function draftToRow(d: Draft): (string | number)[] {
     d.awaitingNote ? "1" : "",
     d.lockedAt ?? "",
     d.sourceRepo,
+    d.headSha,
   ];
 }
 
@@ -148,6 +152,8 @@ export function rowToDraft(row: string[]): Draft {
     awaitingNote: row[15] === "1",
     lockedAt: row[16] || null,
     sourceRepo: row[17] ?? "",
+    // A row written before this column existed reads as unknown, and Approve refuses it.
+    headSha: row[18] ?? "",
   };
 }
 
@@ -184,7 +190,7 @@ export function createMemoryDraftStore(): DraftStore {
 // The memory store above is the tested reference for these semantics.
 
 const TAB = "PortfolioDrafts";
-const LAST_COL = "R";
+const LAST_COL = "S";
 let tabEnsured = false;
 
 async function sheets() {

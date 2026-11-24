@@ -55,7 +55,8 @@ export type DraftDeps = {
   send: (chatId: number, text: string, markup?: DraftMarkup) => Promise<void>;
   answerCallback: (callbackId: string, text?: string) => Promise<void>;
   clearKeyboard: (chatId: number, messageId: number) => Promise<void>;
-  mergePr: (prUrl: string) => Promise<MergeOutcome>;
+  /** Merges only when the PR head is still `expectedSha`. */
+  mergePr: (prUrl: string, expectedSha: string) => Promise<MergeOutcome>;
   closePr: (prUrl: string) => Promise<void>;
   /** Whether the PR is merged on GitHub; checked before a failed merge puts the draft back to pending. */
   isPrMerged: (prUrl: string) => Promise<boolean>;
@@ -77,6 +78,7 @@ const PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull
 const COLOUR = /^#[0-9a-fA-F]{6}$/;
 const MODEL = /^[A-Za-z0-9._:/-]{1,100}$/;
 const SOURCE_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+const SHA = /^[0-9a-f]{40}$/;
 const SIGNATURE = /^sha256=([0-9a-f]{64})$/;
 const CALLBACK = /^pd:([are]):([a-z0-9-]+-\d+)$/;
 const NOTE_PROMPT = /\nNote for draft: ([a-z0-9-]+-\d+)$/;
@@ -93,6 +95,7 @@ const PAYLOAD_KEYS = [
   "claims",
   "regen",
   "sourceRepo",
+  "headSha",
 ] as const;
 
 function log(event: string, values: Record<string, unknown> = {}) {
@@ -143,6 +146,7 @@ type Fields = Pick<
   | "claims"
   | "regen"
   | "sourceRepo"
+  | "headSha"
 >;
 
 /** Strict: every field checked, nothing extra allowed. Null means 400. */
@@ -152,12 +156,13 @@ export function validatePayload(x: unknown, portfolioRepo: string): Fields | nul
   const keys = Object.keys(o);
   if (keys.length !== PAYLOAD_KEYS.length || !PAYLOAD_KEYS.every((k) => keys.includes(k))) return null;
 
-  const { id, repo, kind, prUrl, previewUrl, screenshotUrl, colours, model, claims, regen, sourceRepo } = o;
+  const { id, repo, kind, prUrl, previewUrl, screenshotUrl, colours, model, claims, regen, sourceRepo, headSha } = o;
   if (!validId(id)) return null;
   if (typeof repo !== "string" || !REPO.test(repo) || !sameRepo(repo, portfolioRepo)) return null;
   // The project's repo name only (no owner); "." and ".." are not repo names.
   if (typeof sourceRepo !== "string" || !SOURCE_REPO.test(sourceRepo) || /^\.+$/.test(sourceRepo)) return null;
   if (kind !== "new" && kind !== "changed") return null;
+  if (typeof headSha !== "string" || !SHA.test(headSha)) return null;
   if (typeof prUrl !== "string") return null;
   const pr = PR_URL.exec(prUrl);
   if (!pr || !sameRepo(pr[1], repo)) return null;
@@ -192,6 +197,7 @@ export function validatePayload(x: unknown, portfolioRepo: string): Fields | nul
     claims: (claims as string[]).map(cleanText).filter((c) => c.length > 0),
     regen,
     sourceRepo,
+    headSha,
   };
 }
 
@@ -256,7 +262,8 @@ const REASON_TEXT: Record<RefusalReason, string> = {
   "pr-closed": "the PR is closed (or gone) on GitHub.",
   "pr-draft": "the PR is marked as a draft on GitHub.",
   "wrong-branch": "the PR isn't from an auto/project- branch into the default branch.",
-  "not-mergeable": "GitHub says the PR can't be merged right now (conflicts, failing checks or a moved branch).",
+  "not-mergeable": "GitHub says the PR can't be merged right now (conflicts or failing checks).",
+  "head-changed": "the draft changed since this message was sent; see the new message (if none arrives, tap Edit to regenerate).",
 };
 
 function regeneratingKeyboard(d: Draft): DraftMarkup {
@@ -408,6 +415,13 @@ async function approve(id: string, cb: Callback, deps: DraftDeps, reply: (t: str
   // A merging draft whose lock is stale belongs to a crashed attempt: this tap may retry it.
   if (await refuseUnlessOpen(d, deps, reply, ["pending", "merging"])) return;
   const draft = d as Draft;
+  // Merge only the commit this message described. No recorded sha (an old row): refuse, nothing changes.
+  if (!SHA.test(draft.headSha)) {
+    return reply(
+      "Not merged: this draft has no recorded commit, so I can't tell what Approve would merge. " +
+        "Nothing merged; tap Edit to regenerate it, or merge the PR on GitHub yourself."
+    );
+  }
 
   const nonce = `${new Date(now).toISOString()}#${crypto.randomBytes(6).toString("hex")}`;
   await deps.store.update(
@@ -458,7 +472,7 @@ async function approve(id: string, cb: Callback, deps: DraftDeps, reply: (t: str
 
   let outcome: MergeOutcome;
   try {
-    outcome = await deps.mergePr(draft.prUrl);
+    outcome = await deps.mergePr(draft.prUrl, draft.headSha);
   } catch (err) {
     log("portfolio_draft.merge_failed", { id, error: errorText(err) });
     if (await mergedAnyway()) return finish("already");
@@ -655,7 +669,7 @@ export function createDefaultDraftDeps(): DraftDeps {
     send: (chatId, text, markup) => sendTelegramPlainMessage(chatId, text, markup),
     answerCallback: answerTelegramCallback,
     clearKeyboard: removeTelegramInlineKeyboard,
-    mergePr: (prUrl) => mergePrWithReason(prUrl),
+    mergePr: (prUrl, expectedSha) => mergePrWithReason(prUrl, expectedSha),
     closePr: (prUrl) => closePr(prUrl),
     isPrMerged: (prUrl) => isPrMerged(prUrl),
     dispatchWorkflow: (event, payload) => dispatchWorkflow(event, payload),

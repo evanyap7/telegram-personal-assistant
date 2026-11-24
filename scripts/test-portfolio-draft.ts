@@ -73,6 +73,9 @@ const ID = `chaperone-${NOW_S}`;
 const PR_URL = `https://github.com/${REPO}/pull/42`;
 /** The project repo the draft is about (name only), sent back in dispatch payloads. */
 const SOURCE = "chaperone";
+/** The PR head commit the draft message describes; Approve merges exactly this. */
+const HEAD_SHA = "a1".repeat(20);
+const NEW_SHA = "b2".repeat(20);
 
 function payload(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -87,6 +90,7 @@ function payload(over: Record<string, unknown> = {}): Record<string, unknown> {
     claims: ["Handles 120 requests per second (from README, unverified)"],
     regen: 0,
     sourceRepo: SOURCE,
+    headSha: HEAD_SHA,
     ...over,
   };
 }
@@ -109,6 +113,7 @@ function makeDeps(over: Partial<DraftDeps> = {}) {
   const answers: Array<{ id: string; text?: string }> = [];
   const cleared: number[] = [];
   const merges: string[] = [];
+  const mergeShas: string[] = [];
   const closes: string[] = [];
   const dispatches: Array<{ event: string; payload: Record<string, unknown> }> = [];
   let clock = NOW;
@@ -132,8 +137,9 @@ function makeDeps(over: Partial<DraftDeps> = {}) {
     clearKeyboard: async (_chatId, messageId) => {
       cleared.push(messageId);
     },
-    mergePr: async (prUrl) => {
+    mergePr: async (prUrl, expectedSha) => {
       merges.push(prUrl);
+      mergeShas.push(expectedSha);
       if (mergeResult instanceof Error) throw mergeResult;
       return mergeResult;
     },
@@ -159,6 +165,7 @@ function makeDeps(over: Partial<DraftDeps> = {}) {
     answers,
     cleared,
     merges,
+    mergeShas,
     closes,
     dispatches,
     prChecks,
@@ -200,6 +207,7 @@ function storedDraft(over: Partial<Draft> = {}): Draft {
     awaitingNote: false,
     lockedAt: null,
     sourceRepo: SOURCE,
+    headSha: HEAD_SHA,
     ...over,
   };
 }
@@ -287,6 +295,7 @@ async function intakeTests() {
     assert(d?.expiresAt === new Date(NOW + 7 * DAY).toISOString(), "expiresAt = now + 7 days", d?.expiresAt);
     assert(d?.createdAt === new Date(NOW).toISOString(), "createdAt = now");
     assert(d?.notifiedAt === new Date(NOW).toISOString(), "notifiedAt recorded after the send");
+    assert(d?.headSha === HEAD_SHA, "the PR head sha is stored with the draft", d?.headSha);
     assert(t.sent.length === 1, "exactly one Telegram message", t.sent.length);
     assert(t.sent[0]?.chatId === OWNER, "message goes to Evan's chat only", t.sent[0]?.chatId);
     const buttons = flatButtons(t.sent[0]?.markup);
@@ -347,13 +356,17 @@ async function intakeTests() {
   await test("regenerated draft reusing the id", async () => {
     const t = makeDeps();
     await t.store.save(storedDraft({ status: "regenerating", regen: 0 }));
-    const raw = JSON.stringify(payload({ regen: 1 }));
+    const raw = JSON.stringify(payload({ regen: 1, headSha: NEW_SHA }));
     const res = await handleDraftIntake(intakeRequest(raw), { ...t.deps, secret: SECRET });
     assert(res.status === 200 && t.sent.length === 1, "regenerated draft (same id, higher regen) is announced", res.status);
     const d = await t.store.get(ID);
     assert(d?.status === "pending" && d.regen === 1, "superseded row replaced by the new pending draft", d);
+    assert(d?.headSha === NEW_SHA, "the regenerated draft's head sha replaces the old one", d?.headSha);
     const again = await handleDraftIntake(intakeRequest(JSON.stringify(payload({ regen: 0 }))), { ...t.deps, secret: SECRET });
     assert(again.status === 200 && t.sent.length === 1, "a stale lower-regen delivery is a duplicate");
+    assert((await t.store.get(ID))?.headSha === NEW_SHA, "a stale delivery does not bring back the old sha");
+    await handlePortfolioDraftCallback(cb(`pd:a:${ID}`), t.deps);
+    assert(t.mergeShas[0] === NEW_SHA, "Approve after a regeneration merges the new head", t.mergeShas);
   });
 
   await test("send failure then retry", async () => {
@@ -426,6 +439,12 @@ async function intakeTests() {
       ["sourceRepo dot-dot", JSON.stringify(payload({ sourceRepo: ".." }))],
       ["sourceRepo number", JSON.stringify(payload({ sourceRepo: 7 }))],
       ["sourceRepo too long", JSON.stringify(payload({ sourceRepo: "r".repeat(101) }))],
+      ["headSha missing", JSON.stringify(payload({ headSha: undefined }))],
+      ["headSha empty", JSON.stringify(payload({ headSha: "" }))],
+      ["headSha short", JSON.stringify(payload({ headSha: "abc123" }))],
+      ["headSha uppercase", JSON.stringify(payload({ headSha: HEAD_SHA.toUpperCase() }))],
+      ["headSha 41 chars", JSON.stringify(payload({ headSha: `${HEAD_SHA}0` }))],
+      ["headSha null", JSON.stringify(payload({ headSha: null }))],
     ];
     for (const [name, raw] of bad) {
       const t = makeDeps();
@@ -486,6 +505,7 @@ async function callbackTests() {
     const t = await seeded();
     await handlePortfolioDraftCallback(cb(`pd:a:${ID}`), t.deps);
     assert(t.merges.length === 1 && t.merges[0] === PR_URL, "Approve calls mergePr once with the PR URL", t.merges);
+    assert(t.mergeShas[0] === HEAD_SHA, "Approve pins the merge to the stored head sha", t.mergeShas);
     assert((await t.store.get(ID))?.status === "approved", "draft marked approved");
     assert(/merged/.test(lastText(t.sent)), "reply says merged", lastText(t.sent));
     assert(t.answers.length === 1, "callback answered once");
@@ -518,6 +538,7 @@ async function callbackTests() {
       ["wrong-repo", /portfolio repo/],
       ["not-mergeable", /can't be merged|cannot be merged/],
       ["not-configured", /not configured|isn't configured/],
+      ["head-changed", /changed since this message.*new message/],
     ];
     for (const [reason, pattern] of reasons) {
       const t = await seeded();
@@ -528,6 +549,18 @@ async function callbackTests() {
       assert(/nothing merged|not merged/.test(lastText(t.sent)), `${reason}: reply says nothing merged`);
       const d = await t.store.get(ID);
       assert(d?.status === "pending" && d.lockedAt === null, `${reason}: draft back to pending, not stuck`, d?.status);
+    }
+  });
+
+  await test("approve without a recorded head sha fails closed", async () => {
+    for (const headSha of ["", "abc123", "not a sha"]) {
+      const t = await seeded({ headSha });
+      await handlePortfolioDraftCallback(cb(`pd:a:${ID}`), t.deps);
+      assert(t.merges.length === 0, `headSha ${JSON.stringify(headSha)}: no merge call`, t.merges);
+      assert(/nothing merged|not merged/.test(lastText(t.sent)), `headSha ${JSON.stringify(headSha)}: reply says nothing merged`, lastText(t.sent));
+      assert(/edit/.test(lastText(t.sent)), `headSha ${JSON.stringify(headSha)}: reply points at Edit to regenerate`, lastText(t.sent));
+      const d = await t.store.get(ID);
+      assert(d?.status === "pending" && d.lockedAt === null, `headSha ${JSON.stringify(headSha)}: draft left pending`, d);
     }
   });
 
@@ -833,7 +866,7 @@ function prBody(over: Record<string, unknown> = {}) {
     state: "open",
     merged: false,
     draft: false,
-    head: { ref: "auto/project-chaperone", sha: "abc123", repo: { full_name: REPO } },
+    head: { ref: "auto/project-chaperone", sha: HEAD_SHA, repo: { full_name: REPO } },
     base: { ref: "main", repo: { full_name: REPO } },
     ...over,
   };
@@ -855,7 +888,7 @@ async function githubTests() {
 
   await test("merge happy path", async () => {
     const f = fakeFetch(ghRoutes());
-    const r = await mergePr(PR_URL, { fetch: f.fn, token: TOKEN, repo: REPO });
+    const r = await mergePr(PR_URL, HEAD_SHA, { fetch: f.fn, token: TOKEN, repo: REPO });
     assert(r === "merged", "open PR on auto/project-* -> merged", r);
     const put = f.calls.find((c) => c.method === "PUT");
     assert(
@@ -863,7 +896,7 @@ async function githubTests() {
       "merge method is squash",
       put?.body
     );
-    assert((put?.body as Record<string, unknown>)?.sha === "abc123", "merge pinned to the inspected head sha");
+    assert((put?.body as Record<string, unknown>)?.sha === HEAD_SHA, "merge pinned to the reviewed head sha");
     assert(f.calls.every((c) => c.auth === `Bearer ${TOKEN}`), "token sent as a Bearer header");
   });
 
@@ -893,19 +926,30 @@ async function githubTests() {
       ],
       ["repo now private", { [`GET /repos/${REPO}`]: { status: 200, body: { full_name: REPO, private: true, default_branch: "main" } } }, "repo-private"],
       ["GitHub says not mergeable", { [`PUT /repos/${REPO}/pulls/42/merge`]: { status: 405, body: { message: "not mergeable" } } }, "not-mergeable"],
-      ["head moved (409)", { [`PUT /repos/${REPO}/pulls/42/merge`]: { status: 409, body: { message: "Head branch was modified" } } }, "not-mergeable"],
+      ["head moved (409)", { [`PUT /repos/${REPO}/pulls/42/merge`]: { status: 409, body: { message: "Head branch was modified" } } }, "head-changed"],
       ["PR not found", { [`GET /repos/${REPO}/pulls/42`]: { status: 404, body: { message: "Not Found" } } }, "pr-closed"],
+      [
+        "head is not the reviewed commit",
+        { [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ head: { ref: "auto/project-chaperone", sha: NEW_SHA, repo: { full_name: REPO } } }) } },
+        "head-changed",
+      ],
     ];
     for (const [name, over, reason] of cases) {
       const f = fakeFetch(ghRoutes(over));
-      const r = await mergePrWithReason(PR_URL, { fetch: f.fn, token: TOKEN, repo: REPO });
+      const r = await mergePrWithReason(PR_URL, HEAD_SHA, { fetch: f.fn, token: TOKEN, repo: REPO });
       assert(r.result === "refused" && r.reason === reason, `${name} -> refused (${reason})`, r);
       if (name !== "GitHub says not mergeable" && name !== "head moved (409)") {
         assert(!f.calls.some((c) => c.method === "PUT"), `${name}: no merge call`);
       }
     }
-    const r = await mergePr(PR_URL, { fetch: fakeFetch(ghRoutes({ [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ state: "closed" }) } })).fn, token: TOKEN, repo: REPO });
+    const r = await mergePr(PR_URL, HEAD_SHA, { fetch: fakeFetch(ghRoutes({ [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ state: "closed" }) } })).fn, token: TOKEN, repo: REPO });
     assert(r === "refused", "mergePr returns the bare 'refused'", r);
+    for (const bad of ["", "abc123", HEAD_SHA.toUpperCase()]) {
+      const f = fakeFetch(ghRoutes());
+      const out = await mergePrWithReason(PR_URL, bad, { fetch: f.fn, token: TOKEN, repo: REPO });
+      assert(out.result === "refused" && out.reason === "head-changed", `expected sha ${JSON.stringify(bad)} -> refused (head-changed)`, out);
+      assert(f.calls.length === 0, `expected sha ${JSON.stringify(bad)}: no GitHub call`, f.calls.length);
+    }
   });
 
   await test("merge call rejected because another tap merged first", async () => {
@@ -919,7 +963,7 @@ async function githubTests() {
           [`PUT /repos/${REPO}/pulls/42/merge`]: { status, body: { message: "Pull Request is not mergeable" } },
         })
       );
-      const r = await mergePrWithReason(PR_URL, { fetch: f.fn, token: TOKEN, repo: REPO });
+      const r = await mergePrWithReason(PR_URL, HEAD_SHA, { fetch: f.fn, token: TOKEN, repo: REPO });
       assert(r.result === "already", `PUT ${status} then PR shows merged -> already`, r);
       assert(f.calls.filter((c) => c.method === "GET" && c.url.endsWith("/pulls/42")).length === 2, `PUT ${status}: PR re-read once`);
     }
@@ -929,7 +973,7 @@ async function githubTests() {
         [`PUT /repos/${REPO}/pulls/42/merge`]: { status: 405 },
       })
     );
-    const r = await mergePrWithReason(PR_URL, { fetch: reGetFails.fn, token: TOKEN, repo: REPO });
+    const r = await mergePrWithReason(PR_URL, HEAD_SHA, { fetch: reGetFails.fn, token: TOKEN, repo: REPO });
     assert(r.result === "refused" && r.reason === "not-mergeable", "PUT 405 and the re-read fails -> not-mergeable", r);
   });
 
@@ -955,7 +999,7 @@ async function githubTests() {
 
   await test("merge already merged", async () => {
     const f = fakeFetch(ghRoutes({ [`GET /repos/${REPO}/pulls/42`]: { status: 200, body: prBody({ state: "closed", merged: true }) } }));
-    const r = await mergePr(PR_URL, { fetch: f.fn, token: TOKEN, repo: REPO });
+    const r = await mergePr(PR_URL, HEAD_SHA, { fetch: f.fn, token: TOKEN, repo: REPO });
     assert(r === "already", "merged PR -> already", r);
     assert(!f.calls.some((c) => c.method === "PUT"), "already merged: no merge call");
   });
@@ -968,7 +1012,7 @@ async function githubTests() {
       ["repo missing", PR_URL, { token: TOKEN, repo: "" }],
     ] as const) {
       const f = fakeFetch(ghRoutes());
-      const r = await mergePrWithReason(url, { ...deps, fetch: f.fn });
+      const r = await mergePrWithReason(url, HEAD_SHA, { ...deps, fetch: f.fn });
       assert(r.result === "refused", `${name} -> refused`, r);
       assert(f.calls.length === 0, `${name}: no request made`, f.calls.length);
     }
@@ -985,7 +1029,7 @@ async function githubTests() {
     console.warn = (...a: unknown[]) => logged.push(a.map(String).join(" "));
     let message = "";
     try {
-      await mergePr(PR_URL, { fetch: f.fn, token: TOKEN, repo: REPO });
+      await mergePr(PR_URL, HEAD_SHA, { fetch: f.fn, token: TOKEN, repo: REPO });
     } catch (err) {
       message = err instanceof Error ? err.message : String(err);
     } finally {

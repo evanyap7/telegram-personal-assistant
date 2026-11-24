@@ -15,7 +15,9 @@ export type RefusalReason =
   | "pr-closed"
   | "pr-draft"
   | "wrong-branch"
-  | "not-mergeable";
+  | "not-mergeable"
+  /** The PR head is not the commit the draft message described (or no valid sha was given). */
+  | "head-changed";
 export type MergeOutcome = { result: MergeResult; reason?: RefusalReason };
 
 export type DispatchEvent = "draft-rejected" | "draft-regenerate";
@@ -32,6 +34,7 @@ const API = "https://api.github.com";
 const TIMEOUT_MS = 10_000;
 const HEAD_PREFIX = "auto/project-";
 const DISPATCH_EVENTS: readonly DispatchEvent[] = ["draft-rejected", "draft-regenerate"];
+const SHA = /^[0-9a-f]{40}$/;
 const PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9]\d{0,9})$/;
 
 type Config = { fetch: typeof fetch; token: string; repo: string };
@@ -130,8 +133,17 @@ async function inspect(prUrl: string, deps: GithubDeps): Promise<Inspected> {
   return { ok: true, cfg, number, pr };
 }
 
-/** Squash-merges the updater's PR, with the reason when it refuses. */
-export async function mergePrWithReason(prUrl: string, deps: GithubDeps = {}): Promise<MergeOutcome> {
+/**
+ * Squash-merges the updater's PR, with the reason when it refuses. Only `expectedSha` (the head
+ * commit the draft message described) is ever merged: a different head, or a branch that moves
+ * before the merge lands, is refused as "head-changed".
+ */
+export async function mergePrWithReason(
+  prUrl: string,
+  expectedSha: string,
+  deps: GithubDeps = {}
+): Promise<MergeOutcome> {
+  if (!SHA.test(expectedSha)) return { result: "refused", reason: "head-changed" };
   const found = await inspect(prUrl, deps);
   if (!found.ok) return { result: "refused", reason: found.reason };
   const { cfg, number, pr } = found;
@@ -139,11 +151,11 @@ export async function mergePrWithReason(prUrl: string, deps: GithubDeps = {}): P
   if (pr.merged === true) return { result: "already" };
   if (pr.state !== "open") return { result: "refused", reason: "pr-closed" };
   if (pr.draft === true) return { result: "refused", reason: "pr-draft" };
-  if (typeof pr.head?.sha !== "string" || !pr.head.sha) return { result: "refused", reason: "not-mergeable" };
+  if (pr.head?.sha !== expectedSha) return { result: "refused", reason: "head-changed" };
 
   const mergePath = `/repos/${cfg.repo}/pulls/${number}/merge`;
-  // Pinned to the head we inspected: if the branch moved since, GitHub answers 409 instead of merging.
-  const res = await gh(cfg, "PUT", mergePath, { merge_method: "squash", sha: pr.head.sha });
+  // Pinned to the reviewed head: if the branch moved since, GitHub answers 409 instead of merging.
+  const res = await gh(cfg, "PUT", mergePath, { merge_method: "squash", sha: expectedSha });
   if (res.status === 200) return { result: "merged" };
   if (res.status === 405 || res.status === 409 || res.status === 422) {
     // A simultaneous tap may have merged it a moment ago: look again before calling it unmergeable.
@@ -153,7 +165,7 @@ export async function mergePrWithReason(prUrl: string, deps: GithubDeps = {}): P
     } catch {
       // Could not re-read; report what the merge call said.
     }
-    return { result: "refused", reason: "not-mergeable" };
+    return { result: "refused", reason: res.status === 409 ? "head-changed" : "not-mergeable" };
   }
   throw fail("PUT", mergePath, res.status);
 }
@@ -170,8 +182,8 @@ export async function isPrMerged(prUrl: string, deps: GithubDeps = {}): Promise<
   return res.json.merged === true;
 }
 
-export async function mergePr(prUrl: string, deps: GithubDeps = {}): Promise<MergeResult> {
-  return (await mergePrWithReason(prUrl, deps)).result;
+export async function mergePr(prUrl: string, expectedSha: string, deps: GithubDeps = {}): Promise<MergeResult> {
+  return (await mergePrWithReason(prUrl, expectedSha, deps)).result;
 }
 
 /** Closes the updater's PR. Already closed is a no-op; a refused guard throws. */
