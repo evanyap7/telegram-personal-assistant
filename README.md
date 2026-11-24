@@ -26,6 +26,7 @@ flowchart LR
 | 📅 **Calendar** | Routes events to personal or work, finds free slots, reschedules in plain language, turns a schedule screenshot into up to 30 events (optionally tagged, e.g. *"tag it as HACK 2026"*) and retries through Google's rate limits. |
 | 🤝 **Friend scheduling** | Approved friends message the bot to ask when I'm free, then tap a free range, a start time and a length. I approve or decline with one tap. They only ever see times, and the model reads their message but never my calendar. |
 | ⏰ **To-dos & briefs** | *"remind me to call John"* nags every 30 minutes until done. Morning agenda, evening recap, weekly spending report. |
+| 🗂️ **Portfolio approvals** | My portfolio site drafts pages for new GitHub projects as draft pull requests, then asks EGO. I get the summary in Telegram with Approve, Reject, Edit and Open preview buttons. Approve squash-merges the PR, Reject closes it, and Edit takes a note and asks for a redraft (up to 3 times). Unanswered drafts expire after 7 days. |
 | 📬 **Email, memory, search** | Inbox triage and voice-drafted replies, encrypted notes, cited web answers. |
 
 ## Design choices
@@ -93,6 +94,7 @@ Using it:
 | AI | `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` (voice only) |
 | Other | `CRON_SECRET`, `APPLE_WALLET_SECRET`, `GMAIL_PUBSUB_TOPIC` |
 | Avatar app | `EGO_APP_TOKEN` (at least 32 characters), `EGO_APP_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (for example `mailto:owner@example.com`) |
+| Portfolio approvals | `EGO_WEBHOOK_SECRET` (verifies the signed `/api/portfolio-draft` request), `GITHUB_PORTFOLIO_TOKEN` (fine-grained token limited to the portfolio repo), `PORTFOLIO_REPO` (`owner/name`) |
 | Optional | `MEMORY_ENCRYPTION_KEY`, `MONTHLY_BUDGET`, `EGO_EVAL_MODEL` (eval script only) |
 
 Setup guides: [Apple Wallet](APPLE_WALLET_SETUP.md), [Gmail push](GMAIL_PUSH_SETUP.md).
@@ -105,6 +107,8 @@ Setup guides: [Apple Wallet](APPLE_WALLET_SETUP.md), [Gmail push](GMAIL_PUSH_SET
 | --- | --- | --- |
 | `/api/cron/briefing?type=morning` | `0 0 * * *` | Morning brief |
 | `/api/cron/briefing?type=evening` | `0 14 * * *` | Evening recap |
+| `/api/cron/briefing?type=weekly` | `0 13 * * 0` | Weekly spending report |
+| `/api/cron/renew-gmail-watch` | `0 2 * * *` | Renew the Gmail push watch |
 | `/api/cron/calendar-reminders` | `*/10 * * * *` | To-do nags, event pings, leave-now alerts |
 | `/api/cron/rest-timer` | `* * * * *` | Workout rest-over pings |
 | `/api/cron/recurring` | `0 1 * * *` | Recurring subscriptions and tasks |
