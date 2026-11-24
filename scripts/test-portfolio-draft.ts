@@ -333,6 +333,14 @@ async function intakeTests() {
     assert(!labels.includes("Open preview"), "Open preview omitted when previewUrl is null", labels);
   });
 
+  await test("preview on a vercel.app host", async () => {
+    for (const previewUrl of ["https://evan-portfolio-abc123-evanyap7.vercel.app/", "https://EVAN-PORTFOLIO.Vercel.App/work/x.html"]) {
+      const t = makeDeps();
+      const res = await handleDraftIntake(intakeRequest(JSON.stringify(payload({ previewUrl }))), { ...t.deps, secret: SECRET });
+      assert(res.status === 200, `${previewUrl} accepted`, res.status);
+    }
+  });
+
   await test("source repo stored", async () => {
     const t = makeDeps();
     const raw = JSON.stringify(payload({ sourceRepo: "Chaperone.app_v2-x" }));
@@ -418,6 +426,12 @@ async function intakeTests() {
       ["previewUrl http", JSON.stringify(payload({ previewUrl: "http://preview.example" }))],
       ["previewUrl javascript:", JSON.stringify(payload({ previewUrl: "javascript:alert(1)" }))],
       ["previewUrl with credentials", JSON.stringify(payload({ previewUrl: "https://u:p@preview.example" }))],
+      ["previewUrl not on vercel.app", JSON.stringify(payload({ previewUrl: "https://evil.example/preview" }))],
+      ["previewUrl bare vercel.app", JSON.stringify(payload({ previewUrl: "https://vercel.app" }))],
+      ["previewUrl vercel.app as a subdomain", JSON.stringify(payload({ previewUrl: "https://x.vercel.app.evil.example" }))],
+      ["previewUrl lookalike host", JSON.stringify(payload({ previewUrl: "https://evilvercel.app" }))],
+      ["previewUrl with a port", JSON.stringify(payload({ previewUrl: "https://x.vercel.app:8443" }))],
+      ["previewUrl credentials on vercel.app", JSON.stringify(payload({ previewUrl: "https://u@x.vercel.app" }))],
       ["screenshotUrl number", JSON.stringify(payload({ screenshotUrl: 5 }))],
       ["colours one entry", JSON.stringify(payload({ colours: ["#112233"] }))],
       ["colours bad hex", JSON.stringify(payload({ colours: ["#112233", "red"] }))],

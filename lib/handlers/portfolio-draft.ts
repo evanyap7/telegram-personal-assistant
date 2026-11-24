@@ -129,6 +129,16 @@ function isHttpsUrl(v: unknown): v is string {
   }
 }
 
+/**
+ * The "Open preview" button only ever points at a Vercel deployment: https, a `<name>.vercel.app`
+ * host, default port. No production domain is configured, so none is allowed beyond that.
+ */
+function isPreviewUrl(v: unknown): v is string {
+  if (!isHttpsUrl(v)) return false;
+  const u = new URL(v);
+  return !u.port && /^[a-z0-9-]+(\.[a-z0-9-]+)*\.vercel\.app$/.test(u.hostname);
+}
+
 function validId(v: unknown): v is string {
   return typeof v === "string" && v.length <= MAX_ID_LENGTH && ID.test(v);
 }
@@ -166,7 +176,7 @@ export function validatePayload(x: unknown, portfolioRepo: string): Fields | nul
   if (typeof prUrl !== "string") return null;
   const pr = PR_URL.exec(prUrl);
   if (!pr || !sameRepo(pr[1], repo)) return null;
-  if (previewUrl !== null && !isHttpsUrl(previewUrl)) return null;
+  if (previewUrl !== null && !isPreviewUrl(previewUrl)) return null;
   if (screenshotUrl !== null && !isHttpsUrl(screenshotUrl)) return null;
   if (
     !Array.isArray(colours) ||
