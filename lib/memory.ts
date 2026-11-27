@@ -205,10 +205,18 @@ export async function saveMemory(input: SaveMemoryInput): Promise<MemoryRecord> 
     };
   }
 
-  // Create new row
+  // Create new row by writing explicitly to A:G on the first unused row >= 2.
+  // Using values.update instead of values.append avoids Google Sheets' table-detection
+  // quirk where a partially-cleared row shifts subsequent appends into column C+.
+  const occupiedRows = new Set(existing.map((m) => m.rowNumber));
+  let targetRow = 2;
+  while (occupiedRows.has(targetRow)) {
+    targetRow++;
+  }
+
   const memoryId = createMemoryId();
   const newRecord: MemoryRecord = {
-    rowNumber: 0,
+    rowNumber: targetRow,
     memoryId,
     createdAt: nowStr,
     updatedAt: nowStr,
@@ -218,11 +226,10 @@ export async function saveMemory(input: SaveMemoryInput): Promise<MemoryRecord> 
     tags,
   };
 
-  await sheets.spreadsheets.values.append({
+  await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `${MEMORY_SHEET}!A:G`,
+    range: `${MEMORY_SHEET}!A${targetRow}:G${targetRow}`,
     valueInputOption: "RAW",
-    insertDataOption: "INSERT_ROWS",
     requestBody: {
       values: [[memoryId, nowStr, nowStr, category, cleanKey, storedVal, tagsStr]],
     },
