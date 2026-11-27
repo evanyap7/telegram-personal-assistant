@@ -274,6 +274,22 @@ export async function deleteMemory(keyOrId: string): Promise<boolean> {
 }
 
 /**
+ * Deletes a memory record directly by its row number without re-fetching all rows.
+ */
+export async function deleteMemoryRow(rowNumber: number): Promise<boolean> {
+  if (rowNumber < 2) return false;
+  const sheets = getSheetsClient();
+  const spreadsheetId = getSpreadsheetId();
+
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId,
+    range: `${MEMORY_SHEET}!A${rowNumber}:G${rowNumber}`,
+  });
+
+  return true;
+}
+
+/**
  * Multi-factor token relevance scoring over in-memory records.
  */
 export function scoreMemories(

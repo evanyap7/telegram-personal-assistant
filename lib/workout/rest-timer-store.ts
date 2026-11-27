@@ -1,7 +1,7 @@
 import { deleteMemory, getMemoryByKey, saveMemory } from "../memory";
 import { DEFAULT_REST_SECONDS, exerciseKind } from "./coach";
 
-const MEMORY_TIMER_KEY = "ph3_rest_timer";
+export const MEMORY_TIMER_KEY = "ph3_rest_timer";
 
 export interface RestTimer {
   chatId: number;
@@ -12,6 +12,16 @@ export interface RestTimer {
   day: number;
   exIdx: number;
   setIdx: number;
+}
+
+export function parseRestTimer(rawValue?: string | null): RestTimer | null {
+  if (!rawValue) return null;
+  try {
+    const parsed = JSON.parse(rawValue) as RestTimer;
+    return typeof parsed.dueAt === "number" && typeof parsed.chatId === "number" ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function startRestTimer(
@@ -42,13 +52,7 @@ export async function clearRestTimer(): Promise<void> {
 
 export async function loadRestTimer(): Promise<RestTimer | null> {
   const record = await getMemoryByKey(MEMORY_TIMER_KEY, "preference");
-  if (!record?.value) return null;
-  try {
-    const parsed = JSON.parse(record.value) as RestTimer;
-    return typeof parsed.dueAt === "number" && typeof parsed.chatId === "number" ? parsed : null;
-  } catch {
-    return null;
-  }
+  return parseRestTimer(record?.value);
 }
 
 const MEMORY_CONFIG_KEY = "ph3_rest_config";

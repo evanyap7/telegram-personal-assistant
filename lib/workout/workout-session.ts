@@ -419,8 +419,7 @@ export function buildSetPrompt(plan: PH3DayPlan, exIdx: number, setIdx: number):
 // Session persistence (Memory sheet: serverless instances share no memory)
 // ---------------------------------------------------------------------------
 
-export async function loadSession(): Promise<WorkoutSessionState | null> {
-  const raw = await loadPH3SessionRaw();
+export function parseWorkoutSession(raw?: string | null): WorkoutSessionState | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as WorkoutSessionState;
@@ -432,6 +431,11 @@ export async function loadSession(): Promise<WorkoutSessionState | null> {
     console.error("workout.session_unparseable", error);
     return null;
   }
+}
+
+export async function loadSession(): Promise<WorkoutSessionState | null> {
+  const raw = await loadPH3SessionRaw();
+  return parseWorkoutSession(raw);
 }
 
 export async function saveSession(state: WorkoutSessionState): Promise<void> {

@@ -11,7 +11,10 @@ import {
   parseRedoCommand,
   parseSetInput,
   parseWorkoutDayCommand,
+  parseWorkoutSession,
 } from "../lib/workout/workout-session";
+import { parseRestTimer } from "../lib/workout/rest-timer-store";
+import { REST_TIMER_LOOKAHEAD_MS } from "../lib/workout/rest-timer";
 import { columnToA1, formatSheetReps, getBlockInfo, programDayFromWeekDay } from "../lib/workout/ph3-program";
 import { coachLine, exerciseKind, parseRepTarget } from "../lib/workout/coach";
 import { applyEdits, hasSheetCells, removeSwap, upsertSwap, weekdayOf, type PlanEdit } from "../lib/workout/plan-edits";
@@ -409,6 +412,29 @@ function run() {
   assert.equal(formatRestDuration(75), "75s");
   assert.equal(formatRestDuration(180), "3 min");
   assert.equal(formatRestDuration(150), "2.5 min");
+
+  // Rest timer store parsing & lookahead window
+  assert.equal(parseRestTimer(null), null);
+  assert.equal(parseRestTimer("invalid json"), null);
+  assert.equal(parseRestTimer(JSON.stringify({ dueAt: "not-a-number" })), null);
+  const parsedTimer = parseRestTimer(
+    JSON.stringify({ chatId: 12345, seconds: 90, dueAt: 1700000000000, day: 1, exIdx: 0, setIdx: 1 })
+  );
+  assert.ok(parsedTimer);
+  assert.equal(parsedTimer.chatId, 12345);
+  assert.equal(parsedTimer.seconds, 90);
+  assert.equal(parsedTimer.dueAt, 1700000000000);
+  assert.equal(REST_TIMER_LOOKAHEAD_MS, 5_000, "lookahead capped at 5s to avoid cron timeouts");
+
+  // Workout session parsing
+  assert.equal(parseWorkoutSession(null), null);
+  assert.equal(parseWorkoutSession("bad"), null);
+  assert.equal(parseWorkoutSession(JSON.stringify({ day: "none" })), null);
+  const parsedSession = parseWorkoutSession(
+    JSON.stringify({ day: 1, exIdx: 0, setIdx: 1, logged: [], startedAt: "2026-11-27" })
+  );
+  assert.ok(parsedSession);
+  assert.equal(parsedSession.day, 1);
   console.log("  ✅ rest timer settings");
 
   // Plan edits

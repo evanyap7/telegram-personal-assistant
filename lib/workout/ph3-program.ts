@@ -501,7 +501,7 @@ export async function clearSetCell(params: {
   planCache.delete(plan.day);
 }
 
-const MEMORY_SESSION_KEY = "ph3_workout_session";
+export const MEMORY_SESSION_KEY = "ph3_workout_session";
 
 export async function loadPH3SessionRaw(): Promise<string | null> {
   const record = await getMemoryByKey(MEMORY_SESSION_KEY, "preference");
